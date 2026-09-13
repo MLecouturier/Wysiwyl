@@ -128,7 +128,13 @@
                                 <button id="bpm-minus10" class="bpm-step" title="-10 BPM">-10</button>
                                 <button id="bpm-minus5"  class="bpm-step" title="-5 BPM">-5</button>
                             </div>
-                            <input type="number" id="bpm-input" min="20" max="300" value="120" />
+                            <div class="bpm-input-wrapper">
+                                <input type="number" id="bpm-input" min="20" max="300" value="120" />
+                                <div class="bpm-spinner">
+                                    <button id="bpm-up" class="bpm-spinner-btn" type="button" title="+1 BPM"><span class="material-symbols-outlined" aria-hidden="true">keyboard_arrow_up</span></button>
+                                    <button id="bpm-down" class="bpm-spinner-btn" type="button" title="-1 BPM"><span class="material-symbols-outlined" aria-hidden="true">keyboard_arrow_down</span></button>
+                                </div>
+                            </div>
                             <div class="bpm-step-group">
                                 <button id="bpm-plus5"   class="bpm-step" title="+5 BPM">+5</button>
                                 <button id="bpm-plus10"  class="bpm-step" title="+10 BPM">+10</button>

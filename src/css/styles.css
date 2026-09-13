@@ -279,79 +279,6 @@ input[type=range].synth-range-input.gradient-hue::-moz-range-track {
   background: linear-gradient(to right, hsl(calc(var(--hue-rot, 0deg)), 100%, 50%), hsl(calc(var(--hue-rot, 0deg) + 60deg), 100%, 50%), hsl(calc(var(--hue-rot, 0deg) + 120deg), 100%, 50%), hsl(calc(var(--hue-rot, 0deg) + 180deg), 100%, 50%), hsl(calc(var(--hue-rot, 0deg) + 240deg), 100%, 50%), hsl(calc(var(--hue-rot, 0deg) + 300deg), 100%, 50%), hsl(calc(var(--hue-rot, 0deg) + 360deg), 100%, 50%));
 }
 
-.custom-dropdown {
-  position: relative;
-  display: inline-flex;
-}
-.custom-dropdown .custom-dropdown-btn {
-  display: inline-flex;
-  align-items: center;
-  min-width: 2.5rem;
-  padding: 0.25rem 0.375rem !important;
-  font-size: 0.78rem;
-  background-color: #232323;
-  color: #e0e0e0;
-  border: 1px solid #333;
-  border-radius: 0.25rem;
-  cursor: pointer;
-  font-variant-numeric: tabular-nums;
-}
-.custom-dropdown .custom-dropdown-btn:hover, .custom-dropdown .custom-dropdown-btn.open {
-  border-color: #3a7bd5;
-}
-.custom-dropdown .custom-dropdown-popup {
-  position: absolute;
-  top: calc(100% + 2px);
-  right: 0;
-  z-index: 200;
-  display: flex;
-  flex-direction: column;
-  min-width: 100%;
-  background-color: #1a1a1a;
-  border: 1px solid #333;
-  border-radius: 0.25rem;
-  box-shadow: 0 0.25rem 1rem rgba(0, 0, 0, 0.5);
-}
-.custom-dropdown .custom-dropdown-filter {
-  margin: 0.25rem 0.25rem 0;
-  padding: 0 0.25rem;
-  font-size: 0.78rem;
-  width: 2rem;
-  background-color: #232323;
-  color: #e0e0e0;
-  border: 1px solid #333;
-  border-radius: 0.25rem;
-  outline: none;
-}
-.custom-dropdown .custom-dropdown-filter:focus {
-  border-color: #3a7bd5;
-}
-.custom-dropdown .custom-dropdown-list {
-  max-height: 17.5rem;
-  margin: 0.25rem;
-  overflow-y: auto;
-  scrollbar-width: 0;
-}
-.custom-dropdown .custom-dropdown-list::-webkit-scrollbar {
-  display: none;
-}
-.custom-dropdown .custom-dropdown-option {
-  padding: 0.125rem 0.375rem;
-  font-size: 0.78rem;
-  color: #ccc;
-  cursor: pointer;
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-}
-.custom-dropdown .custom-dropdown-option:hover, .custom-dropdown .custom-dropdown-option.active {
-  background-color: #444;
-  color: #e0e0e0;
-}
-.custom-dropdown .custom-dropdown-option.selected {
-  color: #3a7bd5;
-  font-weight: 600;
-}
-
 .icon-btn {
   display: inline-flex;
   align-items: center;
@@ -588,15 +515,53 @@ select:disabled {
   flex-direction: column;
   gap: 0.25rem;
 }
-.metronome-controls .metronome-bpm .bpm-input-group #bpm-input {
+.metronome-controls .metronome-bpm .bpm-input-group .bpm-input-wrapper {
+  position: relative;
+}
+.metronome-controls .metronome-bpm .bpm-input-group .bpm-input-wrapper #bpm-input {
   width: 3.5em;
   text-align: center;
   font-size: 2.25rem;
+  padding-right: 1.5rem;
   background-color: #262626;
   color: #e0e0e0;
   border: 1px solid #333;
   border-radius: 0.25rem;
   outline: none;
+}
+.metronome-controls .metronome-bpm .bpm-input-group .bpm-input-wrapper #bpm-input::-webkit-inner-spin-button, .metronome-controls .metronome-bpm .bpm-input-group .bpm-input-wrapper #bpm-input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.metronome-controls .metronome-bpm .bpm-input-group .bpm-input-wrapper .bpm-spinner {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  bottom: 1px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  width: 1.4rem;
+}
+.metronome-controls .metronome-bpm .bpm-input-group .bpm-input-wrapper .bpm-spinner .bpm-spinner-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1 1 0;
+  padding: 0;
+  border: none;
+  background-color: transparent;
+  color: #ccc;
+  cursor: pointer;
+}
+.metronome-controls .metronome-bpm .bpm-input-group .bpm-input-wrapper .bpm-spinner .bpm-spinner-btn .material-symbols-outlined {
+  font-size: 1.05rem;
+}
+.metronome-controls .metronome-bpm .bpm-input-group .bpm-input-wrapper .bpm-spinner .bpm-spinner-btn:hover {
+  color: #e0e0e0;
+}
+.metronome-controls .metronome-bpm .bpm-input-group .bpm-input-wrapper .bpm-spinner .bpm-spinner-btn:active {
+  color: #3a7bd5;
 }
 .metronome-controls .metronome-bpm .bpm-input-group .bpm-step {
   padding: 0.125rem 6px;
@@ -731,38 +696,8 @@ select:disabled {
   letter-spacing: 0.03em;
   font-size: 0.7rem;
 }
-.synth-block .synth-section-program-change .program-bank,
-.synth-block .synth-section-program-change .program-number,
-.synth-block .synth-section-program-change .program-bank-slot .custom-dropdown-btn,
-.synth-block .synth-section-program-change .program-number-slot .custom-dropdown-btn {
-  padding: 0.25rem 0.375rem;
-  font-size: 0.78rem;
-  background-color: #232323;
-  color: #e0e0e0;
-  border: 1px solid #333;
-  border-radius: 0.25rem;
-  cursor: pointer;
-  font-variant-numeric: tabular-nums;
-}
-.synth-block .synth-section-program-change .program-bank:hover,
-.synth-block .synth-section-program-change .program-number:hover,
-.synth-block .synth-section-program-change .program-bank-slot .custom-dropdown-btn:hover,
-.synth-block .synth-section-program-change .program-number-slot .custom-dropdown-btn:hover {
-  border-color: #3a7bd5;
-}
-.synth-block .synth-section-program-change .program-bank:focus,
-.synth-block .synth-section-program-change .program-number:focus,
-.synth-block .synth-section-program-change .program-bank-slot .custom-dropdown-btn:focus,
-.synth-block .synth-section-program-change .program-number-slot .custom-dropdown-btn:focus {
-  border-color: #3a7bd5;
-}
-.synth-block .synth-section-program-change .program-bank-slot,
-.synth-block .synth-section-program-change .program-number-slot {
-  display: inline-flex;
-}
 .synth-block .synth-section-program-change .program-bank-manual,
 .synth-block .synth-section-program-change .program-number-manual {
-  display: none;
   padding: 0.25rem 0.375rem;
   font-size: 0.78rem;
   background-color: #232323;
@@ -773,6 +708,12 @@ select:disabled {
   text-align: center;
   font-variant-numeric: tabular-nums;
 }
+.synth-block .synth-section-program-change .program-bank-manual::-webkit-inner-spin-button, .synth-block .synth-section-program-change .program-bank-manual::-webkit-outer-spin-button,
+.synth-block .synth-section-program-change .program-number-manual::-webkit-inner-spin-button,
+.synth-block .synth-section-program-change .program-number-manual::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
 .synth-block .synth-section-program-change .program-bank-manual:hover,
 .synth-block .synth-section-program-change .program-number-manual:hover {
   border-color: #3a7bd5;
@@ -782,19 +723,11 @@ select:disabled {
   border-color: #3a7bd5;
 }
 .synth-block .synth-section-program-change .program-bank-manual {
-  width: 1.75rem;
-  text-transform: uppercase;
+  width: 2.5rem;
+  cursor: pointer;
 }
 .synth-block .synth-section-program-change .program-number-manual {
   width: 3.5rem;
-}
-.synth-block.compact .synth-section-program-change .program-bank-slot,
-.synth-block.compact .synth-section-program-change .program-number-slot {
-  display: none;
-}
-.synth-block.compact .synth-section-program-change .program-bank-manual,
-.synth-block.compact .synth-section-program-change .program-number-manual {
-  display: inline-block;
 }
 .synth-block .synth-color-band {
   position: absolute;

@@ -350,90 +350,6 @@ input[type="range"].synth-range-input {
     }
 }
 
-// ==========================================================================
-// ---------- Custom dropdown (height-capped select replacement) ----------
-// Native <select> popups can't be limited in height; this component is
-// used for long lists (MIDI programs, banks). The popup opens below the
-// button (above if it would overflow the viewport) and caps at 10 rows.
-.custom-dropdown {
-    position: relative;
-    display: inline-flex;
-
-    .custom-dropdown-btn {
-        display: inline-flex;
-        align-items: center;
-        min-width: 2.5rem;
-        padding: .25rem .375rem !important;
-        font-size: .78rem;
-        background-color: $color-bg-medium;
-        color: $color-text-primary;
-        border: 1px solid $color-border;
-        border-radius: $border-radius-base;
-        cursor: pointer;
-        font-variant-numeric: tabular-nums;
-
-        &:hover, &.open { border-color: $color-accent; }
-    }
-
-    .custom-dropdown-popup {
-        position: absolute;
-        top: calc(100% + 2px);
-        right: 0;
-        z-index: 200;
-        display: flex;
-        flex-direction: column;
-        min-width: 100%;
-        background-color: $color-bg-panel;
-        border: 1px solid $color-border;
-        border-radius: $border-radius-base;
-        box-shadow: 0 .25rem 1rem rgba(0, 0, 0, .5);
-    }
-
-    .custom-dropdown-filter {
-        margin: .25rem .25rem 0;
-        padding: 0 .25rem;
-        font-size: .78rem;
-        width: 2rem;
-        background-color: $color-bg-medium;
-        color: $color-text-primary;
-        border: 1px solid $color-border;
-        border-radius: $border-radius-base;
-        outline: none;
-
-        &:focus { border-color: $color-accent; }
-    }
-
-    .custom-dropdown-list {
-        // ~10 rows of options, scrollable
-        max-height: 17.5rem;
-        margin: .25rem;
-        overflow-y: auto;
-        scrollbar-width: 0;
-        &::-webkit-scrollbar {
-            display: none;
-        }
-    }
-
-    .custom-dropdown-option {
-        padding: .125rem .375rem;
-        font-size: .78rem;
-        color: $color-text-secondary;
-        cursor: pointer;
-        white-space: nowrap;
-        font-variant-numeric: tabular-nums;
-
-        &:hover, &.active {
-            background-color: $color-bg-neutral;
-            color: $color-text-primary;
-        }
-
-        &.selected {
-            color: $color-accent;
-            font-weight: 600;
-        }
-    }
-}
-
 // Shared form controls
 // ==========================================================================
 // One class per role, used across every section of the interface:
@@ -720,15 +636,55 @@ $metronome-led-transition: 0.05s ease;
                 gap: .25rem;
             }
 
-            #bpm-input {
-                width: 3.5em;
-                text-align: center;
-                font-size: 2.25rem;
-                background-color: $color-bg-light;
-                color: $color-text-primary;
-                border: 1px solid $color-border;
-                border-radius: $border-radius-base;
-                outline: none;
+            .bpm-input-wrapper {
+                position: relative;
+
+                #bpm-input {
+                    width: 3.5em;
+                    text-align: center;
+                    font-size: 2.25rem;
+                    padding-right: 1.5rem;
+                    background-color: $color-bg-light;
+                    color: $color-text-primary;
+                    border: 1px solid $color-border;
+                    border-radius: $border-radius-base;
+                    outline: none;
+
+                    &::-webkit-inner-spin-button,
+                    &::-webkit-outer-spin-button {
+                        -webkit-appearance: none;
+                        margin: 0;
+                    }
+                }
+
+                // Custom ±1 spinners replacing the native (uncolorable) ones
+                .bpm-spinner {
+                    position: absolute;
+                    top: 1px;
+                    right: 1px;
+                    bottom: 1px;
+                    display: flex;
+                    flex-direction: column;
+                    justify-content: center;
+                    width: 1.4rem;
+
+                    .bpm-spinner-btn {
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        flex: 1 1 0;
+                        padding: 0;
+                        border: none;
+                        background-color: transparent;
+                        color: $color-text-secondary;
+                        cursor: pointer;
+
+                        .material-symbols-outlined { font-size: 1.05rem; }
+
+                        &:hover { color: $color-text-primary; }
+                        &:active { color: $color-accent; }
+                    }
+                }
             }
 
             .bpm-step {
@@ -881,34 +837,8 @@ $metronome-led-transition: 0.05s ease;
             font-size: .7rem;
         }
 
-        .program-bank,
-        .program-number,
-        .program-bank-slot .custom-dropdown-btn,
-        .program-number-slot .custom-dropdown-btn {
-            padding: .25rem .375rem;
-            font-size: .78rem;
-            background-color: $color-bg-medium;
-            color: $color-text-primary;
-            border: 1px solid $color-border;
-            border-radius: $border-radius-base;
-            cursor: pointer;
-            font-variant-numeric: tabular-nums;
-
-            &:hover { border-color: $color-accent; }
-            &:focus { border-color: $color-accent; }
-        }
-
-        // Slots hosting the custom dropdowns (bank + program). In
-        // compact mode the dropdown popup doesn't fit next to the
-        // reduced card: the manual inputs take over instead.
-        .program-bank-slot,
-        .program-number-slot {
-            display: inline-flex;
-        }
-
         .program-bank-manual,
         .program-number-manual {
-            display: none;
             padding: .25rem .375rem;
             font-size: .78rem;
             background-color: $color-bg-medium;
@@ -919,25 +849,18 @@ $metronome-led-transition: 0.05s ease;
             text-align: center;
             font-variant-numeric: tabular-nums;
 
+            &::-webkit-inner-spin-button,
+            &::-webkit-outer-spin-button {
+                -webkit-appearance: none;
+                margin: 0;
+            }
+
             &:hover { border-color: $color-accent; }
             &:focus { border-color: $color-accent; }
         }
 
-        .program-bank-manual { width: 1.75rem; text-transform: uppercase; }
+        .program-bank-manual { width: 2.5rem; cursor: pointer; }
         .program-number-manual { width: 3.5rem; }
-    }
-
-    // Compact mode: manual program inputs instead of the dropdown popups
-    &.compact .synth-section-program-change {
-        .program-bank-slot,
-        .program-number-slot {
-            display: none;
-        }
-
-        .program-bank-manual,
-        .program-number-manual {
-            display: inline-block;
-        }
     }
 
     // Clickable color band on the left edge

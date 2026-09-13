@@ -27,25 +27,16 @@ function refreshProgramDisplays(port, channel) {
     });
 }
 
-// Custom dropdowns per synth (id → { bank, number }), built once at
-// synth creation — the custom option of the bank list lives in the items
-// array, toggled by updateProgramDisplay.
-const synthProgramDropdowns = new Map();
-
-// Renders a synth's program controls (bank + program dropdowns) from
+// Renders a synth's program controls (bank + program inputs) from
 // programMap, based on the port and channel currently selected in its UI.
 // The bank letters A–P map to Bank Select MSB 0–15 with LSB 0; values
-// learned from the MIDI input that don't fit that scheme show as a
-// dedicated "custom" option (raw msb/lsb).
+// learned from the MIDI input that don't fit that scheme show as empty.
 function updateProgramDisplay(el) {
-    const dd = synthProgramDropdowns.get(Number(el.dataset.synthId));
-    if (!dd) return;
     const port = Number(el.querySelector('.synth-midi-port').value);
     const channel = Number(el.querySelector('.synth-channel').value);
     const st = programMap.get(programKey(port, channel));
 
-    // Manual (compact) inputs: hydrate them too, without clobbering a
-    // field the user is typing in
+    // Hydrate the inputs without clobbering a field the user is typing in
     const bankManual = el.querySelector('.program-bank-manual');
     const numberManual = el.querySelector('.program-number-manual');
     if (document.activeElement !== bankManual) {
@@ -58,68 +49,27 @@ function updateProgramDisplay(el) {
     if (document.activeElement !== numberManual) {
         numberManual.value = Number.isInteger(st?.program) ? st.program + 1 : '';
     }
-
-    // Program: don't clobber the dropdown while its popup is open
-    if (!dd.number._isOpen()) {
-        dd.number.set(Number.isInteger(st?.program) ? String(st.program) : '');
-    }
-
-    // Bank: same skip
-    if (dd.bank._isOpen()) return;
-    const msb = st?.bank_msb;
-    const lsb = st?.bank_lsb;
-    const customItem = dd.bank._customItem;
-    if (Number.isInteger(msb) && msb >= 0 && msb <= 15 && lsb === 0) {
-        customItem.hidden = true;
-        dd.bank.set(String(msb));
-    } else if (Number.isInteger(msb) || Number.isInteger(lsb)) {
-        // Learned bank outside the A–P scheme (e.g. GS/XG variations)
-        customItem.hidden = false;
-        customItem.label = `${msb ?? '-'}:${lsb ?? '-'}`;
-        dd.bank.set('custom');
-    } else {
-        customItem.hidden = true;
-        dd.bank.set('');
-    }
 }
 
 // Sends the synth's current bank + program selection to its output port
 // and channel, and reflects the returned state. Called on every change of
-// either control — an empty program sends the bank alone, and the "–"
-// bank sends no Bank Select at all. Reads the custom dropdowns, or the
-// compact-mode manual inputs when the synth card is reduced (the
-// dropdown popup doesn't fit alongside the compact layout).
+// either control — an empty program sends the bank alone, and an empty
+// bank sends no Bank Select at all. Bank as a single letter A–P, program
+// as 1–128.
 function sendProgramSelection(id, el) {
-    const dd = synthProgramDropdowns.get(id);
-    if (!dd) return;
     const port = Number(el.querySelector('.synth-midi-port').value);
     const channel = Number(el.querySelector('.synth-channel').value);
 
     let bankMsb = null;
     let bankLsb = null;
     let program = null;
-    if (el.classList.contains('compact')) {
-        // Manual inputs: bank as a single letter A–P, program as 1–128
-        const letter = el.querySelector('.program-bank-manual').value.trim().toUpperCase();
-        if (letter >= 'A' && letter <= 'P') {
-            bankMsb = letter.charCodeAt(0) - 65;
-            bankLsb = 0;
-        }
-        const num = Number(el.querySelector('.program-number-manual').value);
-        if (Number.isInteger(num) && num >= 1 && num <= 128) program = num - 1;
-    } else {
-        if (dd.bank.value() === 'custom') {
-            // Raw values learned from the MIDI input, kept as displayed
-            const st = programMap.get(programKey(port, channel));
-            bankMsb = Number.isInteger(st?.bank_msb) ? st.bank_msb : null;
-            bankLsb = Number.isInteger(st?.bank_lsb) ? st.bank_lsb : null;
-        } else if (dd.bank.value() !== '') {
-            bankMsb = Number(dd.bank.value()); // A–P → MSB 0–15
-            bankLsb = 0;
-        }
-        // Dropdown values are 0–127; "" (unselected) sends no program
-        if (dd.number.value() !== '') program = Number(dd.number.value());
+    const letter = el.querySelector('.program-bank-manual').value;
+    if (letter >= 'A' && letter <= 'P') {
+        bankMsb = letter.charCodeAt(0) - 65;
+        bankLsb = 0;
     }
+    const num = Number(el.querySelector('.program-number-manual').value);
+    if (Number.isInteger(num) && num >= 1 && num <= 128) program = num - 1;
 
     invoke('set_synth_program', { id, program, bankMsb, bankLsb })
         .then(st => {
@@ -132,133 +82,6 @@ function sendProgramSelection(id, el) {
 // Display name of a synth: its custom name, or the translated default
 function synthDisplayName(id) {
     return synthNames.get(id) || t('synth.title', { id });
-}
-
-// ---------- Custom dropdown component ----------
-// A native <select> popup can't be height-limited, so long lists (the
-// 128 MIDI programs) get this lightweight custom dropdown: a button
-// showing the current value, opening a popup capped to ~10 rows with
-// scrolling, a text filter on long lists, and full keyboard support.
-// items: [{ value: string, label: string, hidden?: bool }]
-// Returns { root, set(value), value(), refresh(), open(), close() }.
-function createDropdown({ items, onSelect, placeholder = '–' }) {
-    let isOpen = false;
-    let activeIndex = -1;
-
-    const root = document.createElement('div');
-    root.className = 'custom-dropdown';
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'custom-dropdown-btn';
-    const popup = document.createElement('div');
-    popup.className = 'custom-dropdown-popup hidden';
-    const list = document.createElement('div');
-    list.className = 'custom-dropdown-list';
-    const filterInput = document.createElement('input');
-    filterInput.type = 'text';
-    filterInput.className = 'custom-dropdown-filter hidden';
-    filterInput.placeholder = '…';
-    popup.append(filterInput, list);
-    root.append(btn, popup);
-
-    // The options of a native select, as rendered options
-    const visibleItems = () => items.filter(it => !it.hidden);
-    const labelOf = value =>
-        items.find(it => it.value === value)?.label ?? placeholder;
-
-    function renderList() {
-        const filter = filterInput.value.trim().toLowerCase();
-        const filtered = visibleItems().filter(it =>
-            !filter || it.label.toLowerCase().includes(filter));
-        list.innerHTML = '';
-        filtered.forEach((it, i) => {
-            const opt = document.createElement('div');
-            opt.className = 'custom-dropdown-option';
-            if (it.value === currentValue) opt.classList.add('selected');
-            opt.dataset.value = it.value;
-            opt.textContent = it.label;
-            opt.addEventListener('click', () => {
-                setValue(it.value);
-                onSelect?.(it.value);
-                close();
-            });
-            list.appendChild(opt);
-        });
-        activeIndex = filtered.findIndex(it => it.value === currentValue);
-    }
-
-    let currentValue = '';
-    function setValue(value) {
-        currentValue = value;
-        btn.textContent = labelOf(value);
-    }
-
-    function scrollToActive() {
-        const opts = list.querySelectorAll('.custom-dropdown-option');
-        const el = opts[Math.max(0, activeIndex)];
-        if (el) el.scrollIntoView({ block: 'nearest' });
-    }
-
-    function moveActive(delta) {
-        const opts = list.querySelectorAll('.custom-dropdown-option');
-        if (opts.length === 0) return;
-        activeIndex = Math.min(opts.length - 1, Math.max(0, activeIndex + delta));
-        opts.forEach((o, i) => o.classList.toggle('active', i === activeIndex));
-        scrollToActive();
-    }
-
-    function open() {
-        if (isOpen) return;
-        isOpen = true;
-        popup.classList.remove('hidden');
-        btn.classList.add('open');
-        filterInput.value = '';
-        // The filter only helps on long lists
-        filterInput.classList.toggle('hidden', visibleItems().length < 16);
-        renderList();
-        moveActive(0);
-        if (!filterInput.classList.contains('hidden')) filterInput.focus();
-        else scrollToActive();
-    }
-
-    function close() {
-        if (!isOpen) return;
-        isOpen = false;
-        popup.classList.add('hidden');
-        btn.classList.remove('open');
-    }
-
-    btn.addEventListener('click', () => (isOpen ? close() : open()));
-    filterInput.addEventListener('input', () => { renderList(); moveActive(0); });
-    filterInput.addEventListener('keydown', (e) => {
-        if (e.key === 'ArrowDown') { e.preventDefault(); moveActive(1); }
-        else if (e.key === 'ArrowUp') { e.preventDefault(); moveActive(-1); }
-        else if (e.key === 'Enter') {
-            e.preventDefault();
-            const opts = list.querySelectorAll('.custom-dropdown-option');
-            const el = opts[activeIndex];
-            if (el) { setValue(el.dataset.value); onSelect?.(el.dataset.value); close(); }
-        } else if (e.key === 'Escape') { e.stopPropagation(); close(); }
-    });
-    // Clicking outside closes every open dropdown (several can coexist)
-    document.addEventListener('click', (e) => {
-        if (isOpen && !root.contains(e.target)) close();
-    });
-
-    function refresh() { renderList(); }
-
-    setValue('');
-    return {
-        root,
-        set: setValue,
-        value: () => currentValue,
-        refresh,
-        open,
-        close,
-        button: btn,
-        _isOpen: () => isOpen,
-        _customItem: items.find(it => it.value === 'custom') || null,
-    };
 }
 
 // ---------- Language switcher ----------
@@ -2293,6 +2116,71 @@ bpmMinus5.addEventListener('click',  () => applyBpm(Number(bpmInput.value) - 5))
 bpmPlus5.addEventListener('click',   () => applyBpm(Number(bpmInput.value) + 5));
 bpmPlus10.addEventListener('click',  () => applyBpm(Number(bpmInput.value) + 10));
 
+// Custom ±1 spinner arrows (replacing the native, uncolorable ones)
+document.querySelector('#bpm-up').addEventListener('click',   () => applyBpm(Number(bpmInput.value) + 1));
+document.querySelector('#bpm-down').addEventListener('click', () => applyBpm(Number(bpmInput.value) - 1));
+
+// Mouse wheel / trackpad scroll over a hovered numeric input (number or
+// range): increments (scroll up) or decrements (scroll down) the value,
+// then lets the existing listeners apply it. Delegated at document level
+// so dynamically created inputs (e.g. synth sliders) work too. Trackpad
+// scrolls emit many tiny deltas: they are accumulated so one step
+// requires a slightly more deliberate gesture (mouse-wheel-sized deltas
+// still apply one step per notch).
+const WHEEL_STEP_THRESHOLD = 30;
+let wheelAccum = 0;
+let wheelTime = 0;
+let wheelTarget = null;
+
+document.addEventListener('wheel', (event) => {
+    if (event.ctrlKey) return; // pinch zoom / ctrl+wheel: don't touch the value
+    // The synth range inputs sit under a .synth-range-track overlay with
+    // pointer-events on the track, so hovering the track must count too.
+    // Dual-handle tracks (brightness, velocity) stack two inputs: scroll
+    // drives the lower handle, Shift+scroll the upper one.
+    const wrapper = event.target.closest('.bpm-input-wrapper');
+    const track = event.target.closest('.synth-range-track');
+    const input = wrapper
+        ? wrapper.querySelector('input[type="number"]')
+        : track
+            ? (event.shiftKey
+                ? track.querySelectorAll('input[type="range"]')[1] || track.querySelector('input[type="range"]')
+                : track.querySelector('input[type="range"]'))
+            : event.target.closest('input[type="number"], input[type="range"]');
+    if (!input) return;
+    event.preventDefault();
+
+    // On macOS, Shift+scroll can translate the vertical gesture into
+    // horizontal deltas (deltaY = 0): fall back to deltaX so Shift keeps
+    // working there
+    const delta = event.deltaY !== 0 ? event.deltaY : (event.shiftKey ? event.deltaX : 0);
+
+    // Reset the accumulator when switching input or after a pause
+    if (input !== wheelTarget || event.timeStamp - wheelTime > 200) wheelAccum = 0;
+    wheelTarget = input;
+    wheelTime = event.timeStamp;
+
+    if (Math.abs(delta) >= WHEEL_STEP_THRESHOLD) {
+        wheelAccum = 0; // big delta (mouse wheel notch): one step as before
+    } else {
+        if (Math.sign(delta) !== Math.sign(wheelAccum)) wheelAccum = 0;
+        wheelAccum += delta;
+        if (Math.abs(wheelAccum) < WHEEL_STEP_THRESHOLD) return; // keep scrolling
+        wheelAccum -= Math.sign(wheelAccum) * WHEEL_STEP_THRESHOLD;
+    }
+
+    const step = Number(input.step) || 1;
+    const min = input.min === '' ? -Infinity : Number(input.min);
+    const max = input.max === '' ? Infinity : Number(input.max);
+    const value = Math.min(max, Math.max(min,
+        Number(input.value || 0) + (delta < 0 ? step : -step)));
+    input.value = String(value);
+    // Sliders react to "input" (live update), commit-style listeners to
+    // "change" — dispatch both
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change'));
+}, { passive: false });
+
 // Direct keyboard input: validated on blur or on "Enter"
 bpmInput.addEventListener('change', () => applyBpm(Number(bpmInput.value)));
 
@@ -2445,6 +2333,12 @@ function createSynthElement(id, cfg = null) {
         `<option value="${i}">${t('synth.channelOption', { number: i + 1 })}</option>`
     ).join('');
 
+    // Bank select options: "–" (no Bank Select) + the 16 letters A–P
+    const bankOptions = ['–', ...Array.from({ length: 16 }, (_, i) =>
+        String.fromCharCode(65 + i))]
+        .map(letter => `<option value="${letter === '–' ? '' : letter}">${letter}</option>`)
+        .join('');
+
     const colorSwatches = SYNTH_COLORS.map(c =>
         `<button class="color-swatch" data-color="${c}" style="background:${c}" title="${c}"></button>`
     ).join('');
@@ -2472,9 +2366,7 @@ function createSynthElement(id, cfg = null) {
                     <div class="synth-title-label" data-i18n-title="synth.renameHint"></div>
                     <div class="synth-section-program-change" data-i18n-title="synth.programEditHint">
                         <span class="program-label" data-i18n="synth.programLabel"></span>
-                        <span class="program-bank-slot"></span>
-                        <input type="text" class="program-bank-manual" placeholder="-" data-i18n-title="synth.programBankManual" />
-                        <span class="program-number-slot"></span>
+                        <select class="program-bank-manual" data-i18n-title="synth.programBankManual">${bankOptions}</select>
                         <input type="number" class="program-number-manual" placeholder="-" min="1" max="128" step="1" data-i18n-title="synth.programManual" />
                     </div>
                 </div>
@@ -2607,7 +2499,7 @@ function createSynthElement(id, cfg = null) {
                             <span class="material-symbols-outlined" aria-hidden="true">swap_horiz</span>
                         </button>
                         <button class="synth-note-sustain icon-btn" data-i18n-title="synth.noteSustain">
-                            <span class="material-symbols-outlined" aria-hidden="true">line_start</span>
+                            <span class="material-symbols-outlined" aria-hidden="true">touch_long</span>
                         </button>
                     </div>
                     <div class="synth-section-body synth-note-length-section">
@@ -2730,32 +2622,9 @@ function createSynthElement(id, cfg = null) {
     });
 
     // ---- Program: bank (A–P) + program (1–128) sent to the instrument ----
-    // Both controls are always visible; each change sends the current
+    // Both inputs are always visible; each change sends the current
     // selection (see sendProgramSelection). The display also reflects
-    // programs learned from the MIDI input. Long lists need a height-
-    // capped custom dropdown, so the native selects are replaced.
-    const bankItems = [
-        { value: '', label: '–' },
-        ...Array.from({ length: 16 }, (_, i) =>
-            ({ value: String(i), label: String.fromCharCode(65 + i) })),
-        { value: 'custom', label: '', hidden: true },
-    ];
-    const bankDropdown = createDropdown({
-        items: bankItems,
-        onSelect: () => sendProgramSelection(id, el),
-    });
-    const numberDropdown = createDropdown({
-        items: [
-            { value: '', label: '–' },
-            ...Array.from({ length: 128 }, (_, i) =>
-                ({ value: String(i), label: String(i + 1) })),
-        ],
-        onSelect: () => sendProgramSelection(id, el),
-    });
-    el.querySelector('.program-bank-slot').appendChild(bankDropdown.root);
-    el.querySelector('.program-number-slot').appendChild(numberDropdown.root);
-    synthProgramDropdowns.set(id, { bank: bankDropdown, number: numberDropdown });
-    // Manual inputs (compact mode): send on change
+    // programs learned from the MIDI input.
     el.querySelector('.program-bank-manual')
         .addEventListener('change', () => sendProgramSelection(id, el));
     el.querySelector('.program-number-manual')
@@ -2883,12 +2752,6 @@ function createSynthElement(id, cfg = null) {
         const compact = el.classList.toggle('compact');
         toggleFullOptionsBtn.querySelector('.material-symbols-outlined').textContent =
             compact ? 'expand_all' : 'collapse_all';
-        // A dropdown popup doesn't fit in the compact layout: close any
-        // open one, and hydrate the manual inputs taking over
-        const dd = synthProgramDropdowns.get(id);
-        dd?.bank.close();
-        dd?.number.close();
-        updateProgramDisplay(el);
     });
 
     // ---- Monophonic / polyphonic mode ----
@@ -3361,7 +3224,6 @@ async function onSynthRemoveClick(id, el) {
     synthCursors.delete(id);
     synthHighlights.delete(id);
     synthBrightnessBounds.delete(id);
-    synthProgramDropdowns.delete(id);
     synthNames.delete(id);
     el.remove();
     redrawAllHighlights();
