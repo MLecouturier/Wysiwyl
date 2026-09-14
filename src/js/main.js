@@ -1461,9 +1461,9 @@ let totalPixels   = 0;          // total number of pixels in the current grid
 // Colors offered for the synths (palette configurable in config.json,
 // replaced at startup by the value from get_config)
 let SYNTH_COLORS = [
-    '#e74c3c', '#e67e22', '#f1c40f', '#2ecc71',
-    '#1abc9c', '#3498db', '#9b59b6', '#e91e63',
-    '#ff5722', '#00bcd4', '#8bc34a', '#ffffff',
+    '#ff2f2f', '#ff8c00', '#ffc300', '#b6f000',
+    '#00e884', '#00d5b8', '#432fff', '#7d2fd4',
+    '#b42fd4', '#ea2bd9', '#ff2f92', '#ff2f5d',
 ];
 
 // Bounds (low, high) of the bass / medium / treble note-range filters,
@@ -2898,10 +2898,14 @@ function createSynthElement(id, cfg = null) {
     synthTabs.appendChild(tab);
     el._tab = tab;
 
-    // Color: reuse a pre-seeded entry (session load), or rotate through
-    // the palette
+    // Color: reuse a pre-seeded entry (session load), or take the first
+    // palette color not already used by another synth — falling back to
+    // rotation when the palette is exhausted
     const seededColor = synthColors.get(id);
-    const defaultColor = seededColor || SYNTH_COLORS[(synthColors.size) % SYNTH_COLORS.length];
+    const usedColors = new Set(synthColors.values());
+    const defaultColor = seededColor
+        || SYNTH_COLORS.find(c => !usedColors.has(c))
+        || SYNTH_COLORS[(synthColors.size) % SYNTH_COLORS.length];
     synthColors.set(id, defaultColor);
 
     // The tab carries its synth's identification color (handle icon +

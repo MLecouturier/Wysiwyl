@@ -12,9 +12,9 @@ pub const DEFAULT_NOTE_RANGE_BOUNDS: [(u8, u8); 3] = [(21, 47), (48, 71), (72, 1
 
 /// Default palette offered for the synthesizers.
 fn default_synth_colors() -> Vec<String> {
-    ["#e74c3c", "#e67e22", "#f1c40f", "#2ecc71",
-     "#1abc9c", "#3498db", "#9b59b6", "#e91e63",
-     "#ff5722", "#00bcd4", "#8bc34a", "#ffffff"]
+    ["#ff2f2f", "#ff8c00", "#ffc300", "#b6f000",
+     "#00e884", "#00d5b8", "#432fff", "#7d2fd4",
+     "#b42fd4", "#ea2bd9", "#ff2f92", "#ff2f5d"]
         .iter().map(|s| s.to_string()).collect()
 }
 
