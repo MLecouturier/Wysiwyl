@@ -113,14 +113,15 @@
                                     </label>
                                 </div>
                                 <div class="flex flex-col gap-2 h-full flex-auto controls-set">
-                                    <label data-i18n-title="controls.clarity">
-                                        <span><span data-i18n="controls.clarity"></span> <em id="clarity-value">0</em></span>
-                                        <input type="range" id="clarity" min="-100" max="100" value="0" step="1" />
-                                    </label>
                                     <label data-i18n-title="controls.vibrance">
                                         <span><span data-i18n="controls.vibrance"></span> <em id="vibrance-value">0</em></span>
                                         <input type="range" id="vibrance" min="-100" max="100" value="0" step="1" />
                                     </label>
+                                    <div class="flex-filler h-4"></div>
+                                    <label data-i18n-title="controls.clarity">
+                                        <span><span data-i18n="controls.clarity"></span> <em id="clarity-value">0</em></span>
+                                        <input type="range" id="clarity" min="-100" max="100" value="0" step="1" />
+                                    </label>                                    
                                     <label data-i18n-title="controls.texture">
                                         <span><span data-i18n="controls.texture"></span> <em id="texture-value">0</em></span>
                                         <input type="range" id="texture" min="-100" max="100" value="0" step="1" />
@@ -211,21 +212,24 @@
         <div class="column column-right">
 
             <div class="content-area synth-list" id="synth-list">
-                <div class="synth-list-header">
-                    <h2 data-i18n="synthList.title"></h2>
-                    <div class="synth-list-header-actions">
-                        <div class="flex-fill"></div>
-                        <button id="play-all-btn" class="synth-list-action synth-list-action-play" data-i18n-title="synthList.playAllStart"><span class="material-symbols-outlined" aria-hidden="true">play_arrow</span></button>
-                        <button id="panic-btn" class="synth-list-action synth-list-action-stop" data-i18n-title="synthList.panic"><span class="material-symbols-outlined" aria-hidden="true">skull</span></button>
-                        <div class="flex-fill"></div>
-                        <button id="add-synth-btn" class="synth-list-action" data-i18n-title="synthList.add"><span class="material-symbols-outlined" aria-hidden="true">add</span></button>
-                    </div>
-                </div>
+                
                 <div class="synth-list-body">
+                    
                     <div class="synth-tabs"></div>
                     <div class="synth-devices">
-                        <!-- Synthesizers will be dynamically added here -->
-                        <div class="placeholder-text"></div>
+                        <div class="synth-list-header">
+                            <h2 data-i18n="synthList.title"></h2>
+                            <div class="synth-list-header-actions">
+                                <button id="play-all-btn" class="synth-list-action synth-list-action-play" data-i18n-title="synthList.playAllStart"><span class="material-symbols-outlined" aria-hidden="true">play_arrow</span></button>
+                                <button id="panic-btn" class="synth-list-action synth-list-action-stop" data-i18n-title="synthList.panic"><span class="material-symbols-outlined" aria-hidden="true">skull</span></button>
+                                <div class="flex-fill"></div>
+                                <button id="add-synth-btn" class="synth-list-action" data-i18n-title="synthList.add"><span class="material-symbols-outlined" aria-hidden="true">add</span></button>
+                            </div>
+                        </div>
+                        <div class="synth-devices-wrapper">
+                            <!-- Synthesizers will be dynamically added here -->
+                            <div class="placeholder-text"></div>
+                        </div>                        
                     </div>
                 </div>
             </div>

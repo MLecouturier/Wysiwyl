@@ -73,11 +73,14 @@
     "stop": "Pause",
     "toggleLoop": "Activer/désactiver la boucle",
     "toggleBackAndForth": "Lecture aller-retour (rebond entre les bornes de la séquence)",
+    "readingDirectionTitle": "Sens de lecture de la séquence",
     "readingDirection": {
       "leftToRight": "Sens de lecture : gauche → droite",
       "rightToLeft": "Sens de lecture : droite → gauche",
       "topToBottom": "Sens de lecture : haut → bas",
-      "bottomToTop": "Sens de lecture : bas → haut"
+      "bottomToTop": "Sens de lecture : bas → haut",
+      "spiral": "Sens de lecture : spirale (horaire, du coin haut-gauche vers le centre)",
+      "spiralReverse": "Sens de lecture : spirale (anti-horaire, du coin haut-gauche vers le centre)"
     },
     "rewind": "Remettre le pointeur de lecture à zéro",
     "stepForward": "Avancer la lecture d'un pixel",

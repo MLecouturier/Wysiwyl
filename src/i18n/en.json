@@ -73,11 +73,14 @@
     "stop": "Pause",
     "toggleLoop": "Enable/disable looping",
     "toggleBackAndForth": "Back-and-forth playback (bounces between the sequence bounds)",
+    "readingDirectionTitle": "Reading direction of the sequence",
     "readingDirection": {
       "leftToRight": "Reading direction: left → right",
       "rightToLeft": "Reading direction: right → left",
       "topToBottom": "Reading direction: top → bottom",
-      "bottomToTop": "Reading direction: bottom → top"
+      "bottomToTop": "Reading direction: bottom → top",
+      "spiral": "Reading direction: spiral (clockwise, from the top-left corner toward the center)",
+      "spiralReverse": "Reading direction: spiral (counterclockwise, from the top-left corner toward the center)"
     },
     "rewind": "Reset the playhead to zero",
     "stepForward": "Advance the playhead by one pixel",

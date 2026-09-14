@@ -6,8 +6,10 @@
 .synth-block {
     position: relative;
     background-color: $color-bg-light;
-    border: 1px solid $color-border;
-    border-left: 5px solid $color-border; // will be visually covered by .synth-color-band
+    // The synth's identification color (set inline via --synth-color,
+    // same mechanism as the tab's --synth-tab-color)
+    border: 1px solid var(--synth-color, #{$color-border});
+    border-left: 5px solid var(--synth-color, #{$color-border}); // will be visually covered by .synth-color-band
     border-radius: $border-radius-base;
     padding: 10px 10px 10px .875rem;
     overflow: visible;
@@ -41,7 +43,7 @@
         .program-bank-manual,
         .program-number-manual {
             padding: .25rem .375rem;
-            font-size: .78rem;
+            font-size: .9rem;
             background-color: $color-bg-medium;
             color: $color-text-primary;
             border: 1px solid $color-border;
@@ -60,7 +62,7 @@
             &:focus { border-color: $color-accent; }
         }
 
-        .program-bank-manual { width: 2.5rem; cursor: pointer; }
+        .program-bank-manual { width: 3rem; cursor: pointer; }
         .program-number-manual { width: 3.5rem; }
     }
 
@@ -128,6 +130,10 @@
 
             &.center {
                 justify-content: center;
+            }
+
+            .synth-midi-port {
+                max-width: 11rem;
             }
         }
 

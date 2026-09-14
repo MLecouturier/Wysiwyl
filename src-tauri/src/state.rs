@@ -36,7 +36,9 @@ pub enum NoteLength {
 
 /// Direction in which the playhead travels over the pixel sequence. The
 /// sequence is built accordingly: line by line for the horizontal
-/// directions, column by column for the vertical ones.
+/// directions, column by column for the vertical ones, and a spiral
+/// (clockwise or counterclockwise, from the zone's top-left corner
+/// toward its center) for the two spiral directions.
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub enum ReadingDirection {
@@ -44,6 +46,8 @@ pub enum ReadingDirection {
     RightToLeft,
     TopToBottom,
     BottomToTop,
+    Spiral,
+    SpiralReverse,
 }
 
 /// Musical scale the derived notes are quantized to: each raw note is

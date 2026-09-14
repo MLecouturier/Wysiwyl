@@ -420,25 +420,48 @@ pub fn set_synth_back_n_forth(
 }
 
 /// Sets the direction in which the pixel sequence is read. The playhead
-/// restarts from the beginning of the newly ordered sequence.
+/// stays on the pixel it is playing: its index is remapped into the newly
+/// ordered sequence (restarts at 0 when no image is loaded or the pixel
+/// cannot be found in the new sequence).
 #[tauri::command]
 pub fn set_synth_reading_direction(
     id: u32,
     direction: ReadingDirection,
     state: State<SynthState>,
+    image_state: State<ImageState>,
 ) -> Result<(), AppError> {
+    // Lock in the metronome's order (image, then synths) to avoid an
+    // AB-BA deadlock with the tick loop
+    let image = image_state.processed.lock().unwrap();
     let mut synths = state.synths.lock().unwrap();
-    match synths.get_mut(&id) {
-        Some(synth) => {
-            synth.reading_direction = direction;
-            synth.cursor = 0;
-            synth.play_forward = true;
-            synth.end_pending = false;
-            synth.tempo_accumulator = 0.0;
-            Ok(())
-        }
-        None => Err(synth_not_found(id)),
+    let synth = match synths.get_mut(&id) {
+        Some(s) => s,
+        None => return Err(synth_not_found(id)),
+    };
+
+    // The sequence order changes: remap the playhead onto the same pixel
+    // so the reading continues where it is
+    let mut cursor = 0;
+    if let Some(img) = image.as_ref() {
+        cursor = remapped_cursor(
+            synth,
+            &synth.zones,
+            &synth.zones,
+            synth.sorted_reading,
+            synth.sorted_reading,
+            synth.reading_direction,
+            direction,
+            img.width() as usize,
+            img.height() as usize,
+        );
     }
+
+    synth.reading_direction = direction;
+    synth.cursor = cursor;
+    // A stale end_pending from the old sequence would stop a playing
+    // synth on its next tick
+    synth.end_pending = false;
+    Ok(())
 }
 
 #[tauri::command]
@@ -652,6 +675,8 @@ pub fn set_synth_zones(
             &zones,
             synth.sorted_reading,
             synth.sorted_reading,
+            synth.reading_direction,
+            synth.reading_direction,
             img.width() as usize,
             img.height() as usize,
         );
@@ -716,6 +741,8 @@ pub fn set_synth_sorted_reading(
             &synth.zones,
             synth.sorted_reading,
             enabled,
+            synth.reading_direction,
+            synth.reading_direction,
             img.width() as usize,
             img.height() as usize,
         );

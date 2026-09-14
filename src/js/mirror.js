@@ -3,7 +3,7 @@
 // snapshot, zone snapshot, playhead cursors); this page renders them with
 // the same shared code (viewer-render.js) so the projection matches the
 // main viewer exactly.
-import { computeLayout, drawZones, drawCursorCell } from './viewer-render.js';
+import { computeLayout, drawZones, drawCursorCell, MUTE_GLYPH } from './viewer-render.js';
 
 const { emit, listen } = window.__TAURI__.event;
 const { getCurrentWindow } = window.__TAURI__.window;
@@ -74,6 +74,18 @@ listen('mirror:cursors', (event) => {
     cursorData = event.payload.cursors;
     drawCursorsOverlay();
 });
+
+// The mirror's DOM contains no musical characters, so the Noto Music
+// font (loaded on demand via unicode-range) is never fetched — and
+// canvas fillText does not trigger a deferred font download either:
+// it silently falls back to a system font, which renders the mute rest
+// glyph with the wrong symbol. Force the download explicitly, then
+// redraw the zones overlay once the font is available (the mute marks
+// may have been drawn before it finished loading).
+document.fonts.load('16px "Noto Music"', MUTE_GLYPH)
+    .then(() => drawZonesOverlay())
+    .catch(err => console.error('Error while loading the Noto Music font:', err));
+document.fonts.ready.then(() => drawZonesOverlay());
 
 new ResizeObserver(resizeOverlay).observe(overlay);
 

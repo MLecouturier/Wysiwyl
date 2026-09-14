@@ -165,9 +165,6 @@ function retranslateSynthElement(el) {
         pixelInfo.textContent = t('synth.pixelInfoEmpty');
     }
 
-    const directionBtn = el.querySelector('.synth-reading-direction-btn');
-    if (directionBtn) updateReadingDirectionBtn(directionBtn);
-
     updateZonesLabel(Number(el.dataset.synthId));
 
     // The paired tab follows: its tooltip and hidden play label are
@@ -301,20 +298,20 @@ window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && helpModeEnabled) setHelpMode(false);
 });
 
-// Icon and localized title of each reading direction, applied to the
-// cycling button of a synth.
-const READING_DIRECTION_ICONS = {
-    leftToRight: 'arrow_forward',
-    rightToLeft: 'arrow_back',
-    topToBottom: 'arrow_downward',
-    bottomToTop: 'arrow_upward',
-};
-function updateReadingDirectionBtn(btn) {
-    const direction = btn.dataset.direction || 'leftToRight';
-    btn.querySelector('.material-symbols-outlined').textContent =
-        READING_DIRECTION_ICONS[direction];
-    btn.title = t(`synth.readingDirection.${direction}`);
-}
+// Options of the reading-direction select of a synth: an arrow glyph
+// per direction (locale-independent), the localized names live in the
+// option titles.
+const READING_DIRECTIONS = [
+    { value: 'leftToRight', glyph: '→' },
+    { value: 'rightToLeft', glyph: '←' },
+    { value: 'topToBottom', glyph: '↓' },
+    { value: 'bottomToTop', glyph: '↑' },
+    { value: 'spiral', glyph: '↻' },
+    { value: 'spiralReverse', glyph: '↺' },
+];
+const readingDirectionOptions = READING_DIRECTIONS.map(d =>
+    `<option value="${d.value}" data-i18n-title="synth.readingDirection.${d.value}">${d.glyph}</option>`
+).join('');
 
 // ---------- Elements ----------
 const loadBtn         = document.querySelector('#load-btn');
@@ -2972,7 +2969,7 @@ const addSynthBtn   = document.querySelector('#add-synth-btn');
 const playAllBtn    = document.querySelector('#play-all-btn');
 const synthListBody = document.querySelector('.synth-list-body');
 const synthTabs     = document.querySelector('.synth-tabs');
-const synthDevices  = document.querySelector('.synth-devices');
+const synthDevices  = document.querySelector('.synth-devices-wrapper');
 const placeholder   = synthListBody.querySelector('.placeholder-text');
 
 // The full synth card in the devices column
@@ -3010,9 +3007,7 @@ function applySynthConfig(el, cfg) {
     el.querySelector('.synth-loop-btn').classList.toggle('active', !!cfg.loop_enabled && !cfg.back_and_forth);
     el.querySelector('.synth-back-n-forth-btn').classList.toggle('active', !!cfg.back_and_forth);
     // Reading direction
-    const dirBtn = el.querySelector('.synth-reading-direction-btn');
-    dirBtn.dataset.direction = cfg.reading_direction || 'leftToRight';
-    updateReadingDirectionBtn(dirBtn);
+    el.querySelector('.synth-reading-direction').value = cfg.reading_direction || 'leftToRight';
     // Sorted reading
     el.querySelector('.synth-sort-btn').classList.toggle('active', !!cfg.sorted_reading);
     // Brightness threshold
@@ -3140,8 +3135,9 @@ function createSynthElement(id, cfg = null) {
 
     // The tab carries its synth's identification color (handle icon +
     // left/top/bottom borders) via a CSS variable, kept in sync with the
-    // color picker below
+    // color picker below. The card does the same for its own borders.
     tab.style.setProperty('--synth-tab-color', defaultColor);
+    el.style.setProperty('--synth-color', defaultColor);
 
     const channelOptions = Array.from({ length: 16 }, (_, i) =>
         `<option value="${i}">${t('synth.channelOption', { number: i + 1 })}</option>`
@@ -3222,9 +3218,7 @@ function createSynthElement(id, cfg = null) {
                         <option value=0.25>1/4</option>
                     </select>
                     <div class="flex-fill"></div>                    
-                    <button class="synth-reading-direction-btn icon-btn" data-direction="leftToRight" data-i18n-title="synth.readingDirection.leftToRight">
-                        <span class="material-symbols-outlined" aria-hidden="true">arrow_forward</span>
-                    </button>
+                    <select class="synth-reading-direction" data-i18n-title="synth.readingDirectionTitle">${readingDirectionOptions}</select>
                     <button class="synth-sort-btn icon-btn" data-i18n-title="synth.toggleSort"><span class="material-symbols-outlined" aria-hidden="true">sort</span></button>
                     <div class="flex-fill"></div>
                     <button class="synth-loop-btn icon-btn active" data-i18n-title="synth.toggleLoop">
@@ -3236,6 +3230,9 @@ function createSynthElement(id, cfg = null) {
                 </div>
                 
                 <div class="synth-section-body center extra-margin">
+                <span class="material-symbols-outlined" aria-hidden="true">volume_up</span>
+                <input type="number" class="synth-volume" min="0" max="100" step="1" value="100" data-i18n-title="synth.volume" />
+                <div class="flex-fille grow"></div>
                     <button class="synth-rewind icon-btn" data-i18n-title="synth.rewind">
                         <span class="material-symbols-outlined" aria-hidden="true">fast_rewind</span>
                     </button>
@@ -3246,7 +3243,8 @@ function createSynthElement(id, cfg = null) {
                     <button class="synth-step-forward icon-btn" data-i18n-title="synth.stepForward">
                         <span class="material-symbols-outlined" aria-hidden="true">step</span>
                     </button>
-                    <input type="number" class="synth-volume" min="0" max="100" step="1" value="100" data-i18n-title="synth.volume" />
+                    
+                    
                 </div>
             </div>
 
@@ -3517,6 +3515,7 @@ function createSynthElement(id, cfg = null) {
             synthColors.set(id, color);
             colorBand.style.background = color;
             tab.style.setProperty('--synth-tab-color', color);
+            el.style.setProperty('--synth-color', color);
             colorPicker.classList.add('hidden');
             // Redraw the highlight with the new color
             redrawAllHighlights();
@@ -3587,19 +3586,13 @@ function createSynthElement(id, cfg = null) {
             .catch(err => console.error('Error in set_synth_back_n_forth:', err));
     });
 
-    // ---- Reading direction: cycles left→right / right→left / top→bottom
-    // / bottom→top ----
-    const directionBtn = el.querySelector('.synth-reading-direction-btn');
-    directionBtn.addEventListener('click', () => {
-        const order = Object.keys(READING_DIRECTION_ICONS);
-        const current = order.indexOf(directionBtn.dataset.direction);
-        const direction = order[(current + 1) % order.length];
-        directionBtn.dataset.direction = direction;
-        updateReadingDirectionBtn(directionBtn);
-        invoke('set_synth_reading_direction', { id, direction })
+    // ---- Reading direction: left→right / right→left / top→bottom /
+    // bottom→top ----
+    const directionSelect = el.querySelector('.synth-reading-direction');
+    directionSelect.addEventListener('change', () => {
+        invoke('set_synth_reading_direction', { id, direction: directionSelect.value })
             .catch(err => console.error('Error in set_synth_reading_direction:', err));
     });
-    updateReadingDirectionBtn(directionBtn);
 
     // ---- Sorted reading: the pixels follow their absolute position in
     // the image instead of being read zone by zone ----
@@ -4320,7 +4313,11 @@ addSynthBtn.addEventListener('click', async () => {
     try {
         const synth = await invoke('add_synth');
         placeholder.classList.add('hidden');
-        synthDevices.appendChild(createSynthElement(synth.id, synth));
+        const el = createSynthElement(synth.id, synth);
+        synthDevices.appendChild(el);
+        // Bring the newly created card into view (new synths stack at the
+        // end of the list, potentially below the fold)
+        scrollSynthCardIntoView(el);
     } catch (err) {
         console.error('Error while adding the synthesizer:', err);
         alert(translateError(err)); // or a more discreet display like a toast/error message in the UI

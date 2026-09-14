@@ -38,7 +38,7 @@ select {
     border: 1px solid $color-border;
     border-radius: $border-radius-base;
     padding: 4px .5rem;
-    font-size: 0.8rem;
+    font-size: 1rem;
     cursor: pointer;
 
     &:hover { border-color: $color-accent; }

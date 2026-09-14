@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -234,15 +235,58 @@ fn pixel_in_zones(zones: &[PixelZone], x: u32, y: u32) -> bool {
     zones.iter().any(|z| x >= z.x && x < z.x + z.w && y >= z.y && y < z.y + z.h)
 }
 
+/// Pushes the pixels of a rectangle in a spiral order, from its
+/// top-left corner toward its center: clockwise (`Spiral`, first step
+/// to the right) or counterclockwise (`SpiralReverse`, first step
+/// downward). The bounds shrink after each side; each loop iteration
+/// must re-check them because odd-sized edges meet in the middle.
+fn push_spiral_rect(sequence: &mut Vec<usize>, x0: usize, y0: usize, x1: usize, y1: usize, width: usize, clockwise: bool) {
+    let (mut left, mut top, mut right, mut bottom) = (x0, y0, x1, y1);
+    while left < right && top < bottom {
+        if clockwise {
+            for x in left..right { sequence.push(top * width + x); }
+            top += 1;
+            for y in top..bottom { sequence.push(y * width + right - 1); }
+            right -= 1;
+            if top < bottom {
+                for x in (left..right).rev() { sequence.push((bottom - 1) * width + x); }
+                bottom -= 1;
+            }
+            if left < right {
+                for y in (top..bottom).rev() { sequence.push(y * width + left); }
+                left += 1;
+            }
+        } else {
+            for y in top..bottom { sequence.push(y * width + left); }
+            left += 1;
+            for x in left..right { sequence.push((bottom - 1) * width + x); }
+            bottom -= 1;
+            if left < right {
+                for y in (top..bottom).rev() { sequence.push(y * width + right - 1); }
+                right -= 1;
+            }
+            if top < bottom {
+                for x in (left..right).rev() { sequence.push(top * width + x); }
+                top += 1;
+            }
+        }
+    }
+}
+
 /// Builds the flat, ordered list of pixel indices covered by the synth's
 /// zones. By default each zone is read in full, one after the other in
 /// drawing order, following the reading direction: line by line for the
-/// horizontal directions, column by column for the vertical ones. With
-/// `sorted` the pixels of all zones are merged and ordered by their
-/// absolute position in the image (in the reading direction) — one
-/// continuous sweep instead of per-zone blocks. An empty zone list yields
-/// an empty sequence (nothing selected); zones are clipped to the image
-/// bounds.
+/// horizontal directions, column by column for the vertical ones, and
+/// with a spiral from the zone's top-left corner toward its center for
+/// the two spiral directions. With `sorted` the pixels of all zones are
+/// merged and ordered by their absolute position in the image (in the
+/// reading direction) — one continuous sweep instead of per-zone blocks —
+/// except for the spiral directions, where the spiral is computed
+/// globally over the whole selection (bounding box spiral, filtered to
+/// the selected pixels, deduplicated): a scattered selection then reads
+/// in a seemingly random yet reproducible order. An empty zone list
+/// yields an empty sequence (nothing selected); zones are clipped to
+/// the image bounds.
 pub(crate) fn build_pixel_sequence(
     zones: &[PixelZone],
     width: usize,
@@ -251,6 +295,47 @@ pub(crate) fn build_pixel_sequence(
     sorted: bool,
 ) -> Vec<usize> {
     let mut sequence = Vec::new();
+
+    // Spiral directions: per-zone spiral when unsorted, global spiral
+    // over the whole selection when sorted
+    if matches!(direction, ReadingDirection::Spiral | ReadingDirection::SpiralReverse) {
+        let clockwise = direction == ReadingDirection::Spiral;
+        if sorted {
+            // Global spiral: sweep the bounding box of every zone, keeping
+            // only the selected pixels (deduplicated — a pixel covered by
+            // overlapping zones would otherwise break the spiral)
+            let selected: HashSet<usize> = zones.iter().flat_map(|zone| {
+                let x0 = (zone.x as usize).min(width);
+                let y0 = (zone.y as usize).min(height);
+                let x1 = (x0 + zone.w as usize).min(width);
+                let y1 = (y0 + zone.h as usize).min(height);
+                (y0..y1).flat_map(move |y| (x0..x1).map(move |x| y * width + x))
+            }).collect();
+            if selected.is_empty() {
+                return sequence;
+            }
+            // Bounding box of the zones, clamped to the image bounds (the
+            // sweep may cover unselected pixels; membership filtering
+            // happens afterwards)
+            let left = zones.iter().map(|z| z.x).min().unwrap_or(0) as usize;
+            let right = (zones.iter().map(|z| z.x + z.w).max().unwrap_or(0) as usize).min(width);
+            let top = zones.iter().map(|z| z.y).min().unwrap_or(0) as usize;
+            let bottom = (zones.iter().map(|z| z.y + z.h).max().unwrap_or(0) as usize).min(height);
+            let mut spiral = Vec::with_capacity(selected.len());
+            push_spiral_rect(&mut spiral, left, top, right, bottom, width, clockwise);
+            sequence = spiral.into_iter().filter(|p| selected.contains(p)).collect();
+        } else {
+            for zone in zones {
+                let x0 = (zone.x as usize).min(width);
+                let y0 = (zone.y as usize).min(height);
+                let x1 = (x0 + zone.w as usize).min(width);
+                let y1 = (y0 + zone.h as usize).min(height);
+                push_spiral_rect(&mut sequence, x0, y0, x1, y1, width, clockwise);
+            }
+        }
+        return sequence;
+    }
+
     for zone in zones {
         let x0 = (zone.x as usize).min(width);
         let y0 = (zone.y as usize).min(height);
@@ -286,6 +371,7 @@ pub(crate) fn build_pixel_sequence(
                     }
                 }
             }
+            ReadingDirection::Spiral | ReadingDirection::SpiralReverse => unreachable!("handled above"),
         }
     }
 
@@ -304,6 +390,7 @@ pub(crate) fn build_pixel_sequence(
             }
             ReadingDirection::BottomToTop => sequence
                 .sort_unstable_by_key(|&p| (p % width, std::cmp::Reverse(p / width))),
+            ReadingDirection::Spiral | ReadingDirection::SpiralReverse => unreachable!("handled above"),
         }
     }
     sequence
@@ -311,36 +398,26 @@ pub(crate) fn build_pixel_sequence(
 
 /// Computes the sequence index of the pixel currently under the synth's
 /// playhead, once its sequence has changed (zones edited, sorted reading
-/// toggled): keeps the playhead on the same pixel instead of restarting
-/// at the beginning. Returns 0 when the pixel is no longer selected (or
-/// the old sequence was empty).
+/// or reading direction changed): keeps the playhead on the same pixel
+/// instead of restarting at the beginning. Returns 0 when the pixel is no
+/// longer selected (or the old sequence was empty).
 pub(crate) fn remapped_cursor(
     synth: &Synth,
     old_zones: &[PixelZone],
     new_zones: &[PixelZone],
     old_sorted: bool,
     new_sorted: bool,
+    old_direction: ReadingDirection,
+    new_direction: ReadingDirection,
     width: usize,
     height: usize,
 ) -> usize {
-    let old_seq = build_pixel_sequence(
-        old_zones,
-        width,
-        height,
-        synth.reading_direction,
-        old_sorted,
-    );
+    let old_seq = build_pixel_sequence(old_zones, width, height, old_direction, old_sorted);
     if old_seq.is_empty() {
         return 0;
     }
     let pixel = old_seq[synth.cursor % old_seq.len()];
-    let new_seq = build_pixel_sequence(
-        new_zones,
-        width,
-        height,
-        synth.reading_direction,
-        new_sorted,
-    );
+    let new_seq = build_pixel_sequence(new_zones, width, height, new_direction, new_sorted);
     new_seq.iter().position(|&p| p == pixel).unwrap_or(0)
 }
 
@@ -1090,6 +1167,65 @@ mod tests {
     }
 
     #[test]
+    fn build_pixel_sequence_spiral_per_zone() {
+        // A 3×3 zone: clockwise spiral from the top-left, then the same
+        // zone counterclockwise (first step downward)
+        let zones = [PixelZone { x: 0, y: 0, w: 3, h: 3 }];
+        let (width, height) = (3usize, 3usize);
+
+        // Clockwise: top row →, right column ↓, bottom row ←, left column ↑, center
+        let cw = build_pixel_sequence(&zones, width, height, ReadingDirection::Spiral, false);
+        assert_eq!(cw, vec![0, 1, 2, 5, 8, 7, 6, 3, 4]);
+
+        // Counterclockwise: left column ↓, bottom row →, right column ↑, top row ←, center
+        let ccw = build_pixel_sequence(&zones, width, height, ReadingDirection::SpiralReverse, false);
+        assert_eq!(ccw, vec![0, 3, 6, 7, 8, 5, 2, 1, 4]);
+
+        // Degenerate rectangles: a single row and a single column walk
+        // each pixel exactly once, no duplicates
+        let row = [PixelZone { x: 1, y: 1, w: 5, h: 1 }];
+        assert_eq!(build_pixel_sequence(&row, 8, 4, ReadingDirection::Spiral, false), vec![9, 10, 11, 12, 13]);
+        assert_eq!(build_pixel_sequence(&row, 8, 4, ReadingDirection::SpiralReverse, false), vec![9, 10, 11, 12, 13]);
+        let col = [PixelZone { x: 2, y: 0, w: 1, h: 4 }];
+        assert_eq!(build_pixel_sequence(&col, 8, 4, ReadingDirection::Spiral, false), vec![2, 10, 18, 26]);
+        assert_eq!(build_pixel_sequence(&col, 8, 4, ReadingDirection::SpiralReverse, false), vec![2, 10, 18, 26]);
+
+        // Zone by zone: the first zone's spiral entirely, then the second's
+        let zones = [PixelZone { x: 0, y: 0, w: 2, h: 2 }, PixelZone { x: 3, y: 0, w: 2, h: 2 }];
+        let per_zone = build_pixel_sequence(&zones, 5, 2, ReadingDirection::Spiral, false);
+        assert_eq!(per_zone, vec![0, 1, 6, 5, 3, 4, 9, 8]);
+    }
+
+    #[test]
+    fn build_pixel_sequence_spiral_sorted_is_global_over_the_selection() {
+        // Two disjoint zones in the same bounding box: the sorted spiral
+        // walks the box's spiral keeping only the selected pixels
+        let zones = [
+            PixelZone { x: 0, y: 0, w: 1, h: 3 }, // left column
+            PixelZone { x: 2, y: 0, w: 1, h: 3 }, // right column
+        ];
+        let (width, height) = (3usize, 3usize);
+
+        // Clockwise bounding-box spiral: 0,1,2,5,8,7,6,3,4 — with column 1
+        // unselected, only the two selected columns remain, in spiral order
+        let sorted = build_pixel_sequence(&zones, width, height, ReadingDirection::Spiral, true);
+        assert_eq!(sorted, vec![0, 2, 5, 8, 6, 3]);
+
+        // Counterclockwise: 0,3,6,7,8,5,2,1,4 filtered the same way
+        let sorted_ccw = build_pixel_sequence(&zones, width, height, ReadingDirection::SpiralReverse, true);
+        assert_eq!(sorted_ccw, vec![0, 3, 6, 8, 5, 2]);
+
+        // Overlapping zones: each selected pixel appears exactly once
+        // (deduplicated), unlike the linear directions which replay it
+        let overlap = [
+            PixelZone { x: 0, y: 0, w: 2, h: 2 },
+            PixelZone { x: 1, y: 0, w: 1, h: 2 },
+        ];
+        let sorted_overlap = build_pixel_sequence(&overlap, width, height, ReadingDirection::Spiral, true);
+        assert_eq!(sorted_overlap, vec![0, 1, 4, 3]);
+    }
+
+    #[test]
     fn remapped_cursor_keeps_the_playhead_pixel_across_sort_toggle() {
         // Two zones, one pixel each; playing the first zone's pixel
         let zones = [PixelZone { x: 5, y: 0, w: 1, h: 1 }, PixelZone { x: 1, y: 0, w: 1, h: 1 }];
@@ -1098,13 +1234,33 @@ mod tests {
 
         // Playhead on pixel 5 (index 0 of the per-zone sequence)
         // Toggling sorted on: pixel 5 becomes index 1 of the new sequence
-        let cursor = remapped_cursor(&synth, &zones, &zones, false, true, width, height);
+        let cursor = remapped_cursor(&synth, &zones, &zones, false, true, ReadingDirection::LeftToRight, ReadingDirection::LeftToRight, width, height);
         assert_eq!(cursor, 1);
 
         // Toggling back off: the playhead returns to index 0
         let mut synth = synth;
         synth.cursor = 1;
-        let cursor = remapped_cursor(&synth, &zones, &zones, true, false, width, height);
+        let cursor = remapped_cursor(&synth, &zones, &zones, true, false, ReadingDirection::LeftToRight, ReadingDirection::LeftToRight, width, height);
         assert_eq!(cursor, 0);
+    }
+
+    #[test]
+    fn remapped_cursor_keeps_the_playhead_pixel_across_direction_change() {
+        // One full row zone, sorted reading; the playhead is on the
+        // sequence's last pixel in left→right order
+        let zones = [PixelZone { x: 0, y: 0, w: 4, h: 1 }];
+        let mut synth = Synth::new(1);
+        synth.cursor = 3;
+        let (width, height) = (4usize, 2usize);
+
+        // Same pixel (3) becomes index 0 when reading right→left
+        let cursor = remapped_cursor(&synth, &zones, &zones, true, true, ReadingDirection::LeftToRight, ReadingDirection::RightToLeft, width, height);
+        assert_eq!(cursor, 0);
+
+        // And it is the last-but-one index when reading top→bottom of a
+        // 2-row selection
+        let zones = [PixelZone { x: 0, y: 0, w: 2, h: 2 }];
+        let cursor = remapped_cursor(&synth, &zones, &zones, true, true, ReadingDirection::LeftToRight, ReadingDirection::TopToBottom, width, height);
+        assert_eq!(cursor, 3);
     }
 }

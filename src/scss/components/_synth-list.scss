@@ -9,32 +9,41 @@
     background-color: $color-bg-medium;
     display: flex;
     flex-direction: column;
-    padding: 1rem 0; // overrides .content-area's padding (loaded earlier)
+    padding: 0; // overrides .content-area's padding (loaded earlier)
 }
 
 .synth-list-header {
+    // position: absolute;
+    background-color: $color-bg-medium;
+    border-bottom: 1px solid $color-border;
+    width: 100%;
     display: flex;
-    align-items: center;
+    flex-direction: column;
+    align-items: start;
     justify-content: space-between;
     padding: .5rem 1rem;
+    z-index: 10;
 
     .synth-list-header-actions {
         display: flex;
         align-items: center;
+        width: 100%;
         flex-grow: 1;
-        margin-left: .5rem;
         gap: .5rem;
     }
 }
 
-// Compact pill buttons of the list header: add synth / play all / panic.
-// Base look shared by the three; the color variants carry the meaning
-// (green = play, red = global stop affordance).
+// Compact pill buttons of the list header: add synth \ play all \ panic.
+// Base look shared by the three; the color variants carry the meaning 
+// (green = play, red = global stop affordance). 
 .synth-list-action {
     background: none;
+    flex: 1 1 auto;
+    
     border: 1px solid $color-border;
     color: white;
-    width: 3rem;
+    width: 4rem;
+    max-width: 4rem;
     height: 1.75rem;
     border-radius: .825rem;
     cursor: pointer;
@@ -78,7 +87,10 @@
     .synth-tabs {
         display: flex;
         flex-direction: column;
-        padding: .375rem 0;
+        background: $color-bg-viewer;
+        border-right: 1px solid $color-border;
+        min-width: 3.25rem;
+        padding: 6rem 0 2rem;
         gap: .375rem;
         flex: 0 0 auto;
         min-height: 0;
@@ -89,15 +101,27 @@
     }
 
     .synth-devices {
+        position: relative;
         display: flex;
         flex-direction: column;
         gap: .375rem;
         flex: 1 1 auto;
         min-width: 0;
         min-height: 0;
-        overflow-y: auto;
-        &::-webkit-scrollbar {
-            display: none;
+        
+        
+        .synth-devices-wrapper {
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            gap: .25rem;
+            flex: 1 1 auto;
+            overflow-y: auto;
+            padding-bottom: 20rem;
+
+            &::-webkit-scrollbar {
+                display: none;
+            }
         }
     }
 }
