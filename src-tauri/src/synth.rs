@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use tauri::State;
 use crate::config::ConfigState;
 use crate::error::{err, AppError};
@@ -46,7 +47,18 @@ pub fn add_synth(
     *next_id += 1;
     drop(next_id);
 
-    let synth = template.to_synth(id);
+    // The display number comes from its own counter (see
+    // `Synth::display_number`): it survives renumbering and is never
+    // reused after a removal
+    let display_number = {
+        let mut next = state.next_display_number.lock().unwrap();
+        let n = *next;
+        *next += 1;
+        n
+    };
+
+    let mut synth = template.to_synth(id);
+    synth.display_number = display_number;
     state.synths.lock().unwrap().insert(id, synth.clone());
 
     Ok(synth)
@@ -55,6 +67,46 @@ pub fn add_synth(
 #[tauri::command]
 pub fn remove_synth(id: u32, state: State<SynthState>) {
     state.synths.lock().unwrap().remove(&id);
+}
+
+/// Reassigns the synthesizers' ids 1..N following the given display order
+/// (the complete list of the current ids, top to bottom of the stack), so a
+/// synth's id always matches its position: external MIDI controllers will
+/// address the synths by this number. `next_id` is reset to N+1 so the next
+/// created synth continues the sequence.
+pub fn renumber_synths(
+    synths: &mut HashMap<u32, Synth>,
+    next_id: &mut u32,
+    order: &[u32],
+) -> Result<(), AppError> {
+    let count = synths.len();
+    if order.len() != count
+        || order.iter().collect::<HashSet<_>>().len() != count
+        || order.iter().any(|id| !synths.contains_key(id))
+    {
+        return Err(err("synth_order_mismatch"));
+    }
+
+    let mut ordered = Vec::with_capacity(count);
+    for id in order {
+        ordered.push(synths.remove(id).unwrap());
+    }
+    for (index, mut synth) in ordered.into_iter().enumerate() {
+        synth.id = index as u32 + 1;
+        synths.insert(synth.id, synth);
+    }
+    *next_id = count as u32 + 1;
+    Ok(())
+}
+
+/// Applies the display order given by the frontend (the ids of the synth
+/// cards, top to bottom) and renumbers the ids 1..N accordingly. Called
+/// after every change in the stack's composition or order.
+#[tauri::command]
+pub fn set_synth_order(order: Vec<u32>, state: State<SynthState>) -> Result<(), AppError> {
+    let mut synths = state.synths.lock().unwrap();
+    let mut next_id = state.next_id.lock().unwrap();
+    renumber_synths(&mut synths, &mut next_id, &order)
 }
 
 #[tauri::command]
@@ -581,6 +633,27 @@ pub fn set_synth_zones(
     Ok(())
 }
 
+/// Sets the manual silence zones of a synthesizer: selected pixels inside
+/// these rectangles are muted by hand (rests). Unlike set_synth_zones,
+/// the playback sequence is unchanged — the playhead still travels over
+/// the silent pixels — so there is no cursor remapping and no end_pending
+/// reset to do.
+#[tauri::command]
+pub fn set_synth_mute_zones(
+    id: u32,
+    zones: Vec<PixelZone>,
+    state: State<SynthState>,
+) -> Result<(), AppError> {
+    let mut synths = state.synths.lock().unwrap();
+    match synths.get_mut(&id) {
+        Some(synth) => {
+            synth.mute_zones = zones;
+            Ok(())
+        }
+        None => Err(synth_not_found(id)),
+    }
+}
+
 /// Toggles the sorted reading of the pixel sequence: when enabled, the
 /// selected pixels are ordered by their absolute position in the image
 /// (in the reading direction) instead of being read zone by zone. The
@@ -620,4 +693,98 @@ pub fn set_synth_sorted_reading(
     synth.cursor = cursor;
     synth.end_pending = false;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::Synth;
+
+    fn state_with_ids(ids: &[u32]) -> HashMap<u32, Synth> {
+        ids.iter().map(|&id| (id, Synth::new(id))).collect()
+    }
+
+    #[test]
+    fn renumber_assigns_ids_in_display_order() {
+        // Synths #1 and #2 deleted from a stack of 4: the remaining ids
+        // are renumbered 1..N following the display order
+        let mut synths = state_with_ids(&[1, 3, 4]);
+        for (&id, synth) in synths.iter_mut() {
+            synth.channel = id as u8; // mark each synth to track the moves
+        }
+        let mut next_id = 5;
+
+        renumber_synths(&mut synths, &mut next_id, &[3, 1, 4]).unwrap();
+
+        assert_eq!(synths.len(), 3);
+        let mut ids: Vec<u32> = synths.keys().copied().collect();
+        ids.sort(); // HashMap iteration order is arbitrary
+        assert_eq!(ids, vec![1, 2, 3]);
+        // The synths themselves moved with their state
+        assert_eq!(synths.get(&1).unwrap().channel, 3);
+        assert_eq!(synths.get(&2).unwrap().channel, 1);
+        assert_eq!(synths.get(&3).unwrap().channel, 4);
+        // The id field follows the renumbering
+        assert_eq!(synths.get(&2).unwrap().id, 2);
+        // The next created synth continues right after the stack
+        assert_eq!(next_id, 4);
+    }
+
+    #[test]
+    fn renumber_already_ordered_stack_is_a_no_op() {
+        let mut synths = state_with_ids(&[1, 2]);
+        let mut next_id = 3;
+        renumber_synths(&mut synths, &mut next_id, &[1, 2]).unwrap();
+        assert_eq!(synths.get(&1).unwrap().id, 1);
+        assert_eq!(synths.get(&2).unwrap().id, 2);
+        assert_eq!(next_id, 3);
+    }
+
+    #[test]
+    fn renumber_rejects_incomplete_order() {
+        let mut synths = state_with_ids(&[1, 2, 3]);
+        let mut next_id = 4;
+        assert!(renumber_synths(&mut synths, &mut next_id, &[1, 2]).is_err());
+        // Nothing was mutated
+        assert_eq!(synths.len(), 3);
+        assert_eq!(next_id, 4);
+    }
+
+    #[test]
+    fn renumber_rejects_unknown_id() {
+        let mut synths = state_with_ids(&[1, 3]);
+        let mut next_id = 4;
+        assert!(renumber_synths(&mut synths, &mut next_id, &[1, 2]).is_err());
+        assert_eq!(synths.len(), 2);
+        assert_eq!(next_id, 4);
+    }
+
+    #[test]
+    fn renumber_preserves_display_numbers() {
+        // The display number is the synth's stable identity for the
+        // default title: reordering the stack renumbers the ids but must
+        // never touch it
+        let mut synths = state_with_ids(&[1, 3]);
+        synths.get_mut(&1).unwrap().display_number = 1;
+        synths.get_mut(&3).unwrap().display_number = 3;
+        let mut next_id = 4;
+
+        renumber_synths(&mut synths, &mut next_id, &[3, 1]).unwrap();
+
+        // Ids follow the new display order...
+        assert_eq!(synths.get(&1).unwrap().id, 1);
+        assert_eq!(synths.get(&2).unwrap().id, 2);
+        // ...but each synth kept its original display number
+        assert_eq!(synths.get(&1).unwrap().display_number, 3);
+        assert_eq!(synths.get(&2).unwrap().display_number, 1);
+    }
+
+    #[test]
+    fn renumber_rejects_duplicate_ids() {
+        let mut synths = state_with_ids(&[1, 2]);
+        let mut next_id = 3;
+        assert!(renumber_synths(&mut synths, &mut next_id, &[2, 2]).is_err());
+        assert_eq!(synths.len(), 2);
+        assert_eq!(next_id, 3);
+    }
 }

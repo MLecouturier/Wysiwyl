@@ -54,7 +54,7 @@ $gradient-wb: linear-gradient(to right, black, white);
         hsl(calc(var(--hue-rot, 0deg) + 360deg)  100% 50%));
 }
 
-$sidebar-width: 24rem;
+$sidebar-width: 26rem;
 
 $border-radius-base: .25rem;
 $border-radius-round: 1rem;
@@ -133,7 +133,7 @@ html, body {
     font-family: 'Segoe UI', Roboto, Arial, 'Noto Music', sans-serif;
     background-color: $color-bg-dark;
     color: $color-text-primary;
-    font-size: 1rem;
+    font-size: 16px;
 }
 
 h2 {
@@ -183,6 +183,12 @@ h2 {
     align-items: center;
 }
 
+.flex-spacer {
+    width: 1rem;
+    min-width: 1rem;
+    max-width: 1rem;
+}
+
 // ==========================================================================
 // Image viewer (left column - main area)
 // ==========================================================================
@@ -221,6 +227,12 @@ h2 {
             &.picking {
                 pointer-events: auto;
                 cursor: crosshair;
+            }
+
+            // Alt (Option) held while a selection tool is armed: the
+            // square/lasso edit the manual silences instead
+            &.picking.picking-silence {
+                cursor: cell;
             }
         }
 
@@ -504,9 +516,32 @@ select:disabled {
 
     .controls-row {
         display: flex;
+        justify-content: space-between;
         align-items: center;
-        gap: 10px;
+        flex: 1 1 auto;
+        gap: .5rem;
         margin-bottom: .75rem;
+        position: relative;
+        height: 100%;
+    }
+
+    .controls-column {
+        display: flex;
+        flex-direction: column;
+        gap: .5rem;
+        justify-content: flex-start;     
+        height: 100%;
+        
+        &.expanded {
+            flex: 1 1 auto;                   
+        }
+
+        &.controls-set {
+            flex: 1 1 auto;
+            justify-content: flex-end;
+            padding: 0 .5rem 0 .25rem;
+            max-width: $sidebar-width;
+        }
     }
 
     // Language switcher, pushed to the right of the controls row
@@ -515,9 +550,19 @@ select:disabled {
     }
 
     .controls-grid {
-        flex-grow: 1;
         display: flex;
-        gap: 10px 1.125rem;
+        flex: 1 1 auto;
+        justify-content: space-between;
+        align-items: center;
+        gap: .5rem;
+
+        // Auto-levels toggle: accent state when active (see the shared
+        // ".active is always the accent color" rule)
+        #auto-levels-btn.active {
+            background-color: $color-accent;
+            border-color: $color-accent;
+            color: white;
+        }
     }
 
     // Action bar of an interactive mode (crop, transform...)
@@ -548,7 +593,7 @@ select:disabled {
         height: 100%;
         left: 0;
         right: 0;
-        bottom: 0;
+        bottom: -0.5rem;
         z-index: 10;
         display: flex;
         flex-direction: row;
@@ -566,12 +611,13 @@ select:disabled {
     }
 
     label {
-        flex-grow: 1;
+        // flex-grow: 1;
         display: flex;
         flex-direction: column;
         gap: .25rem;
         font-size: 0.8rem;
         color: $color-text-secondary;
+        margin-top: .5rem;
 
         span {
             display: flex;
@@ -750,12 +796,12 @@ $metronome-led-transition: 0.05s ease;
 #add-synth-btn,
 #play-all-btn,
 #panic-btn {
-    background-color: $color-accent;
-    border: none;
+    background: none;
+    border: 1px solid $color-border;
     color: white;
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
+    width: 3rem;
+    height: 1.75rem;
+    border-radius: .825rem;
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -763,7 +809,7 @@ $metronome-led-transition: 0.05s ease;
     transition: background-color $transition-fast;
 
     &:hover {
-        background-color: $color-accent-hover;
+        border-color: $color-text-muted;
     }
 
     .material-symbols-outlined {
@@ -790,10 +836,117 @@ $metronome-led-transition: 0.05s ease;
 
 .synth-list-body {
     display: flex;
-    flex-direction: column;
-    overflow-y: auto;
-    &::-webkit-scrollbar {
-        display: none;
+    flex: 1 1 auto;
+    min-height: 0;
+    padding: 0;
+
+    .synth-tabs {
+        display: flex;
+        flex-direction: column;
+        padding: .375rem 0;
+        gap: .375rem;
+        flex: 0 0 auto;
+        min-height: 0;
+        overflow-y: auto;
+        &::-webkit-scrollbar {
+            display: none;
+        }
+    }
+
+    .synth-devices {
+        display: flex;
+        flex-direction: column;
+        gap: .375rem;
+        flex: 1 1 auto;
+        min-width: 0;
+        min-height: 0;
+        overflow-y: auto;
+        &::-webkit-scrollbar {
+            display: none;
+        }
+    }
+}
+
+// Compact tab paired with each synth card: drag handle + play/pause
+// only, the synth's title lives in the tooltip. The left/top/bottom
+// borders and the drag handle take the synth's identification color,
+// set inline via --synth-tab-color (same mechanism as --hue-rot).
+.synth-tab {
+    display: flex;
+    align-items: center;
+    gap: .25rem;
+    background-color: $color-bg-light;
+    border: 1px solid $color-border;
+    border-color: var(--synth-tab-color, #{$color-border});
+    border-top-left-radius: $border-radius-base;
+    border-bottom-left-radius: $border-radius-base;
+    padding: .125rem .25rem .125rem 0;
+    user-select: none;
+
+    .synth-tab-drag-handle {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 1rem;
+        height: 1.75rem;
+        padding: 0;
+        border: none;
+        background: none;
+        color: var(--synth-tab-color, #{$color-text-muted});
+        cursor: grab;
+        touch-action: none; // the handle drives the drag, never a scroll
+
+        .material-symbols-outlined {
+            font-size: 1.125rem;
+            // Brightness feedback on hover, so the identification color
+            // stays visible (same feedback as the card's color band)
+            transition: filter $transition-fast;
+        }
+
+        &:hover .material-symbols-outlined { filter: brightness(1.4); }
+    }
+
+    // Compact twin of .synth-play: icon only, same color semantics
+    // (red = playing/stop affordance)
+    .synth-tab-play {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 1.5rem;
+        width: 1.5rem;
+        padding: 0;
+        border: none;
+        border-radius: $border-radius-base;
+        cursor: pointer;
+        background-color: $color-accent-alt;
+        color: $color-text-secondary;
+        transition: background-color $transition-fast, color $transition-fast;
+
+        .material-symbols-outlined { font-size: 1.25rem; }
+
+        // Icon-only in the tab; the label exists so the shared state
+        // updater (setPlayButtonState) finds its hooks
+        .synth-play-label { display: none; }
+
+        &:hover {
+            background-color: $color-accent-alt-hover;
+            color: $color-text-secondary;
+        }
+
+        &.active {
+            background-color: $color-stop;
+            color: #fff;
+            &:hover { background-color: $color-stop-hover; }
+        }
+    }
+
+    // Dragging keeps the identification color (no border-color override:
+    // the shadow and grabbing cursor are enough as a drag affordance)
+    &.dragging {
+        z-index: 10;
+        box-shadow: 0 4px 10px rgba(0, 0, 0, .5);
+
+        .synth-tab-drag-handle { cursor: grabbing; }
     }
 }
 
@@ -1004,6 +1157,7 @@ $metronome-led-transition: 0.05s ease;
                     font-size: 0.78rem;
                     color: $color-text-muted;
                     font-variant-numeric: tabular-nums;
+                    min-width: 4.5rem;
                 }
             }
 

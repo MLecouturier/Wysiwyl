@@ -20,8 +20,12 @@ pub struct AdjustmentParams {
     pub grid_height: Option<u32>, // always None for now: ratio is deduced
     pub contrast: f32,
     pub brightness: i32,
-    pub saturation: f32,
+    pub vibrance: f32,
     pub posterize_levels: Option<u8>,
+    pub texture: f32,
+    pub clarity: f32,
+    pub simplify: f32,
+    pub auto_levels: bool,
 }
 
 pub(crate) fn encode_to_base64_png(img: &DynamicImage) -> Result<String, AppError> {
@@ -437,9 +441,28 @@ pub fn apply_image_adjustments(
         image::imageops::FilterType::Nearest,
     );
 
+    // --- Pattern adjustments (applied at grid scale: they act on the very
+    // pixels the synthesizers read, note to note) ---
+    if params.auto_levels {
+        img = auto_levels(&img);
+    }
+
+    if params.simplify > 0.0 {
+        img = bilateral_simplify(&img, params.simplify);
+    }
+
+    if params.clarity != 0.0 {
+        let sigma = (target_w.max(target_h) as f32 / 16.0).clamp(2.0, 32.0);
+        img = unsharp_mask(&img, sigma, params.clarity);
+    }
+
+    if params.texture != 0.0 {
+        img = unsharp_mask(&img, 1.5, params.texture);
+    }
+
     // --- Adjustments ---
-    if params.saturation != 0.0 {
-        img = adjust_saturation(&img, params.saturation);
+    if params.vibrance != 0.0 {
+        img = adjust_vibrance(&img, params.vibrance);
     }
 
     if params.contrast != 0.0 {
@@ -464,19 +487,34 @@ pub fn apply_image_adjustments(
     Ok(response)
 }
 
-/// Adjusts color saturation. `factor` is a percentage in [-100, 100]:
-/// -100 fully desaturates (grayscale), 0 is a no-op, positive values
-/// amplify the chroma relative to each pixel's luma.
-fn adjust_saturation(img: &DynamicImage, factor: f32) -> DynamicImage {
-    let scale = 1.0 + (factor / 100.0).max(-1.0);
+/// Adjusts color vibrance. Like saturation, but softer: `factor` is a
+/// percentage in [-100, 100]; positive values boost muted colors more than
+/// already-saturated ones (which stay natural, without clipping), -100
+/// fully desaturates (grayscale), 0 is a no-op.
+fn adjust_vibrance(img: &DynamicImage, factor: f32) -> DynamicImage {
+    let amount = (factor / 100.0).max(-1.0);
 
     let mut rgba = img.to_rgba8();
     for pixel in rgba.pixels_mut() {
         let luma = pixel_luma8(pixel) as f32;
+        // How saturated the pixel already is: 0 for gray, ~1.33 for a
+        // fully saturated primary
+        let max = pixel[0].max(pixel[1]).max(pixel[2]) as f32;
+        let avg = (pixel[0] as f32 + pixel[1] as f32 + pixel[2] as f32) / 3.0;
+        let sat = (max - avg) * 2.0 / 255.0;
+
+        // Positive: the more saturated the pixel, the weaker the boost.
+        // Negative: uniform desaturation (same as raw saturation).
+        let scale = if amount > 0.0 {
+            1.0 + amount * (1.0 - sat.min(1.0))
+        } else {
+            1.0 + amount
+        };
+
         for channel in 0..3 {
             let v = pixel[channel] as f32;
-            let saturated = (luma + (v - luma) * scale).clamp(0.0, 255.0);
-            pixel[channel] = saturated as u8;
+            let boosted = (luma + (v - luma) * scale).clamp(0.0, 255.0);
+            pixel[channel] = boosted as u8;
         }
     }
     DynamicImage::ImageRgba8(rgba)
@@ -501,6 +539,218 @@ fn posterize(img: &DynamicImage, levels: u8) -> DynamicImage {
             let v = pixel[channel] as f32;
             let posterized = ((v / step).round() * step).clamp(0.0, 255.0);
             pixel[channel] = posterized as u8;
+        }
+    }
+    DynamicImage::ImageRgba8(rgba)
+}
+
+/// Separable Gaussian blur with standard deviation `sigma` in pixels.
+/// RGB channels are blurred; alpha is copied through unchanged.
+fn gaussian_blur(img: &DynamicImage, sigma: f32) -> DynamicImage {
+    let rgba = img.to_rgba8();
+    let (width, height) = rgba.dimensions();
+    if width == 0 || height == 0 || sigma <= 0.0 {
+        return DynamicImage::ImageRgba8(rgba);
+    }
+
+    // Half-kernel (it is symmetric): weights normalized so the full kernel sums to 1
+    let radius = (sigma * 3.0).ceil() as usize;
+    let denom = 2.0 * sigma * sigma;
+    let mut kernel = Vec::with_capacity(radius + 1);
+    let mut sum = 0.0f32;
+    for i in 0..=radius {
+        let w = (-(i as f32).powi(2) / denom).exp();
+        kernel.push(w);
+        sum += if i == 0 { w } else { 2.0 * w };
+    }
+    for w in kernel.iter_mut() {
+        *w /= sum;
+    }
+
+    let horizontal = blur_axis(&rgba, width, height, radius, &kernel, true);
+    let blurred = blur_axis(&horizontal, width, height, radius, &kernel, false);
+    DynamicImage::ImageRgba8(blurred)
+}
+
+/// One axis of the separable Gaussian blur, with edge clamping.
+fn blur_axis(
+    src: &image::RgbaImage,
+    width: u32,
+    height: u32,
+    radius: usize,
+    kernel: &[f32],
+    horizontal: bool,
+) -> image::RgbaImage {
+    let (outer, inner) = if horizontal { (height, width) } else { (width, height) };
+    let mut out = image::RgbaImage::new(width, height);
+
+    for o in 0..outer {
+        for i in 0..inner {
+            let mut acc = [0.0f32; 3];
+            for j in 0..=(2 * radius) {
+                let offset = j as isize - radius as isize;
+                let idx = (i as isize + offset)
+                    .clamp(0, inner as isize - 1) as u32;
+                let (x, y) = if horizontal { (idx, o) } else { (o, idx) };
+                let p = src.get_pixel(x, y);
+                let w = kernel[offset.unsigned_abs() as usize];
+                acc[0] += p[0] as f32 * w;
+                acc[1] += p[1] as f32 * w;
+                acc[2] += p[2] as f32 * w;
+            }
+            let (x, y) = if horizontal { (i, o) } else { (o, i) };
+            let mut px = *src.get_pixel(x, y);
+            for c in 0..3 {
+                px[c] = acc[c].round().clamp(0.0, 255.0) as u8;
+            }
+            out.put_pixel(x, y, px);
+        }
+    }
+    out
+}
+
+/// Unsharp mask: boosts (or, for a negative amount, softens) the difference
+/// between the image and a blurred copy of itself at the given scale.
+/// `sigma` is the blur scale in pixels, `amount` a percentage in [-100, 100].
+/// Texture uses a small sigma (fine detail), clarity a large one (local
+/// contrast between whole zones).
+fn unsharp_mask(img: &DynamicImage, sigma: f32, amount: f32) -> DynamicImage {
+    let scale = amount.clamp(-100.0, 100.0) / 100.0;
+    let blurred = gaussian_blur(img, sigma);
+
+    let mut rgba = img.to_rgba8();
+    let blurred_rgba = blurred.to_rgba8();
+    for (pixel, ref_pixel) in rgba.pixels_mut().zip(blurred_rgba.pixels()) {
+        for channel in 0..3 {
+            let v = pixel[channel] as f32;
+            let b = ref_pixel[channel] as f32;
+            let sharpened = (v + (v - b) * scale).clamp(0.0, 255.0);
+            pixel[channel] = sharpened as u8;
+        }
+    }
+    DynamicImage::ImageRgba8(rgba)
+}
+
+/// Edge-preserving smoothing (bilateral filter): flattens near-uniform color
+/// areas while keeping the boundaries between different colors crisp.
+/// `strength` is a percentage in [0, 100]: higher values merge similar shades
+/// more aggressively (a second pass runs above 50).
+fn bilateral_simplify(img: &DynamicImage, strength: f32) -> DynamicImage {
+    let mut current = img.to_rgba8();
+    let (width, height) = current.dimensions();
+    if width == 0 || height == 0 {
+        return DynamicImage::ImageRgba8(current);
+    }
+
+    let radius = 2i32;
+    let sigma_color = 15.0 + strength.clamp(0.0, 100.0) / 100.0 * 45.0;
+    let passes = if strength > 50.0 { 2 } else { 1 };
+
+    // Spatial weights of the 5x5 neighborhood (sigma_space = 2 px)
+    let mut spatial = [[0.0f32; 5]; 5];
+    for (dy, row) in spatial.iter_mut().enumerate() {
+        for (dx, w) in row.iter_mut().enumerate() {
+            let d = ((dx as i32 - 2).pow(2) + (dy as i32 - 2).pow(2)) as f32;
+            *w = (-d / 8.0).exp();
+        }
+    }
+
+    // Color weights, looked up by the summed squared per-channel difference,
+    // averaged over the three channels to keep the table small
+    let two_sigma_sq = 2.0 * sigma_color * sigma_color;
+    let color_lut: Vec<f32> = (0..=255 * 255)
+        .map(|d| (-(d as f32) / two_sigma_sq).exp())
+        .collect();
+
+    for _ in 0..passes {
+        let src = current.clone();
+        for y in 0..height {
+            for x in 0..width {
+                let center = src.get_pixel(x, y);
+                let (cr, cg, cb) = (center[0] as i32, center[1] as i32, center[2] as i32);
+                let mut acc = [0.0f32; 3];
+                let mut weight_sum = 0.0f32;
+                for dy in -radius..=radius {
+                    for dx in -radius..=radius {
+                        let nx = (x as i32 + dx).clamp(0, width as i32 - 1) as u32;
+                        let ny = (y as i32 + dy).clamp(0, height as i32 - 1) as u32;
+                        let p = src.get_pixel(nx, ny);
+                        let dr = p[0] as i32 - cr;
+                        let dg = p[1] as i32 - cg;
+                        let db = p[2] as i32 - cb;
+                        let dist = (dr * dr + dg * dg + db * db) / 3;
+                        let w = spatial[(dy + radius) as usize][(dx + radius) as usize]
+                            * color_lut[dist.clamp(0, 255 * 255) as usize];
+                        acc[0] += p[0] as f32 * w;
+                        acc[1] += p[1] as f32 * w;
+                        acc[2] += p[2] as f32 * w;
+                        weight_sum += w;
+                    }
+                }
+                let mut px = *center;
+                for c in 0..3 {
+                    px[c] = (acc[c] / weight_sum).round().clamp(0.0, 255.0) as u8;
+                }
+                current.put_pixel(x, y, px);
+            }
+        }
+    }
+    DynamicImage::ImageRgba8(current)
+}
+
+/// Stretches the luma histogram to the full [0, 255] range (auto levels).
+/// The black and white points sit at the 0.5% percentiles so stray pixels
+/// don't fool the stretch. Only the luma is remapped: each channel keeps
+/// its offset from it, so the chroma — hence the hue, and the pitch
+/// mapping — stays stable.
+fn auto_levels(img: &DynamicImage) -> DynamicImage {
+    let mut rgba = img.to_rgba8();
+    let (width, height) = rgba.dimensions();
+    let pixel_count = (width * height) as usize;
+    if pixel_count == 0 {
+        return DynamicImage::ImageRgba8(rgba);
+    }
+
+    let mut histogram = [0u32; 256];
+    for pixel in rgba.pixels() {
+        histogram[pixel_luma8(pixel) as usize] += 1;
+    }
+
+    // Black and white points where 0.5% of the pixels have been seen
+    // from each end of the histogram
+    let clip = (pixel_count as f32 * 0.005).ceil() as u32;
+    let mut black = 0u32;
+    let mut acc = 0u32;
+    for (level, count) in histogram.iter().enumerate() {
+        acc += count;
+        black = level as u32;
+        if acc > clip {
+            break;
+        }
+    }
+    let mut white = 255u32;
+    let mut acc = 0u32;
+    for (level, count) in histogram.iter().enumerate().rev() {
+        acc += count;
+        white = level as u32;
+        if acc > clip {
+            break;
+        }
+    }
+
+    // Already using (nearly) the full range: no-op
+    if white <= black + 16 {
+        return DynamicImage::ImageRgba8(rgba);
+    }
+
+    let scale = 255.0 / (white - black) as f32;
+    for pixel in rgba.pixels_mut() {
+        let luma = pixel_luma8(pixel) as f32;
+        let stretched = (luma - black as f32) * scale;
+        for channel in 0..3 {
+            let v = pixel[channel] as f32;
+            let adjusted = (stretched + v - luma).clamp(0.0, 255.0);
+            pixel[channel] = adjusted as u8;
         }
     }
     DynamicImage::ImageRgba8(rgba)
@@ -571,6 +821,139 @@ mod tests {
 
         let outside = sample_bilinear(&src, 5.0, 5.0);
         assert_eq!(outside, image::Rgba([0, 0, 0, 0]));
+    }
+
+    #[test]
+    fn unsharp_mask_is_identity_on_uniform_image() {
+        let img = DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            8, 8, image::Rgba([120, 60, 200, 255]),
+        ));
+        let out = unsharp_mask(&img, 1.5, 100.0);
+        assert!(out
+            .to_rgba8()
+            .pixels()
+            .all(|p| p == &image::Rgba([120, 60, 200, 255])));
+    }
+
+    #[test]
+    fn unsharp_mask_stretches_the_step_edge() {
+        // 8x1: four dark pixels, four bright pixels
+        let mut buf = image::RgbaImage::new(8, 1);
+        for x in 0..8 {
+            let v = if x < 4 { 64 } else { 192 };
+            buf.put_pixel(x, 0, image::Rgba([v, v, v, 255]));
+        }
+        let out = unsharp_mask(&DynamicImage::ImageRgba8(buf), 1.5, 100.0).to_rgba8();
+        assert!(out.get_pixel(3, 0)[0] < 64, "dark edge side should get darker");
+        assert!(out.get_pixel(4, 0)[0] > 192, "bright edge side should get brighter");
+    }
+
+    #[test]
+    fn unsharp_mask_with_negative_amount_blurs() {
+        let mut buf = image::RgbaImage::new(8, 1);
+        for x in 0..8 {
+            let v = if x < 4 { 64 } else { 192 };
+            buf.put_pixel(x, 0, image::Rgba([v, v, v, 255]));
+        }
+        let out = unsharp_mask(&DynamicImage::ImageRgba8(buf), 1.5, -100.0).to_rgba8();
+        // At -100 the output is the blurred copy: the edge is softened
+        assert!(out.get_pixel(3, 0)[0] > 64 && out.get_pixel(4, 0)[0] < 192);
+    }
+
+    #[test]
+    fn bilateral_simplify_flattens_outliers_but_keeps_flat_areas() {
+        // 9x9 all at 100, one outlier at 160 in the center
+        let mut buf = image::RgbaImage::from_pixel(9, 9, image::Rgba([100, 100, 100, 255]));
+        buf.put_pixel(4, 4, image::Rgba([160, 160, 160, 255]));
+        let out = bilateral_simplify(&DynamicImage::ImageRgba8(buf), 50.0).to_rgba8();
+
+        let center = out.get_pixel(4, 4)[0];
+        assert!(center > 100 && center < 160, "outlier should be pulled toward the flat area");
+        assert_eq!(out.get_pixel(0, 0)[0], 100, "flat area must stay unchanged");
+    }
+
+    #[test]
+    fn vibrance_boosts_muted_colors_more_than_saturated_ones() {
+        let mut buf = image::RgbaImage::new(2, 1);
+        buf.put_pixel(0, 0, image::Rgba([200, 180, 160, 255])); // muted pastel
+        buf.put_pixel(1, 0, image::Rgba([255, 0, 0, 255])); // fully saturated primary
+        let out = adjust_vibrance(&DynamicImage::ImageRgba8(buf), 50.0).to_rgba8();
+
+        // The pastel gets a visible chroma boost...
+        assert!(out.get_pixel(0, 0)[0] > 200, "muted red channel should increase");
+        assert!(out.get_pixel(0, 0)[2] < 160, "muted blue channel should decrease");
+        // ...while the saturated primary is left untouched
+        assert_eq!(out.get_pixel(1, 0), &image::Rgba([255, 0, 0, 255]));
+    }
+
+    #[test]
+    fn vibrance_negative_fully_desaturates() {
+        let mut buf = image::RgbaImage::new(1, 1);
+        buf.put_pixel(0, 0, image::Rgba([200, 100, 50, 255]));
+        let out = adjust_vibrance(&DynamicImage::ImageRgba8(buf), -100.0).to_rgba8();
+
+        let p = out.get_pixel(0, 0);
+        assert_eq!(p[0], p[1], "grayscale: all channels must be equal");
+        assert_eq!(p[1], p[2], "grayscale: all channels must be equal");
+        assert_eq!(p[0], pixel_luma8(&image::Rgba([200, 100, 50, 255])));
+    }
+
+    #[test]
+    fn auto_levels_stretches_a_narrow_range() {
+        // 32x32 grayscale gradient, luma 100..150
+        let mut buf = image::RgbaImage::new(32, 32);
+        for y in 0..32 {
+            for x in 0..32 {
+                let v = (100.0 + x as f32 * 50.0 / 31.0) as u8;
+                buf.put_pixel(x, y, image::Rgba([v, v, v, 255]));
+            }
+        }
+        let out = auto_levels(&DynamicImage::ImageRgba8(buf)).to_rgba8();
+
+        assert!(out.get_pixel(0, 0)[0] <= 5, "dark end should reach black");
+        assert_eq!(out.get_pixel(31, 0)[0], 255, "bright end should reach white");
+    }
+
+    #[test]
+    fn auto_levels_preserves_channel_ordering() {
+        // Two uniform halves: warm dark on the left, warm bright on the right
+        let mut buf = image::RgbaImage::new(32, 32);
+        for y in 0..32 {
+            for x in 0..32 {
+                let px = if x < 16 {
+                    image::Rgba([100, 80, 60, 255])
+                } else {
+                    image::Rgba([150, 130, 110, 255])
+                };
+                buf.put_pixel(x, y, px);
+            }
+        }
+        let out = auto_levels(&DynamicImage::ImageRgba8(buf)).to_rgba8();
+
+        let left = out.get_pixel(0, 0);
+        let right = out.get_pixel(31, 0);
+        assert!(left[0] > left[1] && left[1] >= left[2], "hue must survive the stretch (dark)");
+        assert!(right[0] > right[1] && right[1] > right[2], "hue must survive the stretch (bright)");
+        assert_eq!(right[0], 255, "bright half should reach white");
+    }
+
+    #[test]
+    fn auto_levels_is_a_noop_on_full_range_image() {
+        // Alternating black and white columns: nothing to stretch
+        let mut buf = image::RgbaImage::new(32, 32);
+        for y in 0..32 {
+            for x in 0..32 {
+                let v = if x % 2 == 0 { 0 } else { 255 };
+                buf.put_pixel(x, y, image::Rgba([v, v, v, 255]));
+            }
+        }
+        let src = buf.clone();
+        let out = auto_levels(&DynamicImage::ImageRgba8(buf)).to_rgba8();
+        for y in 0..32 {
+            for x in 0..32 {
+                assert_eq!(out.get_pixel(x, y), src.get_pixel(x, y), "must stay untouched");
+            }
+        }
     }
 }
 

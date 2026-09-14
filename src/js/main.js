@@ -7,6 +7,13 @@ await initI18n();
 // Map id → custom name
 const synthNames = new Map();
 
+// Map id → display number of the default title. Attributed once at
+// creation, never changed nor reused: unlike the id (renumbered with the
+// stack's display order), it keeps a synth's default name ("Synth #n")
+// stable across reorders and removals, so the user is never confused by
+// a renaming.
+const synthDisplayNumbers = new Map();
+
 // Map "port:channel" → last known program of that MIDI channel, learned
 // from the MIDI input (Program Change / Bank Select sent by the
 // instruments) or set by the app itself. Programs are channel state, not
@@ -80,8 +87,9 @@ function sendProgramSelection(id, el) {
 }
 
 // Display name of a synth: its custom name, or the translated default
+// (built from the stable display number, not the functional id)
 function synthDisplayName(id) {
-    return synthNames.get(id) || t('synth.title', { id });
+    return synthNames.get(id) || t('synth.title', { id: synthDisplayNumbers.get(id) ?? id });
 }
 
 // ---------- Language switcher ----------
@@ -121,6 +129,15 @@ function setPlayButtonState(btn, playing) {
     btn.querySelector('.synth-play-label').textContent = playing ? t('synth.stop') : t('synth.play');
 }
 
+// Updates BOTH play/pause buttons of a synth — the device card's and the
+// tab's — so the two columns always show the same state.
+function setSynthPlaying(id, playing) {
+    const el = synthElementById(id);
+    if (el) setPlayButtonState(el.querySelector('.synth-play'), playing);
+    const tab = synthTabById(id);
+    if (tab) setPlayButtonState(tab.querySelector('.synth-tab-play'), playing);
+}
+
 // Re-translates an existing synth card: static parts via data-i18n*, plus
 // the few labels whose text depends on dynamic state (play/stop, mode)
 // that data-i18n alone can't express.
@@ -148,6 +165,16 @@ function retranslateSynthElement(el) {
     if (directionBtn) updateReadingDirectionBtn(directionBtn);
 
     updateZonesLabel(Number(el.dataset.synthId));
+
+    // The paired tab follows: its tooltip and hidden play label are
+    // locale-dependent too
+    const tab = el._tab;
+    if (tab) {
+        applyTranslations(tab);
+        tab.title = synthDisplayName(id);
+        const tabPlayBtn = tab.querySelector('.synth-tab-play');
+        setPlayButtonState(tabPlayBtn, tabPlayBtn.classList.contains('active'));
+    }
 }
 
 // ---------- Global configuration ----------
@@ -300,21 +327,29 @@ const pixelOverlay    = document.querySelector('#pixel-overlay');
 const gridSlider      = document.querySelector('#grid-width');
 const gridValue       = document.querySelector('#grid-width-value');
 
-const saturation      = document.querySelector('#saturation');
-const saturationValue = document.querySelector('#saturation-value');
+const vibrance        = document.querySelector('#vibrance');
+const vibranceValue   = document.querySelector('#vibrance-value');
 const contrast        = document.querySelector('#contrast');
 const contrastValue   = document.querySelector('#contrast-value');
 const brightness      = document.querySelector('#brightness');
 const brightnessValue = document.querySelector('#brightness-value');
 const posterize       = document.querySelector('#posterize');
 const posterizeValue  = document.querySelector('#posterize-value');
+const texture         = document.querySelector('#texture');
+const textureValue    = document.querySelector('#texture-value');
+const clarity         = document.querySelector('#clarity');
+const clarityValue    = document.querySelector('#clarity-value');
+const simplify        = document.querySelector('#simplify');
+const simplifyValue   = document.querySelector('#simplify-value');
+const autoLevelsBtn   = document.querySelector('#auto-levels-btn');
 
 const dimensionsInfo  = document.querySelector('#dimensions-info');
 
 // Image controls to lock while a synthesizer is playing
 // (the "Show original" button is intentionally excluded, and the value
-// sliders contrast/brightness/saturation/posterize stay editable: they
-// only change pixel values, which the playback step re-reads fresh)
+// sliders contrast/brightness/vibrance/posterize/texture/clarity/simplify —
+// plus the auto-levels toggle — stay editable: they only change pixel
+// values, which the playback step re-reads fresh)
 const imageLockControls = [loadBtn, resetBtn, rotateBtn, cropBtn, transformBtn, gridSlider];
 
 // Locks/unlocks image controls depending on whether a synth is playing
@@ -422,9 +457,54 @@ function clearOverlay() {
 //          under the playhead, which never lose their selection while
 //          the synth is playing. Releasing the button closes the shape
 //          with a straight line back to the start point.
+// Holding Alt (Option) while using either tool edits the manual silences
+// instead of the selection: the same positional (rect) / XOR (lasso)
+// semantics apply to the silent pixels among the selected ones. A silent
+// pixel is still travelled by the playhead, it just sounds nothing —
+// a rest. Silences always live within the selection: deselecting a pixel
+// removes its silence.
 let zonePickState = null; // { id, btn, mode } while the drawing mode is armed
-let zoneDrag = null;      // { id, start, cur } while dragging a rectangle
-let lassoDrag = null;    // { id, points: [{x, y} image coords], start: {col, row} } while drawing a lasso
+let zoneDrag = null;      // { id, start, cur, alt } while dragging a rectangle
+let lassoDrag = null;    // { id, points: [{x, y} image coords], start: {col, row}, alt } while drawing a lasso
+let altHeld = false;      // Alt (Option) key held: silence-editing mode
+
+// Reflects the Alt key state on the overlay (distinct cursor while a
+// drawing mode is armed) and refreshes the in-progress preview so it
+// switches style the moment Alt is pressed or released mid-drag.
+function syncAltPickingUi() {
+    pixelOverlay.classList.toggle('picking-silence', altHeld && !!zonePickState);
+    if (zoneDrag || lassoDrag) {
+        redrawAllHighlights();
+        if (zoneDrag) drawZonePreview();
+        if (lassoDrag) drawLassoPreview();
+    }
+}
+
+// Alt can be pressed or released at any time — before starting a drag
+// (the mousedown captures it) or in the middle of one (the listeners
+// below update the drag live, so the same gesture can switch mode).
+window.addEventListener('keydown', (e) => {
+    if (e.key !== 'Alt' || altHeld) return;
+    altHeld = true;
+    if (zoneDrag) zoneDrag.alt = true;
+    if (lassoDrag) lassoDrag.alt = true;
+    syncAltPickingUi();
+});
+window.addEventListener('keyup', (e) => {
+    if (e.key !== 'Alt' || !altHeld) return;
+    altHeld = false;
+    if (zoneDrag) zoneDrag.alt = false;
+    if (lassoDrag) lassoDrag.alt = false;
+    syncAltPickingUi();
+});
+window.addEventListener('blur', () => {
+    // The OS may swallow the keyup when the window loses focus
+    if (!altHeld) return;
+    altHeld = false;
+    if (zoneDrag) zoneDrag.alt = false;
+    if (lassoDrag) lassoDrag.alt = false;
+    syncAltPickingUi();
+});
 
 // Do two grid rectangles overlap (even partially)?
 function rectsOverlap(a, b) {
@@ -473,6 +553,9 @@ function zoneAtPixel(id, pixel) {
 // drag has just been cancelled.
 function cancelEraseDragOnLockedZone(id, playheadPixel) {
     if (!zoneDrag || zoneDrag.id !== id) return false;
+    // A silence drag never removes pixels from the sequence: the locked
+    // zone is safe, the playhead keeps travelling over the silent pixels
+    if (zoneDrag.alt) return false;
     const rect = zoneDragRect();
     if (!rect || !rectOverlapsZones(id, rect)) return false;
     const locked = zoneAtPixel(id, playheadPixel);
@@ -503,6 +586,7 @@ function startZonePicking(id, btn, mode = 'rect') {
     zonePickState = { id, btn, mode };
     btn.classList.add('active');
     pixelOverlay.classList.add('picking');
+    syncAltPickingUi(); // reflect the Alt key if it is already held
     // Editing blind is confusing: arming the picking mode reveals this
     // synth's zones (they may be hidden during playback). The eye button
     // reflects it; the user can hide them again at any time.
@@ -519,6 +603,7 @@ function cancelZonePicking() {
     if (!zonePickState) return;
     zonePickState.btn.classList.remove('active');
     pixelOverlay.classList.remove('picking');
+    pixelOverlay.classList.remove('picking-silence');
     zonePickState = null;
     const hadDrag = !!zoneDrag || !!lassoDrag;
     zoneDrag = null;
@@ -551,9 +636,9 @@ pixelOverlay.addEventListener('mousedown', (e) => {
     e.preventDefault(); // prevents image dragging during selection
     if (zonePickState.mode === 'lasso') {
         const pt = imagePointFromClient(e.clientX, e.clientY);
-        lassoDrag = { id: zonePickState.id, points: [pt], start: cell };
+        lassoDrag = { id: zonePickState.id, points: [pt], start: cell, alt: e.altKey || altHeld };
     } else {
-        zoneDrag = { id: zonePickState.id, start: cell, cur: cell };
+        zoneDrag = { id: zonePickState.id, start: cell, cur: cell, alt: e.altKey || altHeld };
     }
 });
 
@@ -604,36 +689,47 @@ window.addEventListener('mouseup', (e) => {
     }
     if (!zoneDrag && !lassoDrag) return;
     if (lassoDrag) {
-        const { id, points, start } = lassoDrag;
+        const { id, points, start, alt } = lassoDrag;
         lassoDrag = null;
         // Close the shape with a straight line back to the start, then
-        // toggle every enclosed pixel (boundary included)
+        // toggle every enclosed pixel (boundary included): the selection,
+        // or the silences when Alt is held
         if (points.length > 0) {
-            const toggled = lassoTogglePixels(id, points, start);
+            const toggled = alt
+                ? lassoToggleMutePixels(id, points, start)
+                : lassoTogglePixels(id, points, start);
             if (toggled) redrawAllHighlights();
         }
         return;
     }
-    const { id } = zoneDrag;
+    const { id, alt } = zoneDrag;
     const rect = zoneDragRect();
     // Cancel an erasing drag touching the locked zone (the one under the
-    // playhead) instead of committing it
+    // playhead) instead of committing it — a no-op in silence mode
     const cancelled = cancelEraseDragOnLockedZone(id, synthCursors.get(id));
     zoneDrag = null;
     if (!cancelled && rect) {
         // A rectangle overlapping an existing zone (even partially) only
         // removes pixels; it never creates an overlapping zone. A single
         // pixel works too: a click on a free pixel selects it, a click on
-        // a selected pixel deselects it.
-        if (rectOverlapsZones(id, rect)) removeSynthZoneRect(id, rect);
-        else                             addSynthZone(id, rect);
+        // a selected pixel deselects it. Alt mirrors this on the manual
+        // silences: overlap removes silences, free space adds them (the
+        // silences are clipped to the selection).
+        if (alt) {
+            if (rectOverlapsMuteZones(id, rect)) removeSynthMuteRect(id, rect);
+            else                                 addSynthMuteRect(id, rect);
+        } else if (rectOverlapsZones(id, rect)) removeSynthZoneRect(id, rect);
+        else                                    addSynthZone(id, rect);
     }
     redrawAllHighlights();
 });
 
 // Live preview of the rectangle being dragged: filled with the synth's
 // color while it overlaps no zone, "erasing" the highlights beneath it
-// as soon as it touches one — the drag then removes pixels instead.
+// as soon as it touches one — the drag then removes pixels instead. In
+// silence mode (Alt) the preview is a black veil with a dashed outline:
+// same positional semantics as the selection, but it never reads as a
+// zone edit.
 function drawZonePreview() {
     if (!zoneDrag) return;
     const layout = getImageLayout();
@@ -648,7 +744,16 @@ function drawZonePreview() {
 
     const ctx = pixelOverlay.getContext('2d');
     ctx.save();
-    if (rectOverlapsZones(zoneDrag.id, rect)) {
+    if (zoneDrag.alt) {
+        ctx.globalAlpha = 0.4;
+        ctx.fillStyle = 'black';
+        ctx.fillRect(offsetX + x * cellW, offsetY + y * cellH, w * cellW, h * cellH);
+        ctx.globalAlpha = 0.9;
+        ctx.strokeStyle = 'white';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([4, 3]);
+        ctx.strokeRect(offsetX + x * cellW, offsetY + y * cellH, w * cellW, h * cellH);
+    } else if (rectOverlapsZones(zoneDrag.id, rect)) {
         ctx.globalCompositeOperation = 'destination-out';
         ctx.fillRect(offsetX + x * cellW, offsetY + y * cellH, w * cellW, h * cellH);
     } else {
@@ -707,7 +812,8 @@ function addSegmentCells(x0, y0, x1, y1, out) {
 }
 
 // Live preview of the lasso shape: the traced polygon, closed back to
-// its start point, filled with the synth's color.
+// its start point, filled with the synth's color — black with a dashed
+// white outline in silence mode (Alt).
 function drawLassoPreview() {
     if (!lassoDrag || lassoDrag.points.length < 1) return;
     const layout = getImageLayout();
@@ -723,25 +829,31 @@ function drawLassoPreview() {
         else          ctx.lineTo(px, py);
     });
     ctx.closePath(); // straight line back to the start point
-    ctx.fillStyle = synthColors.get(lassoDrag.id) || '#ffffff';
-    ctx.globalAlpha = 0.35;
-    ctx.fill();
-    ctx.globalAlpha = 0.9;
-    ctx.strokeStyle = ctx.fillStyle;
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
+    if (lassoDrag.alt) {
+        ctx.globalAlpha = 0.35;
+        ctx.fillStyle = 'black';
+        ctx.fill();
+        ctx.globalAlpha = 0.9;
+        ctx.strokeStyle = 'white';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([4, 3]);
+        ctx.stroke();
+    } else {
+        ctx.fillStyle = synthColors.get(lassoDrag.id) || '#ffffff';
+        ctx.globalAlpha = 0.35;
+        ctx.fill();
+        ctx.globalAlpha = 0.9;
+        ctx.strokeStyle = ctx.fillStyle;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+    }
     ctx.restore();
 }
 
-// Computes every pixel enclosed by the lasso polygon (boundary included,
-// closure line from the release point back to the start) and toggles it:
-// unselected becomes selected, selected becomes deselected. Pixels of
-// the zone under the playhead (while the synth plays) are exempt from
-// deselection. Returns true when the selection changed.
-function lassoTogglePixels(id, points, start) {
-    const hi = synthHighlights.get(id);
-    if (!hi) return false;
-
+// Computes every pixel enclosed by the lasso polygon: polygon interior
+// (cell centers) ∪ boundary cells (Bresenham), including the closing line
+// from the release point back to the start. Returned as "col,row" keys.
+function lassoEnclosedCells(points, start) {
     // Closed polygon in continuous coordinates; the closing segment is
     // the straight line back to the start cell's center.
     const poly = points.slice();
@@ -772,21 +884,27 @@ function lassoTogglePixels(id, points, start) {
     for (let i = 1; i < poly.length; i++) {
         addSegmentCells(poly[i - 1].x, poly[i - 1].y, poly[i].x, poly[i].y, enclosed);
     }
+    return enclosed;
+}
 
+// Lasso on the selection: every pixel enclosed by the traced polygon
+// (boundary included, closure line from the release point back to the
+// start) toggles — unselected becomes selected, selected becomes
+// deselected. Pixels of the zone under the playhead (while the synth
+// plays) are exempt from deselection. Returns true when the selection
+// changed.
+function lassoTogglePixels(id, points, start) {
+    const hi = synthHighlights.get(id);
+    if (!hi) return false;
+
+    const enclosed = lassoEnclosedCells(points, start);
     if (enclosed.size === 0) return false;
 
     // Zone under the playhead: its pixels never lose their selection
     const locked = zoneAtPixel(id, synthCursors.get(id));
 
     // Current selection as a cell set
-    const selected = new Set();
-    for (const z of hi.zones) {
-        for (let row = z.y; row < z.y + z.h; row++) {
-            for (let col = z.x; col < z.x + z.w; col++) {
-                selected.add(`${col},${row}`);
-            }
-        }
-    }
+    const selected = selectedCellSet(hi);
 
     // Toggle each enclosed pixel (XOR), skipping locked pixels that would
     // be deselected
@@ -811,7 +929,41 @@ function lassoTogglePixels(id, points, start) {
     // Rebuild the selection as merged rectangles
     hi.zones = lassoCellsToZones(selected);
     sendSynthZones(id);
+    // Deselected pixels lose their silence
+    clipMuteZonesToSelection(id);
     updateZonesLabel(id);
+    return true;
+}
+
+// Lasso on the manual silences (Alt held): every enclosed selected pixel
+// toggles — played becomes silent, silent becomes played. Pixels that
+// are not selected are ignored (a silence always lives inside the
+// selection). Returns true when the silences changed.
+function lassoToggleMutePixels(id, points, start) {
+    const hi = synthHighlights.get(id);
+    if (!hi) return false;
+
+    const enclosed = lassoEnclosedCells(points, start);
+    if (enclosed.size === 0) return false;
+
+    const selected = selectedCellSet(hi);
+    const muted = muteCellSet(hi);
+
+    let changed = false;
+    for (const key of enclosed) {
+        if (!selected.has(key)) continue; // silences live in the selection
+        if (muted.has(key)) {
+            muted.delete(key);
+            changed = true;
+        } else {
+            muted.add(key);
+            changed = true;
+        }
+    }
+    if (!changed) return false;
+
+    hi.muteZones = lassoCellsToZones(muted);
+    sendSynthMuteZones(id);
     return true;
 }
 
@@ -876,6 +1028,8 @@ function removeSynthZoneRect(id, rect) {
     }
     hi.zones = next;
     sendSynthZones(id);
+    // Deselected pixels lose their silence
+    clipMuteZonesToSelection(id);
     updateZonesLabel(id);
 }
 
@@ -902,6 +1056,86 @@ function sendSynthZones(id) {
     if (!hi) return;
     invoke('set_synth_zones', { id, zones: hi.zones })
         .catch(err => console.error('Error in set_synth_zones:', err));
+}
+
+// ---------- Manual silences (Alt + square/lasso) ----------
+// Silent pixels chosen by hand among the selected ones: the playhead
+// still travels over them, but no note is sounded (a rest). They are
+// stored as zone rectangles, like the selection, and always clipped to
+// it: deselecting a pixel removes its silence.
+
+// Builds the set of manually silenced cells of a synth from its mute
+// zone rectangles.
+function muteCellSet(hi) {
+    const cells = new Set();
+    for (const z of hi.muteZones) {
+        for (let row = z.y; row < z.y + z.h; row++) {
+            for (let col = z.x; col < z.x + z.w; col++) {
+                cells.add(`${col},${row}`);
+            }
+        }
+    }
+    return cells;
+}
+
+// Does the rectangle overlap (even partially) one of the synth's mute
+// zones? Such an Alt-drag removes silences instead of adding them.
+function rectOverlapsMuteZones(id, rect) {
+    const hi = synthHighlights.get(id);
+    if (!hi) return false;
+    return hi.muteZones.some(z => rectsOverlap(rect, z));
+}
+
+// Adds a silence rectangle (Alt + square over free space): the dragged
+// rectangle silences the pixels it covers, restricted to the selection.
+function addSynthMuteRect(id, rect) {
+    const hi = synthHighlights.get(id);
+    if (!hi) return;
+    const selected = selectedCellSet(hi);
+    const cells = new Set();
+    for (let row = rect.y; row < rect.y + rect.h; row++) {
+        for (let col = rect.x; col < rect.x + rect.w; col++) {
+            const key = `${col},${row}`;
+            if (selected.has(key)) cells.add(key);
+        }
+    }
+    if (cells.size === 0) return;
+    hi.muteZones.push(...lassoCellsToZones(cells));
+    sendSynthMuteZones(id);
+}
+
+// Subtracts a silence rectangle (Alt + square over an existing silence):
+// same band-cutting as the zone erasure.
+function removeSynthMuteRect(id, rect) {
+    const hi = synthHighlights.get(id);
+    if (!hi) return;
+    const next = [];
+    for (const z of hi.muteZones) {
+        for (const r of subtractRect(z, rect)) next.push(r);
+    }
+    hi.muteZones = next;
+    sendSynthMuteZones(id);
+}
+
+// Re-clips the mute zones to the current selection — the silences only
+// ever live inside it — and pushes the result to the backend when it
+// actually changed.
+function clipMuteZonesToSelection(id) {
+    const hi = synthHighlights.get(id);
+    if (!hi || hi.muteZones.length === 0) return;
+    const selected = selectedCellSet(hi);
+    const muted = muteCellSet(hi);
+    const kept = new Set([...muted].filter(k => selected.has(k)));
+    if (kept.size === muted.size) return; // nothing deselected
+    hi.muteZones = lassoCellsToZones(kept);
+    sendSynthMuteZones(id);
+}
+
+function sendSynthMuteZones(id) {
+    const hi = synthHighlights.get(id);
+    if (!hi) return;
+    invoke('set_synth_mute_zones', { id, zones: hi.muteZones })
+        .catch(err => console.error('Error in set_synth_mute_zones:', err));
 }
 
 // Sends the note-range filter states: one triplet (bass, medium, treble)
@@ -942,7 +1176,7 @@ function synthSequenceLength(id) {
 
 // "zones-val" shows the number of selected pixels for the synth.
 function updateZonesLabel(id) {
-    const el = synthListBody.querySelector(`[data-synth-id="${id}"]`);
+    const el = synthElementById(id);
     if (!el) return;
     const zonesVal = el.querySelector('.zones-val');
 
@@ -983,7 +1217,7 @@ function getImageLayout() {
 // Refreshes the stored brightness bounds of a synth from its sliders and
 // redraws the highlights: muted-pixel marks depend on the bounds.
 function updateBrightnessBounds(id) {
-    const el = synthListBody.querySelector(`[data-synth-id="${id}"]`);
+    const el = synthElementById(id);
     if (!el) return;
     const bounds = synthBrightnessBounds.get(id);
     if (!bounds) return;
@@ -1078,15 +1312,15 @@ function drawRangeHighlight(synthId) {
         strokeCellOutline(ctx, cells, offsetX, offsetY, cellW, cellH);
     }
 
-    // Mute marks: every zone pixel outside the brightness window gets a
-    // semi-transparent black veil (readable at any cell size), topped with
-    // the rest glyph in the synth's color when cells are large enough for
-    // it to read (below ~9px it would turn into a colored blur).
+    // Mute marks: pixels muted by hand (Alt + square/lasso) and pixels
+    // outside the brightness window get the same semi-transparent black
+    // veil (readable at any cell size), topped with the rest glyph in
+    // the synth's color when cells are large enough for it to read
+    // (below ~9px it would turn into a colored blur).
+    const muteCells = new Set();
     const bounds = synthBrightnessBounds.get(synthId);
     if (bounds && processedPixels && (bounds.min > 0 || bounds.max < 127)) {
         const { width: pw, rgba } = processedPixels;
-        const canDrawGlyphs = cellH >= 9 && cellW >= 9;
-        const fontSize = Math.min(cellW, cellH) * 0.9;
         for (const z of hi.zones) {
             for (let row = z.y; row < z.y + z.h; row++) {
                 for (let col = z.x; col < z.x + z.w; col++) {
@@ -1095,20 +1329,36 @@ function drawRangeHighlight(synthId) {
                     const luma = 0.299 * rgba[i] + 0.587 * rgba[i + 1] + 0.114 * rgba[i + 2];
                     const level = Math.round(luma / 255 * 127);
                     if (level >= bounds.min && level <= bounds.max) continue;
-                    const x = offsetX + col * cellW;
-                    const y = offsetY + row * cellH;
-                    ctx.globalAlpha = 0.55;
-                    ctx.fillStyle = 'black';
-                    ctx.fillRect(x, y, cellW, cellH);
-                    if (canDrawGlyphs) {
-                        ctx.globalAlpha = 0.9;
-                        ctx.fillStyle = color;
-                        ctx.textAlign = 'center';
-                        ctx.textBaseline = 'middle';
-                        ctx.font = `${fontSize}px "Noto Music"`;
-                        ctx.fillText(MUTE_GLYPH, x + cellW / 2, y + cellH / 2);
-                    }
+                    muteCells.add(`${col},${row}`);
                 }
+            }
+        }
+    }
+    // Manually silenced pixels: they always live within the selection
+    if (hi.muteZones.length > 0) {
+        for (const key of muteCellSet(hi)) {
+            if (cells.has(key)) muteCells.add(key);
+        }
+    }
+    if (muteCells.size > 0) {
+        const canDrawGlyphs = cellH >= 9 && cellW >= 9;
+        const fontSize = Math.min(cellW, cellH) * 0.9;
+        ctx.globalAlpha = 0.55;
+        ctx.fillStyle = 'black';
+        for (const key of muteCells) {
+            const [col, row] = key.split(',').map(Number);
+            const x = offsetX + col * cellW;
+            const y = offsetY + row * cellH;
+            ctx.fillRect(x, y, cellW, cellH);
+            if (canDrawGlyphs) {
+                ctx.globalAlpha = 0.9;
+                ctx.fillStyle = color;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.font = `${fontSize}px "Noto Music"`;
+                ctx.fillText(MUTE_GLYPH, x + cellW / 2, y + cellH / 2);
+                ctx.globalAlpha = 0.55;
+                ctx.fillStyle = 'black';
             }
         }
     }
@@ -1313,33 +1563,29 @@ function cellsToSlider(cells, maxCells) {
   return v;
 }
 
-// ---------- Posterize log scale ----------
-// Position 0 = off; positions 1..SLIDER_STEPS map exponentially from 255
-// levels (left) down to 2 (right): the slider is coarser near 255, where
-// extra levels are barely distinguishable, and very precise around the
-// minimum (each level takes many steps, where posterization is musically
-// strongest).
+// ---------- Posterize scale ----------
+// Position 0 = off; positions 1..SLIDER_STEPS map linearly from
+// POSTERIZE_MAX_LEVELS levels (left) down to POSTERIZE_MIN_LEVELS (right).
 const POSTERIZE_MIN_LEVELS = 2;
-const POSTERIZE_MAX_LEVELS = 255;
+const POSTERIZE_MAX_LEVELS = 64;
 
 function sliderToPosterizeLevels(v) {
   if (v <= 0) return null; // off
-  const lmin = Math.log(POSTERIZE_MIN_LEVELS);
-  const lmax = Math.log(POSTERIZE_MAX_LEVELS);
   const t = (v - 1) / (SLIDER_STEPS - 1); // 0 at the first notch, 1 at the far right
-  const levels = Math.round(Math.exp(lmax - (lmax - lmin) * t));
+  const levels = Math.round(POSTERIZE_MAX_LEVELS - t * (POSTERIZE_MAX_LEVELS - POSTERIZE_MIN_LEVELS));
   return Math.min(POSTERIZE_MAX_LEVELS, Math.max(POSTERIZE_MIN_LEVELS, levels));
 }
 
 function posterizeLevelsToSlider(levels) {
   if (levels == null || levels <= 1) return 0; // off
-  const lmin = Math.log(POSTERIZE_MIN_LEVELS);
-  const lmax = Math.log(POSTERIZE_MAX_LEVELS);
-  let v = Math.round(((lmax - Math.log(levels)) / (lmax - lmin)) * (SLIDER_STEPS - 1)) + 1;
+  // Sessions saved when the maximum was 255 may hold higher values:
+  // clamp them to the weakest reachable position (the first notch)
+  levels = Math.min(POSTERIZE_MAX_LEVELS, Math.max(POSTERIZE_MIN_LEVELS, levels));
+  const t = (POSTERIZE_MAX_LEVELS - levels) / (POSTERIZE_MAX_LEVELS - POSTERIZE_MIN_LEVELS);
+  let v = Math.round(t * (SLIDER_STEPS - 1)) + 1;
   v = Math.min(SLIDER_STEPS, Math.max(1, v));
   // The analytic position may round to a neighbor: nudge it until the
-  // forward mapping gives back exactly `levels` (near 255, one slider step
-  // can skip a level — then the closest reachable one is used)
+  // forward mapping gives back exactly `levels`
   while (v < SLIDER_STEPS && sliderToPosterizeLevels(v) > levels) v++;
   while (v > 1 && sliderToPosterizeLevels(v - 1) < levels) v--;
   return v;
@@ -1352,8 +1598,12 @@ function buildParams() {
     grid_height:      null,              // always deduced from the ratio
     contrast:         Number(contrast.value),
     brightness:       Number(brightness.value),
-    saturation:       Number(saturation.value),
+    vibrance:         Number(vibrance.value),
     posterize_levels: sliderToPosterizeLevels(Number(posterize.value)),
+    texture:          Number(texture.value),
+    clarity:          Number(clarity.value),
+    simplify:         Number(simplify.value),
+    auto_levels:      autoLevelsBtn.classList.contains('active'),
   };
 }
 
@@ -1407,7 +1657,10 @@ function syncLabels() {
   gridValue.textContent       = hasImage ? currentGridWidth() : '-';
   contrastValue.textContent   = Number(contrast.value).toFixed(0);
   brightnessValue.textContent = Number(brightness.value).toFixed(0);
-  saturationValue.textContent = Number(saturation.value).toFixed(0);
+  vibranceValue.textContent   = Number(vibrance.value).toFixed(0);
+  textureValue.textContent    = Number(texture.value).toFixed(0);
+  clarityValue.textContent    = Number(clarity.value).toFixed(0);
+  simplifyValue.textContent   = Number(simplify.value).toFixed(0);
 
   const p = sliderToPosterizeLevels(Number(posterize.value));
   posterizeValue.textContent = p ? t('controls.posterizeLevels', { count: p }) : t('controls.posterizeOff');
@@ -1485,13 +1738,17 @@ loadBtn.addEventListener('click', async () => {
 });
 
 // ---------- Image shape tools (rotate / crop / transform) ----------
-// Every reshape operation resets the synth zones: they are grid
-// coordinates and would no longer match the manipulated image.
+// Every reshape operation resets the synth zones and silences: they are
+// grid coordinates and would no longer match the manipulated image.
 function resetAllSynthZones() {
-    synthHighlights.forEach(hi => { hi.zones = []; });
+    synthHighlights.forEach(hi => {
+        hi.zones = [];
+        hi.muteZones = [];
+    });
     synthListBody.querySelectorAll('.synth-block').forEach(el => {
         const id = Number(el.dataset.synthId);
         sendSynthZones(id);
+        sendSynthMuteZones(id);
         updateZonesLabel(id);
     });
     redrawAllHighlights();
@@ -1852,8 +2109,12 @@ resetBtn.addEventListener('click', () => {
   gridSlider.value  = SLIDER_STEPS;
   contrast.value    = 0;
   brightness.value  = 0;
-  saturation.value  = 0;
+  vibrance.value  = 0;
   posterize.value   = 0;
+  texture.value    = 0;
+  clarity.value    = 0;
+  simplify.value   = 0;
+  autoLevelsBtn.classList.remove('active');
 
   syncLabels();
   refresh();
@@ -1871,8 +2132,12 @@ saveSessionBtn.addEventListener('click', async () => {
         grid_slider: Number(gridSlider.value),
         contrast: Number(contrast.value),
         brightness: Number(brightness.value),
-        saturation: Number(saturation.value),
+        vibrance: Number(vibrance.value),
         posterize_levels: sliderToPosterizeLevels(Number(posterize.value)),
+        texture: Number(texture.value),
+        clarity: Number(clarity.value),
+        simplify: Number(simplify.value),
+        auto_levels: autoLevelsBtn.classList.contains('active'),
         synth_colors: Array.from(synthListBody.querySelectorAll('.synth-block')).map(el => ({
             id: Number(el.dataset.synthId),
             color: synthColors.get(Number(el.dataset.synthId)),
@@ -1903,10 +2168,12 @@ loadSessionBtn.addEventListener('click', async () => {
     closeTransformPanel();
     metronomeRunning = false;
     synthListBody.querySelectorAll('.synth-block').forEach(el => el.remove());
+    synthTabs.querySelectorAll('.synth-tab').forEach(el => el.remove());
     synthColors.clear();
     synthCursors.clear();
     synthHighlights.clear();
     synthNames.clear();
+    synthDisplayNumbers.clear();
     placeholder.classList.remove('hidden');
     cancelZonePicking();
     syncPlayAllButton();
@@ -1921,8 +2188,12 @@ loadSessionBtn.addEventListener('click', async () => {
     gridSlider.value = session.image_settings.grid_slider;
     contrast.value = session.image_settings.contrast;
     brightness.value = session.image_settings.brightness;
-    saturation.value = session.image_settings.saturation;
+    vibrance.value = session.image_settings.vibrance ?? 0;
     posterize.value = posterizeLevelsToSlider(session.image_settings.posterize_levels);
+    texture.value = session.image_settings.texture ?? 0;
+    clarity.value = session.image_settings.clarity ?? 0;
+    simplify.value = session.image_settings.simplify ?? 0;
+    autoLevelsBtn.classList.toggle('active', session.image_settings.auto_levels ?? false);
     showOriginalBtn.classList.remove('active');
     viewerEmpty.classList.add('hidden');
     syncLabels();
@@ -1943,10 +2214,11 @@ loadSessionBtn.addEventListener('click', async () => {
             }
             // The synth settings are flattened into the session-synth object
             // (serde flatten), so `s` itself is the config to apply
-            synthListBody.appendChild(createSynthElement(s.id, s));
+            synthDevices.appendChild(createSynthElement(s.id, s));
             const hi = synthHighlights.get(s.id);
             if (hi) {
                 hi.zones = s.zones || [];
+                hi.muteZones = s.mute_zones || [];
                 // Version 1 sessions: an empty zone list implicitly meant
                 // "whole image". Materialize it explicitly to keep the old
                 // behavior (since version 2, empty = nothing selected).
@@ -1958,15 +2230,44 @@ loadSessionBtn.addEventListener('click', async () => {
             updateZonesLabel(s.id);
         }
         redrawAllHighlights();
+        // Normalize the ids of legacy session files (possible gaps after
+        // deletions): the ids must match the display order again
+        await renumberSynthIds();
     }
 });
 
 // ---------- Listeners ----------
-[gridSlider, contrast, brightness, saturation, posterize].forEach(el => {
+[gridSlider, contrast, brightness, vibrance, posterize, texture, clarity, simplify].forEach(el => {
   el.addEventListener('input', () => {
     syncLabels();
     scheduleRefresh();
   });
+});
+
+// Double-click a slider to reset it to its default value (0 for the
+// adjustments, the maximum for the grid width)
+const sliderDefaults = new Map([
+  [gridSlider, SLIDER_STEPS],
+  [contrast, 0],
+  [brightness, 0],
+  [vibrance, 0],
+  [posterize, 0],
+  [texture, 0],
+  [clarity, 0],
+  [simplify, 0],
+]);
+sliderDefaults.forEach((def, el) => {
+  el.addEventListener('dblclick', () => {
+    if (el.value == def) return;
+    el.value = def;
+    syncLabels();
+    scheduleRefresh();
+  });
+});
+
+autoLevelsBtn.addEventListener('click', () => {
+  autoLevelsBtn.classList.toggle('active');
+  scheduleRefresh();
 });
 
 // ---------- Manual column entry: double-click the placeholder ----------
@@ -2222,7 +2523,19 @@ invoke('get_known_programs').then(entries => {
 const addSynthBtn   = document.querySelector('#add-synth-btn');
 const playAllBtn    = document.querySelector('#play-all-btn');
 const synthListBody = document.querySelector('.synth-list-body');
+const synthTabs     = document.querySelector('.synth-tabs');
+const synthDevices  = document.querySelector('.synth-devices');
 const placeholder   = synthListBody.querySelector('.placeholder-text');
+
+// The full synth card in the devices column
+function synthElementById(id) {
+    return synthDevices.querySelector(`.synth-block[data-synth-id="${id}"]`);
+}
+
+// The compact tab in the tabs column
+function synthTabById(id) {
+    return synthTabs.querySelector(`.synth-tab[data-synth-id="${id}"]`);
+}
 
 // Reflects a newly created synth's backend state (built from the
 // default-synth template) into its UI. No backend calls needed: the state
@@ -2323,11 +2636,48 @@ function createSynthElement(id, cfg = null) {
     el.className = 'synth-block';
     el.dataset.synthId = id;
 
+    // Updates the `id` binding this function's closures capture, so every
+    // listener below keeps targeting the right synth after the ids are
+    // renumbered to match the display order (see renumberSynthIds).
+    el._setSynthId = newId => { id = newId; };
+
+    // Seed the display number first: the tab's tooltip below derives
+    // from it via synthDisplayName. Backend-driven creation provides it;
+    // older contexts (none today) fall back to the id.
+    synthDisplayNumbers.set(id, cfg?.display_number ?? id);
+
+    // Compact tab in the first column: drag handle + play/pause. The
+    // synth's title appears in the tooltip only. Shares the `id` binding
+    // with the card's own listeners, so it follows the renumbering too.
+    const tab = document.createElement('div');
+    tab.className = 'synth-tab';
+    tab.dataset.synthId = id;
+    tab.title = synthDisplayName(id);
+    tab.innerHTML = `
+        <button class="synth-tab-drag-handle" data-i18n-title="synth.dragHandle" tabindex="-1">
+            <span class="material-symbols-outlined" aria-hidden="true">drag_indicator</span>
+        </button>
+        <button class="synth-tab-play" tabindex="-1">
+            <span class="material-symbols-outlined synth-play-icon" aria-hidden="true">play_arrow</span>
+            <span class="synth-play-label"></span>
+        </button>`;
+    const tabPlayBtn = tab.querySelector('.synth-tab-play');
+    setPlayButtonState(tabPlayBtn, false);
+    tabPlayBtn.addEventListener('click', () => onSynthPlayClick(id, el));
+    initTabDrag(tab, el);
+    synthTabs.appendChild(tab);
+    el._tab = tab;
+
     // Color: reuse a pre-seeded entry (session load), or rotate through
     // the palette
     const seededColor = synthColors.get(id);
     const defaultColor = seededColor || SYNTH_COLORS[(synthColors.size) % SYNTH_COLORS.length];
     synthColors.set(id, defaultColor);
+
+    // The tab carries its synth's identification color (handle icon +
+    // left/top/bottom borders) via a CSS variable, kept in sync with the
+    // color picker below
+    tab.style.setProperty('--synth-tab-color', defaultColor);
 
     const channelOptions = Array.from({ length: 16 }, (_, i) =>
         `<option value="${i}">${t('synth.channelOption', { number: i + 1 })}</option>`
@@ -2347,7 +2697,7 @@ function createSynthElement(id, cfg = null) {
         <div class="synth-color-picker hidden">
             <div class="color-swatches">${colorSwatches}</div>
         </div>
-        <div class="synth-header">
+        <div class="synth-device synth-header">
             <div class="synth-header-row">
                 <select class="synth-midi-port" data-i18n-title="synth.midiPort"></select>
                 <select class="synth-channel">${channelOptions}</select>
@@ -2601,6 +2951,7 @@ function createSynthElement(id, cfg = null) {
             invoke('set_synth_name', { id, name: input.value })
                 .catch(err => console.error('Error in set_synth_name:', err));
             titleLabel.textContent = synthDisplayName(id);
+            if (tab) tab.title = synthDisplayName(id);
             close();
         };
         const cancel = () => {
@@ -2653,6 +3004,7 @@ function createSynthElement(id, cfg = null) {
             const color = btn.dataset.color;
             synthColors.set(id, color);
             colorBand.style.background = color;
+            tab.style.setProperty('--synth-tab-color', color);
             colorPicker.classList.add('hidden');
             // Redraw the highlight with the new color
             redrawAllHighlights();
@@ -2882,8 +3234,9 @@ function createSynthElement(id, cfg = null) {
         });
     });
 
-    // Initialize the highlight state (visible by default, nothing selected)
-    synthHighlights.set(id, { visible: true, zones: [] });
+    // Initialize the highlight state (visible by default, nothing
+    // selected, nothing silenced)
+    synthHighlights.set(id, { visible: true, zones: [], muteZones: [] });
     synthBrightnessBounds.set(id, {
         min: Number(cfg?.brightness_min ?? 0),
         max: Number(cfg?.brightness_max ?? 127),
@@ -2937,18 +3290,21 @@ function createSynthElement(id, cfg = null) {
         redrawAllHighlights();
     });
 
-    // Clear all zones: back to nothing selected
+    // Clear all zones: back to nothing selected (and nothing silenced —
+    // the silences live within the selection)
     el.querySelector('.synth-clear-zones-btn').addEventListener('click', () => {
         const hi = synthHighlights.get(id);
         if (!hi) return;
         hi.zones = [];
+        hi.muteZones = [];
         sendSynthZones(id);
+        sendSynthMuteZones(id);
         updateZonesLabel(id);
         redrawAllHighlights();
     });
 
-    initBrightnessRange(id, el);
-    initVelocityRange(id, el);
+    initBrightnessRange(el);
+    initVelocityRange(el);
 
     // ---- Velocity mapping mode: relative (rescaled) vs clamp ----
     // Active = the saturation is rescaled onto [min, max] (the whole
@@ -2984,6 +3340,8 @@ function updateAllSynthZones() {
             .filter(z => z.w > 0 && z.h > 0);
 
         sendSynthZones(synthId);
+        // Silences outside the new selection (or the new grid) disappear
+        clipMuteZonesToSelection(synthId);
         updateZonesLabel(synthId);
     });
     redrawAllHighlights();
@@ -2996,7 +3354,10 @@ function anchorHueGradient(input, hueShift) {
     input.style.setProperty('--hue-rot', `${(360 - Number(hueShift) % 360) % 360}deg`);
 }
 
-function initBrightnessRange(id, el) {
+// The id is read from the DOM at event time (not captured at creation),
+// so the listeners survive the id renumbering that follows the display
+// order (see renumberSynthIds).
+function initBrightnessRange(el) {
     const startInput = el.querySelector('.brightness-start');
     const endInput   = el.querySelector('.brightness-end');
     const startVal   = el.querySelector('.brightness-start-val');
@@ -3019,7 +3380,7 @@ function initBrightnessRange(id, el) {
 
     function sendRange() {
         invoke('set_synth_brightness_range', {
-            id,
+            id: Number(el.dataset.synthId),
             brightnessMin: Number(startInput.value),
             brightnessMax: Number(endInput.value),
         }).catch(err => console.error('Error in set_synth_brightness_range:', err));
@@ -3030,7 +3391,7 @@ function initBrightnessRange(id, el) {
         startVal.textContent = startInput.value;
         updateFill();
         sendRange();
-        updateBrightnessBounds(id);
+        updateBrightnessBounds(Number(el.dataset.synthId));
     });
 
     endInput.addEventListener('input', () => {
@@ -3038,13 +3399,13 @@ function initBrightnessRange(id, el) {
         endVal.textContent = endInput.value;
         updateFill();
         sendRange();
-        updateBrightnessBounds(id);
+        updateBrightnessBounds(Number(el.dataset.synthId));
     });
 
     updateFill();
 }
 
-function initVelocityRange(id, el) {
+function initVelocityRange(el) {
     const minInput = el.querySelector('.velocity-min');
     const maxInput = el.querySelector('.velocity-max');
     const minVal   = el.querySelector('.velocity-min-val');
@@ -3065,7 +3426,7 @@ function initVelocityRange(id, el) {
 
     function sendRange() {
         invoke('set_synth_velocity_range', {
-            id,
+            id: Number(el.dataset.synthId),
             velocityMin: Number(minInput.value),
             velocityMax: Number(maxInput.value),
         }).catch(err => console.error('Error in set_synth_velocity_range:', err));
@@ -3120,10 +3481,9 @@ function setSynthControlsLocked(el, locked) {
 }
 
 async function startSynthPlayback(id, el) {
-    const btn = el.querySelector('.synth-play');
     await ensureMetronomeStarted();
     await invoke('start_synth', { id });
-    setPlayButtonState(btn, true);
+    setSynthPlaying(id, true);
     // Hide the highlight during playback
     hideHighlightForPlay(id, el);
     // Lock this synth's controls while it is playing
@@ -3132,9 +3492,8 @@ async function startSynthPlayback(id, el) {
 }
 
 async function stopSynthPlayback(id, el) {
-    const btn = el.querySelector('.synth-play');
     await invoke('stop_synth', { id });
-    setPlayButtonState(btn, false);
+    setSynthPlaying(id, false);
     // Show the highlight again if the eye button is active
     restoreHighlightAfterStop(id, el);
     await stopMetronomeIfIdle();
@@ -3176,6 +3535,160 @@ function restoreHighlightAfterStop(id, el) {
     // Clear this synth's cursor from the canvas
     synthCursors.delete(id);
     redrawAllHighlights();
+}
+
+// ---------- Tab drag & drop (stack reordering) ----------
+// Reorders the synths by dragging a tab's handle. The tabs move live
+// during the drag; on release the devices column is mirrored to the same
+// order and the ids are renumbered to match it (1..N, top to bottom).
+// Brings a synth's device card fully into the devices column's view.
+// When the card isn't entirely visible, it is aligned with the top of
+// the view (smooth scroll) — the clicked tab's synth then reads as the
+// current head of the stack. No-op when the card is already fully
+// visible.
+function scrollSynthCardIntoView(el) {
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const view = synthDevices.getBoundingClientRect();
+    const topInView = rect.top - view.top; // < 0: cut above, > 0: below or cut
+    const fullyVisible = topInView >= 0 && rect.bottom <= view.bottom;
+    if (fullyVisible) return;
+    synthDevices.scrollBy({ top: topInView, behavior: 'smooth' });
+}
+
+function initTabDrag(tab, el) {
+    const handle = tab.querySelector('.synth-tab-drag-handle');
+
+    let drag = null; // { pointerId, grabOffset } while dragging
+
+    // Releasing a press on the tab's body — a simple click, not a drag —
+    // brings the paired card into view. The play button keeps its own
+    // role; the handle is covered by finish() (which scrolls on drop),
+    // so excluding it here avoids a double scroll.
+    tab.addEventListener('pointerup', (e) => {
+        if (e.button !== 0) return;
+        if (e.target.closest('.synth-tab-play')) return;
+        if (e.target.closest('.synth-tab-drag-handle')) return;
+        scrollSynthCardIntoView(el);
+    });
+
+    handle.addEventListener('pointerdown', (e) => {
+        // Nothing to reorder with less than two tabs
+        if (e.button !== 0) return;
+        if (synthTabs.querySelectorAll('.synth-tab').length < 2) return;
+
+        e.preventDefault();
+        handle.setPointerCapture(e.pointerId);
+        const rect = tab.getBoundingClientRect();
+        drag = {
+            pointerId: e.pointerId,
+            grabOffset: e.clientY - rect.top, // pointer's position inside the tab
+            dy: 0,                           // current vertical translation
+        };
+        tab.classList.add('dragging');
+    });
+
+    handle.addEventListener('pointermove', (e) => {
+        if (!drag || e.pointerId !== drag.pointerId) return;
+
+        // Live reorder: when the dragged tab's visual center crosses a
+        // neighbor's center, swap their DOM positions
+        const center = tab.getBoundingClientRect().top + tab.offsetHeight / 2;
+        const prev = tab.previousElementSibling;
+        const next = tab.nextElementSibling;
+        if (prev) {
+            const prevCenter = prev.getBoundingClientRect().top + prev.offsetHeight / 2;
+            if (center < prevCenter) synthTabs.insertBefore(tab, prev);
+        }
+        if (next) {
+            const nextCenter = next.getBoundingClientRect().top + next.offsetHeight / 2;
+            if (center > nextCenter) synthTabs.insertBefore(tab, next.nextSibling);
+        }
+
+        // The tab follows the pointer: the translation is recomputed
+        // against the (possibly swapped) layout position on every move
+        const layoutTop = tab.getBoundingClientRect().top - drag.dy;
+        drag.dy = e.clientY - drag.grabOffset - layoutTop;
+        tab.style.transform = `translateY(${drag.dy}px)`;
+    });
+
+    const finish = (e) => {
+        if (!drag || (e && e.pointerId !== drag.pointerId)) return;
+        drag = null;
+        tab.classList.remove('dragging');
+        tab.style.transform = '';
+
+        // Mirror the final tab order into the devices column, then
+        // renumber the ids to match the display order. The order is read
+        // before the renumbering changes the datasets.
+        const order = Array.from(synthTabs.querySelectorAll('.synth-tab'))
+            .map(t => Number(t.dataset.synthId));
+        for (const id of order) {
+            const block = synthElementById(id);
+            if (block) synthDevices.appendChild(block);
+        }
+
+        // The reorder may have left the dragged synth's card off-view:
+        // bring it back to the top of the view. The DOM positions are
+        // already final here; the renumbering below doesn't move
+        // anything visually.
+        scrollSynthCardIntoView(el);
+
+        renumberSynthIds().catch(err => console.error('Error in set_synth_order:', err));
+    };
+
+    handle.addEventListener('pointerup', finish);
+    handle.addEventListener('pointercancel', finish);
+}
+
+// ---------- Id renumbering ----------
+// Keeps the synth ids coherent with the stack's display order (the DOM
+// order): after every change in the stack's composition, the ids are
+// reassigned 1..N from top to bottom. A synth's id is thus always its
+// position in the stack — the stable number an external MIDI controller
+// will address it by. No-op when the ids already match the display order.
+async function renumberSynthIds() {
+    const blocks = Array.from(synthListBody.querySelectorAll('.synth-block'));
+    const order = blocks.map(el => Number(el.dataset.synthId));
+    if (order.length === 0) return;
+    if (order.every((id, i) => id === i + 1)) return;
+
+    await invoke('set_synth_order', { order });
+
+    // Re-key every id-keyed state following the same renumbering
+    const rekey = (map) => {
+        const snapshot = new Map(map);
+        map.clear();
+        order.forEach((oldId, i) => {
+            const value = snapshot.get(oldId);
+            if (value !== undefined) map.set(i + 1, value);
+        });
+    };
+    rekey(synthColors);
+    rekey(synthCursors);
+    rekey(synthHighlights);
+    rekey(synthBrightnessBounds);
+    rekey(synthNames);
+    rekey(synthDisplayNumbers);
+
+    blocks.forEach((el, i) => {
+        const oldId = order[i];
+        const newId = i + 1;
+        el._setSynthId(newId); // update the id captured by the listeners
+        el.dataset.synthId = newId;
+        // Default titles follow the new id; custom names are unchanged
+        el.querySelector('.synth-title-label').textContent = synthDisplayName(newId);
+        // The paired tab follows the same renumbering
+        const tab = el._tab;
+        if (tab) {
+            tab.dataset.synthId = newId;
+            tab.title = synthDisplayName(newId);
+        }
+        // Re-target an armed zone-picking mode, if any
+        if (zonePickState && zonePickState.id === oldId) zonePickState.id = newId;
+        if (zoneDrag && zoneDrag.id === oldId) zoneDrag.id = newId;
+        if (lassoDrag && lassoDrag.id === oldId) lassoDrag.id = newId;
+    });
 }
 
 // Double-click confirmation for synth removal: only one remove button can
@@ -3225,7 +3738,12 @@ async function onSynthRemoveClick(id, el) {
     synthHighlights.delete(id);
     synthBrightnessBounds.delete(id);
     synthNames.delete(id);
+    // The dropped entry only cleans the map: the number itself stays
+    // retired (the backend counter never reuses it)
+    synthDisplayNumbers.delete(id);
+    el._tab?.remove();
     el.remove();
+    await renumberSynthIds();
     redrawAllHighlights();
 
     if (synthListBody.querySelectorAll('.synth-block').length === 0) {
@@ -3240,7 +3758,7 @@ addSynthBtn.addEventListener('click', async () => {
     try {
         const synth = await invoke('add_synth');
         placeholder.classList.add('hidden');
-        synthListBody.appendChild(createSynthElement(synth.id, synth));
+        synthDevices.appendChild(createSynthElement(synth.id, synth));
     } catch (err) {
         console.error('Error while adding the synthesizer:', err);
         alert(translateError(err)); // or a more discreet display like a toast/error message in the UI
@@ -3278,7 +3796,7 @@ const panicBtn = document.querySelector('#panic-btn');
 panicBtn.addEventListener('click', async () => {
     await invoke('panic_all');
     synthListBody.querySelectorAll('.synth-block').forEach(el => {
-        setPlayButtonState(el.querySelector('.synth-play'), false);
+        setSynthPlaying(Number(el.dataset.synthId), false);
         setSynthControlsLocked(el, false);
     });
     syncPlayAllButton();
@@ -3289,10 +3807,9 @@ panicBtn.addEventListener('click', async () => {
 // Automatic stop at the end of the sequence (non-loop mode)
 window.__TAURI__.event.listen('synth-stopped', async (event) => {
     const { id } = event.payload;
-    const el = synthListBody.querySelector(`[data-synth-id="${id}"]`);
+    const el = synthElementById(id);
     if (!el) return;
-    const btn = el.querySelector('.synth-play');
-    setPlayButtonState(btn, false);
+    setSynthPlaying(id, false);
     synthCursors.delete(id);
     restoreHighlightAfterStop(id, el);
     syncPlayAllButton();
@@ -3305,7 +3822,7 @@ window.__TAURI__.event.listen('synth-stopped', async (event) => {
 // Receiving pixel ticks, one per synth
 window.__TAURI__.event.listen('synth-pixel-tick', (event) => {
     const { id, cursor, r, g, b, velocity, muted, mode, note, voices } = event.payload;
-    const el = synthListBody.querySelector(`[data-synth-id="${id}"]`);
+    const el = synthElementById(id);
     if (!el) return;
 
     const rgbStr = `rgb(${r ?? '-'}, ${g ?? '-'}, ${b ?? '-'})`;

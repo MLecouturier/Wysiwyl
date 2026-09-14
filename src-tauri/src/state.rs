@@ -123,6 +123,12 @@ impl Default for ImageState {
 #[derive(Clone, Serialize)]
 pub struct Synth {
     pub id: u32,
+    /// Number shown in the default title ("Synth #n"). Attributed once
+    /// at creation from a dedicated counter, never changed nor reused:
+    /// unlike the id (renumbered with the stack's display order), it is
+    /// stable for the synth's whole lifetime, so the user never sees a
+    /// synth's default name change under a reorder or a removal.
+    pub display_number: u32,
     pub name: Option<String>, // custom display name; None = default "Synth #id"
     pub playing: bool,
     pub cursor: usize,      // index into the zone pixel sequence (0..sequence length)
@@ -130,6 +136,8 @@ pub struct Synth {
     pub channel: u8,        // MIDI channel 0-15
     pub midi_port: usize,   // MIDI output port index (see list_midi_ports)
     pub zones: Vec<PixelZone>, // rectangular zones to play (empty = nothing selected)
+    pub mute_zones: Vec<PixelZone>, // manually silenced pixels (rests): the playhead still
+                                    // travels over them but no note is sounded (empty = none)
     pub loop_enabled: bool,   // loop playback or stop at end of range
     pub back_and_forth: bool, // bounce back and forth between the sequence
                               // bounds (mutually exclusive with the loop)
@@ -185,6 +193,9 @@ impl Synth {
     pub fn new(id: u32) -> Self {
         Self {
             id,
+            // Fallback: callers that build a synth without an explicit
+            // number (template, session restore) set it right after
+            display_number: id,
             name: None,
             playing: false,
             cursor: 0,
@@ -192,6 +203,7 @@ impl Synth {
             channel: 0,
             midi_port: 0,
             zones: Vec::new(),    // empty = nothing selected
+            mute_zones: Vec::new(), // empty = no manually silenced pixel
             loop_enabled: true,   // loop enabled by default
             back_and_forth: false,
             reading_direction: ReadingDirection::LeftToRight,
@@ -232,6 +244,10 @@ impl Synth {
 pub struct SynthState {
     pub synths: Mutex<HashMap<u32, Synth>>,
     pub next_id: Mutex<u32>,
+    /// Source of the display numbers (see `Synth::display_number`):
+    /// monotonic, never decremented — a removed synth's number is
+    /// permanently retired, so names never shift or get reused.
+    pub next_display_number: Mutex<u32>,
 }
 
 impl Default for SynthState {
@@ -239,6 +255,7 @@ impl Default for SynthState {
         Self {
             synths: Mutex::new(HashMap::new()),
             next_id: Mutex::new(1),
+            next_display_number: Mutex::new(1),
         }
     }
 }

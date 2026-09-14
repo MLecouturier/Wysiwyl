@@ -19,8 +19,12 @@ pub struct SessionUi {
     pub grid_slider: u32,
     pub contrast: f32,
     pub brightness: i32,
-    pub saturation: f32,
+    pub vibrance: f32,
     pub posterize_levels: Option<u8>,
+    pub texture: f32,
+    pub clarity: f32,
+    pub simplify: f32,
+    pub auto_levels: bool,
     pub synth_colors: Vec<SynthUiEntry>,
 }
 
@@ -37,8 +41,19 @@ pub struct SessionImageSettings {
     pub grid_slider: u32,
     pub contrast: f32,
     pub brightness: i32,
-    pub saturation: f32,
+    /// Vibrance (formerly saturation): sessions saved before the rename
+    /// store the value under the old `saturation` key.
+    #[serde(default, alias = "saturation")]
+    pub vibrance: f32,
     pub posterize_levels: Option<u8>,
+    #[serde(default)]
+    pub texture: f32,
+    #[serde(default)]
+    pub clarity: f32,
+    #[serde(default)]
+    pub simplify: f32,
+    #[serde(default)]
+    pub auto_levels: bool,
 }
 
 /// A synthesizer as stored in a session file: its identity, display color,
@@ -49,9 +64,18 @@ pub struct SessionImageSettings {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SessionSynth {
     pub id: u32,
+    /// Stable display number of the default title (see
+    /// `Synth::display_number`). Absent in sessions saved before its
+    /// introduction: the id is used as a fallback on load.
+    #[serde(default)]
+    pub display_number: Option<u32>,
     pub name: Option<String>,
     pub color: String,
     pub zones: Vec<PixelZone>,
+    /// Manually silenced pixels (rests) among the selected zones. Absent
+    /// in sessions saved before the feature: nothing is muted.
+    #[serde(default)]
+    pub mute_zones: Vec<PixelZone>,
     #[serde(default)]
     pub program: Option<ProgramState>,
     #[serde(flatten)]
@@ -134,9 +158,11 @@ pub async fn save_session(
             let synth = synths_guard.get(&entry.id)?;
             Some(SessionSynth {
                 id: entry.id,
+                display_number: Some(synth.display_number),
                 name: synth.name.clone(),
                 color: entry.color.clone(),
                 zones: synth.zones.clone(),
+                mute_zones: synth.mute_zones.clone(),
                 // Snapshot of the channel state, so the session restores the
                 // same sounds even if the synths changed channels since
                 program: known_programs
@@ -156,8 +182,12 @@ pub async fn save_session(
             grid_slider: ui.grid_slider,
             contrast: ui.contrast,
             brightness: ui.brightness,
-            saturation: ui.saturation,
+            vibrance: ui.vibrance,
             posterize_levels: ui.posterize_levels,
+            texture: ui.texture,
+            clarity: ui.clarity,
+            simplify: ui.simplify,
+            auto_levels: ui.auto_levels,
         },
         synths,
     };
@@ -235,14 +265,24 @@ pub async fn load_session(
         }
         synths.clear();
         let mut max_id = 0;
+        let mut max_display_number = 0;
         for entry in &file.synths {
             let mut synth = entry.settings.to_synth(entry.id);
             synth.name = entry.name.clone();
             synth.zones = entry.zones.clone();
+            synth.mute_zones = entry.mute_zones.clone();
+            // Sessions predating the display number: fall back to the
+            // saved id, itself stable across this session's lifetime
+            synth.display_number = entry.display_number.unwrap_or(entry.id);
             max_id = max_id.max(entry.id);
+            max_display_number = max_display_number.max(synth.display_number);
             synths.insert(entry.id, synth);
         }
         *synth_state.next_id.lock().unwrap() = max_id + 1;
+        // The display-number counter continues past the highest restored
+        // number, so a newly created synth never collides with an
+        // existing default title
+        *synth_state.next_display_number.lock().unwrap() = max_display_number + 1;
     }
 
     // Reconfigure the instruments: send each saved program once per
@@ -324,6 +364,25 @@ mod tests {
         }"##;
         let s: SessionSynth = serde_json::from_str(json).unwrap();
         assert_eq!(s.program, None);
+        // The display number didn't exist in that format either: it
+        // deserializes to None, and the loader falls back to the id
+        assert_eq!(s.display_number, None);
+    }
+
+    /// A session saved before the vibrance rename must load its saturation
+    /// value as vibrance (older format compatibility).
+    #[test]
+    fn image_settings_saturation_key_loads_as_vibrance() {
+        let json = r##"{
+            "grid_slider": 800,
+            "contrast": 10.0,
+            "brightness": 5,
+            "saturation": -30.0,
+            "posterize_levels": 4
+        }"##;
+        let s: SessionImageSettings = serde_json::from_str(json).unwrap();
+        assert_eq!(s.vibrance, -30.0);
+        assert_eq!(s.grid_slider, 800);
     }
 
     /// Round-trip check: a synth's full parameter set survives a
@@ -357,9 +416,11 @@ mod tests {
 
         let original = SessionSynth {
             id: 7,
+            display_number: Some(7),
             name: Some("Lead".into()),
             color: "#3498db".into(),
             zones: vec![PixelZone { x: 2, y: 3, w: 5, h: 4 }],
+            mute_zones: vec![PixelZone { x: 3, y: 4, w: 1, h: 2 }],
             program: Some(ProgramState {
                 bank_msb: Some(1),
                 bank_lsb: Some(32),
@@ -374,9 +435,11 @@ mod tests {
 
         // Every parameter must survive
         assert_eq!(restored.id, original.id);
+        assert_eq!(restored.display_number, original.display_number);
         assert_eq!(restored.name, original.name);
         assert_eq!(restored.color, original.color);
         assert_eq!(restored.zones, original.zones);
+        assert_eq!(restored.mute_zones, original.mute_zones);
         assert_eq!(restored.program, original.program);
         let s = restored.settings.to_synth(7);
         assert_eq!(s.tempo_ratio, synth.tempo_ratio);

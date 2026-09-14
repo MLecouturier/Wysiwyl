@@ -105,6 +105,8 @@ fn saturation_to_velocity(
 /// determines a single note. `retrigger` forces a note re-articulation on
 /// every pixel (used when note lengths are enabled, where each pixel is a
 /// distinct note of a fixed duration, disabling the legato sustain).
+/// `manual_mute` silences the pixel by hand (rest): no note is sounded,
+/// exactly like a pixel outside the brightness window.
 fn process_monophonic(
     synth: &mut Synth,
     midi: &MidiState,
@@ -114,6 +116,7 @@ fn process_monophonic(
     velocity: u8,
     payload: &mut serde_json::Value,
     retrigger: bool,
+    manual_mute: bool,
 ) {
     let hue = pixel_hue(r, g, b);
     let shifted_hue = (hue + synth.hue_shift as f32) % 360.0;
@@ -124,7 +127,8 @@ fn process_monophonic(
     // landing only on scale degrees.
     let effective_note = effective_note_for(synth, shifted_hue / 360.0, note_range_bounds, &synth.mono_note_range);
 
-    let in_range = brightness_level >= synth.brightness_min
+    let in_range = !manual_mute
+        && brightness_level >= synth.brightness_min
         && brightness_level <= synth.brightness_max;
 
     // We only (re)trigger MIDI if the note actually changes or if its
@@ -157,7 +161,9 @@ fn process_monophonic(
 /// Processes a pixel in polyphonic mode: each enabled R/G/B channel generates
 /// its own independent note, forming a chord of 1 to 3 notes. `retrigger`
 /// forces a re-articulation of every enabled voice on each pixel (used when
-/// note lengths are enabled, see process_monophonic).
+/// note lengths are enabled, see process_monophonic). `manual_mute` silences
+/// the pixel by hand (rest): no voice is sounded, exactly like a pixel
+/// outside the brightness window.
 fn process_polyphonic(
     synth: &mut Synth,
     midi: &MidiState,
@@ -167,10 +173,12 @@ fn process_polyphonic(
     velocity: u8,
     payload: &mut serde_json::Value,
     retrigger: bool,
+    manual_mute: bool,
 ) {
     let channel_values = [r, g, b];
     let channel_midi = synth.channel;
-    let global_in_range = brightness_level >= synth.brightness_min
+    let global_in_range = !manual_mute
+        && brightness_level >= synth.brightness_min
         && brightness_level <= synth.brightness_max;
 
     let mut voices_payload = Vec::with_capacity(3);
@@ -218,6 +226,12 @@ fn process_polyphonic(
 
     payload["voices"] = serde_json::json!(voices_payload);
     payload["muted"] = serde_json::json!(!global_in_range);
+}
+
+/// True when the pixel at (x, y) is covered by one of the given zones
+/// (rectangles in grid cells, same convention as build_pixel_sequence).
+fn pixel_in_zones(zones: &[PixelZone], x: u32, y: u32) -> bool {
+    zones.iter().any(|z| x >= z.x && x < z.x + z.w && y >= z.y && y < z.y + z.h)
 }
 
 /// Builds the flat, ordered list of pixel indices covered by the synth's
@@ -394,6 +408,9 @@ fn step_synth_once(
     let y = px / width as u32;
     let pixel = image.get_pixel(x, y);
     let (r, g, b, a) = (pixel[0], pixel[1], pixel[2], pixel[3]);
+    // Manually silenced pixel (rest): the playhead still travels over it,
+    // it just sounds nothing
+    let manual_mute = pixel_in_zones(&synth.mute_zones, x, y);
     let luma = pixel_luma(r, g, b);
     let brightness_level = luma_to_level(luma);
     let saturation = pixel_saturation(r, g, b);
@@ -433,13 +450,13 @@ fn step_synth_once(
         SynthMode::Monophonic => {
             process_monophonic(
                 synth, midi, &note_range_bounds, r, g, b,
-                brightness_level, velocity, &mut payload, retrigger,
+                brightness_level, velocity, &mut payload, retrigger, manual_mute,
             );
         }
         SynthMode::Polyphonic => {
             process_polyphonic(
                 synth, midi, &note_range_bounds, r, g, b,
-                brightness_level, velocity, &mut payload, retrigger,
+                brightness_level, velocity, &mut payload, retrigger, manual_mute,
             );
         }
     }
