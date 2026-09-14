@@ -3232,7 +3232,7 @@ function createSynthElement(id, cfg = null) {
                 <div class="synth-section-body center extra-margin">
                 <span class="material-symbols-outlined" aria-hidden="true">volume_up</span>
                 <input type="number" class="synth-volume" min="0" max="100" step="1" value="100" data-i18n-title="synth.volume" />
-                <div class="flex-fille grow"></div>
+                <div class="flex-filler grow"></div>
                     <button class="synth-rewind icon-btn" data-i18n-title="synth.rewind">
                         <span class="material-symbols-outlined" aria-hidden="true">fast_rewind</span>
                     </button>
