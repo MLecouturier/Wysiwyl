@@ -252,7 +252,7 @@ function restoreHelpTargetTitle() {
 
 function hideHelpPopup() {
     restoreHelpTargetTitle();
-    helpPopup.classList.add('hidden');
+helpPopup.classList.add('help-popup', 'hidden');
 }
 
 function setHelpMode(enabled) {
@@ -2528,6 +2528,7 @@ async function updateMirrorButtonStates() {
         mirrorWindowRef = null;
     }
     fullscreenBtn.disabled  = !hasSecondScreen && !mirrorOpen();
+    fullscreenBtn.classList.toggle('active', mirrorOpen());
     mirrorZonesBtn.disabled = !mirrorOpen();
 }
 
@@ -3160,11 +3161,11 @@ function createSynthElement(id, cfg = null) {
         <div class="synth-color-picker hidden">
             <div class="color-swatches">${colorSwatches}</div>
         </div>
-        <div class="synth-device synth-header">
+        <div class="synth-header">
             <div class="synth-header-row">
                 <select class="synth-midi-port" data-i18n-title="synth.midiPort"></select>
                 <select class="synth-channel">${channelOptions}</select>
-                <div class="flex-filler"></div>
+                <div class="flex-fill"></div>
                 <button class="synth-save-template icon-btn" data-i18n-title="synth.saveAsTemplate">
                     <span class="material-symbols-outlined" aria-hidden="true">bookmark_add</span>
                 </button>
@@ -3189,7 +3190,7 @@ function createSynthElement(id, cfg = null) {
                 <div class="synth-section-header">
                     <span class="synth-section-title" data-i18n="synth.zonesLabel"></span>
                     <em class="synth-section-value zones-val"></em>
-                    <div class="flex-filler"></div>
+                    <div class="flex-fill"></div>
                     <button class="synth-add-zone-btn icon-btn" data-i18n-title="synth.addZone">
                         <span class="material-symbols-outlined" aria-hidden="true">select</span>
                     </button>
@@ -3202,7 +3203,7 @@ function createSynthElement(id, cfg = null) {
                     <button class="synth-clear-zones-btn icon-btn" data-i18n-title="synth.clearZones">
                         <span class="material-symbols-outlined" aria-hidden="true">remove_selection</span>
                     </button>
-                    <div class="flex-filler"></div>
+                    <div class="flex-fill"></div>
                     
                     <button class="synth-eye-btn icon-btn active" data-i18n-title="synth.toggleHighlight"><span class="material-symbols-outlined" aria-hidden="true">visibility</span></button>
                 </div>
@@ -3211,7 +3212,7 @@ function createSynthElement(id, cfg = null) {
             <div class="synth-section synth-playback">
                 <div class="synth-section-header">
                     <span class="synth-section-title" data-i18n="synth.playbackTitle"></span>
-                    <div class="flex-filler"></div>
+                    <div class="flex-fill"></div>
                     <select class="synth-tempo" data-i18n-title="synth.tempoRatio">
                         <option value=1>1/1</option>
                         <option value=0.75>3/4</option>
@@ -3220,12 +3221,12 @@ function createSynthElement(id, cfg = null) {
                         <option value=0.33>1/3</option>
                         <option value=0.25>1/4</option>
                     </select>
-                    <div class="flex-filler"></div>                    
+                    <div class="flex-fill"></div>                    
                     <button class="synth-reading-direction-btn icon-btn" data-direction="leftToRight" data-i18n-title="synth.readingDirection.leftToRight">
                         <span class="material-symbols-outlined" aria-hidden="true">arrow_forward</span>
                     </button>
                     <button class="synth-sort-btn icon-btn" data-i18n-title="synth.toggleSort"><span class="material-symbols-outlined" aria-hidden="true">sort</span></button>
-                    <div class="flex-filler"></div>
+                    <div class="flex-fill"></div>
                     <button class="synth-loop-btn icon-btn active" data-i18n-title="synth.toggleLoop">
                         <span class="material-symbols-outlined" aria-hidden="true">laps</span>
                     </button>
@@ -3274,7 +3275,7 @@ function createSynthElement(id, cfg = null) {
                             <em class="synth-section-value hue-shift-val">0°</em>
                         </div>
                         <div class="synth-section-body">
-                            <input type="range" class="slider synth-hue-shift gradient-hue" min="0" max="360" value="0" step="1" />
+                            <input type="range" class="synth-hue-shift gradient-hue" min="0" max="360" value="0" step="1" />
                         </div>
                     </div>
                 </div>
@@ -3308,7 +3309,7 @@ function createSynthElement(id, cfg = null) {
                 <div class="synth-section">
                     <div class="synth-section-header">
                         <span class="synth-section-title" data-i18n="synth.noteLengthsTitle"></span>
-                        <div class="flex-filler"></div>
+                        <div class="flex-fill"></div>
                         <button class="synth-reverse-note-length icon-btn" data-i18n-title="synth.reverseNoteLength">
                             <span class="material-symbols-outlined" aria-hidden="true">swap_horiz</span>
                         </button>
@@ -3340,7 +3341,7 @@ function createSynthElement(id, cfg = null) {
                     <div class="synth-section-header">
                         <span class="synth-section-title" data-i18n="synth.velocityRange" data-i18n-title="synth.velocityRange"></span>
                         <em class="synth-section-value"><span class="velocity-min-val">0</span> – <span class="velocity-max-val">127</span></em>   
-                        <div class="flex-filler"></div> 
+                        <div class="flex-fill"></div> 
                         <button class="synth-relative-velocity-range icon-btn active" data-i18n-title="synth.velocityRelative">
                             <span class="material-symbols-outlined" aria-hidden="true">arrow_or_edge</span>
                         </button>                    
@@ -3501,7 +3502,12 @@ function createSynthElement(id, cfg = null) {
         document.querySelectorAll('.synth-color-picker').forEach(p => {
             if (p !== colorPicker) p.classList.add('hidden');
         });
-        colorPicker.classList.toggle('hidden');
+        const opened = !colorPicker.classList.toggle('hidden');
+        // The picker is anchored to the card's top-left corner: when the
+        // band is clicked on a card partially scrolled out of the list,
+        // scroll the picker fully into view instead of leaving it clipped
+        // by the .synth-devices scroll container.
+        if (opened) colorPicker.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     });
 
     // Click on a color

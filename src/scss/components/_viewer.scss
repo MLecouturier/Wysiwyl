@@ -1,0 +1,78 @@
+// ==========================================================================
+// Image viewer (left column - main area)
+// ==========================================================================
+// Styled by class only — the ids (#image-viewer, #pixel-overlay...) are
+// JS/canvas hooks, never styled (see README front-end conventions).
+@use '../variables' as *;
+
+.image-viewer-container {
+    background-color: $color-bg-viewer;
+    display: flex;
+    flex-direction: column;
+    gap: .75rem;
+    overflow: hidden; // overrides .content-area's overflow-y (loaded earlier)
+}
+
+.image-viewer {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    background-image:
+        linear-gradient(45deg, $color-bg-panel 25%, transparent 25%),
+        linear-gradient(-45deg, $color-bg-panel 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, $color-bg-panel 75%),
+        linear-gradient(-45deg, transparent 75%, $color-bg-panel 75%);
+    background-size: 1rem 1rem;
+    background-position: 0 0, 0 .5rem, .5rem -.5rem, -.5rem 0;
+    border: 1px solid $color-border;
+    border-radius: $border-radius-base;
+
+    .pixel-overlay {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+
+        // Pixel range click-selection mode
+        &.picking {
+            pointer-events: auto;
+            cursor: crosshair;
+        }
+
+        // Alt (Option) held while a selection tool is armed: the
+        // square/lasso edit the manual silences instead
+        &.picking.picking-silence {
+            cursor: cell;
+        }
+    }
+
+    // Playhead cursors live on their own layer, above the zones, so
+    // their incremental clearing never erases the zone highlights
+    .cursor-overlay {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+    }
+
+    // The original image (<img>) and the processed image (canvas painted
+    // from raw pixels) share the same layout: fill the viewer and scale
+    // down with contain behavior
+    img,
+    .processed-preview {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+
+        // Display cells as crisp blocks, without smoothing
+        &.pixelated {
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+    }
+}

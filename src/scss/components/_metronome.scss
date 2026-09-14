@@ -1,0 +1,118 @@
+// ==========================================================================
+// Metronome
+// ==========================================================================
+@use '../variables' as *;
+
+$metronome-led-off: $color-disactivated;
+$metronome-led-on: $color-accent-alt;
+$metronome-led-transition: 0.05s ease;
+
+.metronome-controls {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: .75rem;
+    margin-top: .5rem;
+
+    .metronome-bpm {
+        display: flex;
+        flex-direction: column;
+        font-size: 0.85em;
+        gap: .25rem;
+
+        .bpm-input-group {
+            display: flex;
+            align-items: center;
+            gap: .5rem;
+
+            .bpm-step-group {
+                display: flex;
+                flex-direction: column;
+                gap: .25rem;
+            }
+
+            .bpm-input-wrapper {
+                position: relative;
+
+                .bpm-input {
+                    width: 3.5em;
+                    text-align: center;
+                    font-size: 2.25rem;
+                    padding-right: 1.5rem;
+                    background-color: $color-bg-light;
+                    color: $color-text-primary;
+                    border: 1px solid $color-border;
+                    border-radius: $border-radius-base;
+                    outline: none;
+
+                    &::-webkit-inner-spin-button,
+                    &::-webkit-outer-spin-button {
+                        -webkit-appearance: none;
+                        margin: 0;
+                    }
+                }
+
+                // Custom ±1 spinners replacing the native (uncolorable) ones
+                .bpm-spinner {
+                    position: absolute;
+                    top: 1px;
+                    right: 1px;
+                    bottom: 1px;
+                    display: flex;
+                    flex-direction: column;
+                    justify-content: center;
+                    width: 1.4rem;
+
+                    .bpm-spinner-btn {
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        flex: 1 1 0;
+                        padding: 0;
+                        border: none;
+                        background-color: transparent;
+                        color: $color-text-secondary;
+                        cursor: pointer;
+
+                        .material-symbols-outlined { font-size: 1.05rem; }
+
+                        &:hover { color: $color-text-primary; }
+                        &:active { color: $color-accent; }
+                    }
+                }
+            }
+
+            .bpm-step {
+                padding: .125rem 6px;
+                font-size: 0.85em;
+                border: none;
+                border-radius: $border-radius-base;
+                background-color: $color-bg-neutral;
+                color: $color-text-secondary;
+                cursor: pointer;
+                transition: background-color $transition-fast, color $transition-fast;
+
+                &:hover {
+                    background-color: $color-bg-neutral-hover;
+                    color: $color-text-primary;
+                }
+            }
+
+
+        }
+    }
+
+    .led {
+        width: 1.5rem;
+        height: 1.5rem;
+        border-radius: 50%;
+        background-color: $metronome-led-off;
+        transition: background-color $metronome-led-transition;
+        flex-shrink: 0;
+
+        &.active {
+            background-color: $metronome-led-on;
+            box-shadow: 0 0 .5rem $metronome-led-on;
+        }
+    }
+}

@@ -76,6 +76,38 @@ Un fichier de configuration JSON (ouvrable via le bouton engrenage des paramètr
   - [`serde`](https://crates.io/crates/serde) et [`serde_json`](https://crates.io/crates/serde_json) pour l'échange de données entre le frontend et le backend ;
   - [`base64`](https://crates.io/crates/base64) pour l'envoi des aperçus PNG au frontend.
 
+## Conventions frontend
+
+L'interface est du HTML/SCSS/JS pur (pas de framework, pas de bundler), organisée autour d'un modèle hybride utilitaires/composants, pour que le markup puisse se lire comme une description du rendu.
+
+### Trois sortes de classes
+
+- **Classes utilitaires** — classes à vocation unique, style Tailwind, écrites à la main dans `src/scss/_utilities.scss` (`flex`, `flex-col`, `items-center`, `gap-2`, `mb-3`, `text-muted`, `hidden`...). Elles sont chargées **en dernier** dans la cascade : une classe utilitaire surpasse toujours une classe de composant, et le markup peut ajuster n'importe quel composant sans toucher au SCSS. Les échelles d'espacement et de tailles de police sont générées depuis des maps SCSS en tête de fichier.
+- **Classes de composants** — une par région de l'interface ou rôle de contrôle (`.image-viewer`, `.controls`, `.mode-panel`, `.icon-btn`, `.synth-block`...), avec leurs états et pseudo-éléments imbriqués dans le SCSS. Elles vivent dans `scss/components/`, un fichier par zone de l'interface.
+- **Classes d'état** — basculées par le JS à l'exécution : `.hidden` (avec `!important`), `.active`, `.locked`, `.picking`, `.compact`, `.confirm-pending`, `.dragging`, `.reversed`...
+
+### Les ids sont des hooks, jamais stylés
+
+Chaque `id` — dans les pages statiques comme dans les templates dynamiques — n'existe que comme point d'accroche stable pour `querySelector` ou comme calque de canvas ; **le CSS ne cible jamais un id**. Les éléments dynamiques répétés (cards de synthé, onglets) sont identifiés par des classes et un attribut `data-synth-id`, et non par des ids générés.
+
+### Couleurs sémantiques — un sens chacune
+
+- **Accent bleu** — bascule/mode actuellement actif ;
+- **Rouge** — lecture en cours (affordance d'arrêt) et action destructrice en attente de confirmation ;
+- **Vert** — confirmation transitoire.
+
+### Organisation du SCSS
+
+`styles.scss` n'est que le point d'entrée : son ordre de `@use` *est* l'ordre de la cascade — polices, reset, un fichier de composants par zone de l'interface, utilitaires en dernier. Les couleurs et tokens de design sont des variables `$color-*` dans `_variables.scss`. Le markup dynamique construit par les templates de `main.js` suit les mêmes conventions ; les classes requêtées par le JS sont des hooks : ne jamais renommer l'une sans mettre à jour le `querySelector` correspondant.
+
+### Compilation des styles
+
+Le CSS compilé est commité (`src/css/styles.css` + source map) : lancer l'application ne nécessite aucune étape de build. Après une modification du SCSS, recompiler avec dart-sass (outil autonome — Node.js n'est pas requis) :
+
+```bash
+sass scss/styles.scss css/styles.css
+```
+
 ## Installation
 
 ### Prérequis
@@ -131,13 +163,25 @@ wysiwyl/
 ├── package.json
 ├── src/
 │   ├── index.html
+│   ├── viewer.html
 │   ├── css/
-│   │   └── styles.css
+│   │   ├── styles.css
+│   │   └── mirror.css
+│   ├── fonts/
 │   ├── i18n/
 │   ├── scss/
-│   │   └── styles.scss
+│   │   ├── styles.scss
+│   │   ├── _variables.scss
+│   │   ├── _mixins.scss
+│   │   ├── _fonts.scss
+│   │   ├── _reset.scss
+│   │   ├── _utilities.scss
+│   │   └── components/
 │   └── js/
-│       └── main.js
+│       ├── main.js
+│       ├── mirror.js
+│       ├── viewer-render.js
+│       └── i18n.js
 └── src-tauri/
     ├── Cargo.toml
     ├── tauri.conf.json

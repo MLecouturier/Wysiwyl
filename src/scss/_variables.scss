@@ -1,0 +1,50 @@
+// ==========================================================================
+// Variables
+// ==========================================================================
+// Shared by every partial — import with:  @use 'variables' as *;
+// (or '../variables' from the components/ subfolder)
+
+$color-bg-dark: #1e1e1e;
+$color-bg-medium: #232323;
+$color-bg-light: #262626;
+$color-bg-viewer: #141414;
+
+$color-border: #333;
+
+$color-text-primary: #e0e0e0;
+$color-text-secondary: #ccc;
+$color-text-muted: #888;
+
+$color-accent: #3a7bd5;
+$color-accent-alt: #219a52;
+$color-accent-alt-hover: #1d8446;
+$color-accent-hover: #2d5fa8;
+$color-disactivated: #555;
+
+// Semantic accents, one meaning each:
+// - $color-accent (blue): toggle/mode currently active
+// - $color-stop (red): playback in progress (stop affordance),
+//   and destructive action awaiting confirmation (synth removal)
+// - $color-accent-alt (green): transient confirmation (template saved, LED)
+$color-stop: #c0392b;
+$color-stop-hover: #a5281b;
+
+// Neutral filled background for small transport controls (bpm steps)
+$color-bg-neutral: #444;
+$color-bg-neutral-hover: #555;
+
+// Panels and overlays darker than the page background
+$color-bg-panel: #1a1a1a;
+
+$color-red: #c00000;
+$color-green: #00cd00;
+$color-blue: #2121c8;
+
+$gradient-hue: linear-gradient(to right, #F00, #FF0, #0F0, #0FF, #00F, #F0F, #F00);
+$gradient-wb: linear-gradient(to right, black, white);
+
+$sidebar-width: 26rem;
+
+$border-radius-base: .25rem;
+$border-radius-round: 1rem;
+$transition-fast: 0.2s ease;

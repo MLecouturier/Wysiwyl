@@ -1,0 +1,54 @@
+// ==========================================================================
+// Sliders — reusable style (single and dual)
+// ==========================================================================
+// Every <input type="range"> gets the same base look, whatever its classes.
+// Dual usage: two overlapping range inputs + a .synth-range-fill inside a
+// .synth-range-track, styled in _synth-card.scss.
+@use '../variables' as *;
+@use '../mixins' as *;
+
+input[type="range"] {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 100%;
+    height: .25rem;
+    background: $color-border;
+    border-radius: .125rem;
+    outline: none;
+    cursor: pointer;
+    padding: 0;
+    margin: 0;
+
+    &::-webkit-slider-thumb     { @include slider-thumb; }
+    &::-moz-range-thumb         { @include slider-thumb; border: .125rem solid $color-bg-dark; }
+    &::-webkit-slider-runnable-track { @include slider-track; }
+    &::-moz-range-track         { @include slider-track; }
+
+    &.gradient-hue {
+        @include hue-rotating-gradient;
+
+        &::-webkit-slider-runnable-track { @include hue-rotating-gradient; }
+        &::-moz-range-track { @include hue-rotating-gradient; }
+    }
+}
+
+select {
+    background-color: $color-bg-light;
+    color: $color-text-secondary;
+    border: 1px solid $color-border;
+    border-radius: $border-radius-base;
+    padding: 4px .5rem;
+    font-size: 0.8rem;
+    cursor: pointer;
+
+    &:hover { border-color: $color-accent; }
+}
+
+// Every disabled control, everywhere
+button:disabled,
+input:disabled,
+select:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    pointer-events: none;
+}

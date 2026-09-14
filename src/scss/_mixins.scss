@@ -1,0 +1,43 @@
+// ==========================================================================
+// Mixins
+// ==========================================================================
+@use 'variables' as *;
+
+// Hue-shift slider gradient: red stays anchored on the thumb. The JS sets
+// --hue-rot to (360 - shift) so the hue at the thumb's position is always 0°
+// and the other hues follow in circle order.
+@mixin hue-rotating-gradient {
+    background: linear-gradient(to right,
+        hsl(calc(var(--hue-rot, 0deg))           100% 50%),
+        hsl(calc(var(--hue-rot, 0deg) + 60deg)   100% 50%),
+        hsl(calc(var(--hue-rot, 0deg) + 120deg)  100% 50%),
+        hsl(calc(var(--hue-rot, 0deg) + 180deg)  100% 50%),
+        hsl(calc(var(--hue-rot, 0deg) + 240deg)  100% 50%),
+        hsl(calc(var(--hue-rot, 0deg) + 300deg)  100% 50%),
+        hsl(calc(var(--hue-rot, 0deg) + 360deg)  100% 50%));
+}
+
+@mixin slider-thumb {
+    appearance: none;
+    -webkit-appearance: none;
+    width: .875rem;
+    height: .875rem;
+    margin-top: -5px;
+    border-radius: 50%;
+    background-color: $color-accent;
+    border: .125rem solid $color-bg-dark;
+    cursor: pointer;
+    transition: background-color $transition-fast, transform $transition-fast;
+
+    &:hover {
+        background-color: $color-accent-hover;
+        transform: scale(1.15);
+    }
+}
+
+@mixin slider-track {
+    height: .25rem;
+    background-color: $color-border;
+    border-radius: .125rem;
+    border: none;
+}

@@ -1,0 +1,91 @@
+// ==========================================================================
+// Shared form controls
+// ==========================================================================
+// One class per role, used across every section of the interface:
+// - .primary:    committing action (load, apply, add synth, play all)
+// - .secondary:  cancel / reset
+// - .icon-btn:   every icon-only button, one size everywhere
+// - .toggle-btn: text on/off toggle
+// The `.active` state is always the accent color, with two documented
+// exceptions: the play button (red = stop affordance, see .synth-play) and
+// the template-save button (green = transient confirmation).
+// Likewise, the synth-remove button turns red on hover/armed state
+// (destructive action pending confirmation, see .synth-remove).
+@use '../variables' as *;
+
+.icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.75rem;
+    height: 1.75rem;
+    padding: 0;
+    border: 1px solid $color-border;
+    border-radius: $border-radius-base;
+    background: none;
+    color: $color-text-secondary;
+    cursor: pointer;
+    transition: color $transition-fast, border-color $transition-fast, background-color $transition-fast;
+
+    .material-symbols-outlined { font-size: 1.05rem; }
+
+    &:hover {
+        color: $color-text-primary;
+        border-color: $color-text-muted;
+    }
+
+    // Mode/toggle currently active (crop, transform, show original, eye...)
+    &.active {
+        background-color: $color-accent;
+        border-color: $color-accent;
+        color: white;
+    }
+}
+
+button.primary {
+    background-color: $color-accent;
+    border: none;
+    color: white;
+    padding: 6px .875rem;
+    border-radius: $border-radius-base;
+    cursor: pointer;
+    font-size: 0.85rem;
+    transition: background-color $transition-fast;
+
+    &:hover { background-color: $color-accent-hover; }
+}
+
+button.secondary {
+    background-color: transparent;
+    border: 1px solid $color-border;
+    color: $color-text-secondary;
+    padding: 6px .875rem;
+    border-radius: $border-radius-base;
+    cursor: pointer;
+    font-size: 0.85rem;
+    transition: background-color $transition-fast, color $transition-fast, border-color $transition-fast;
+
+    &:hover { background-color: $color-bg-light; }
+}
+
+// Text on/off toggle: ghost look when inactive, accent look when active
+button.toggle-btn {
+    background-color: transparent;
+    border: 1px solid $color-border;
+    color: $color-text-secondary;
+    padding: 6px .875rem;
+    border-radius: $border-radius-base;
+    cursor: pointer;
+    font-size: 0.85rem;
+    transition: background-color $transition-fast, border-color $transition-fast, color $transition-fast;
+
+    &:hover { background-color: $color-bg-light; }
+
+    &.active {
+        background-color: $color-accent;
+        border-color: $color-accent;
+        color: white;
+
+        &:hover { background-color: $color-accent-hover; }
+    }
+}

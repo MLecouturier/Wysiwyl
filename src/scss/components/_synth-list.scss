@@ -1,0 +1,212 @@
+// ==========================================================================
+// Synthesizer list (right column - main area)
+// ==========================================================================
+// Scoped by the .synth-list region class — the ids (#synth-list,
+// #play-all-btn...) are JS hooks, never styled.
+@use '../variables' as *;
+
+.synth-list {
+    background-color: $color-bg-medium;
+    display: flex;
+    flex-direction: column;
+    padding: 1rem 0; // overrides .content-area's padding (loaded earlier)
+}
+
+.synth-list-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: .5rem 1rem;
+
+    .synth-list-header-actions {
+        display: flex;
+        align-items: center;
+        flex-grow: 1;
+        margin-left: .5rem;
+        gap: .5rem;
+    }
+}
+
+// Compact pill buttons of the list header: add synth / play all / panic.
+// Base look shared by the three; the color variants carry the meaning
+// (green = play, red = global stop affordance).
+.synth-list-action {
+    background: none;
+    border: 1px solid $color-border;
+    color: white;
+    width: 3rem;
+    height: 1.75rem;
+    border-radius: .825rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color $transition-fast;
+
+    &:hover {
+        border-color: $color-text-muted;
+    }
+
+    .material-symbols-outlined {
+        font-size: 1.125rem;
+    }
+}
+
+.synth-list-action-play {
+    background-color: $color-accent-alt;
+
+    &:hover {
+        background-color: $color-accent-alt-hover;
+    }
+}
+
+// Kill switch: a global stop affordance, hence the stop (red) color
+.synth-list-action-stop {
+    background-color: $color-stop;
+
+    &:hover {
+        background-color: $color-stop-hover;
+    }
+}
+
+.synth-list-body {
+    display: flex;
+    flex: 1 1 auto;
+    min-height: 0;
+    padding: 0;
+
+    .synth-tabs {
+        display: flex;
+        flex-direction: column;
+        padding: .375rem 0;
+        gap: .375rem;
+        flex: 0 0 auto;
+        min-height: 0;
+        overflow-y: auto;
+        &::-webkit-scrollbar {
+            display: none;
+        }
+    }
+
+    .synth-devices {
+        display: flex;
+        flex-direction: column;
+        gap: .375rem;
+        flex: 1 1 auto;
+        min-width: 0;
+        min-height: 0;
+        overflow-y: auto;
+        &::-webkit-scrollbar {
+            display: none;
+        }
+    }
+}
+
+// Compact tab paired with each synth card: drag handle + play/pause
+// only, the synth's title lives in the tooltip. The left/top/bottom
+// borders and the drag handle take the synth's identification color,
+// set inline via --synth-tab-color (same mechanism as --hue-rot).
+.synth-tab {
+    position: relative; // anchor of the volume bar
+    display: flex;
+    align-items: center;
+    gap: .25rem;
+    background-color: $color-bg-light;
+    border: 1px solid $color-border;
+    border-top-color: var(--synth-tab-color, #{$color-border});
+    border-left-color: var(--synth-tab-color, #{$color-border});
+    border-bottom-color: var(--synth-tab-color, #{$color-border});
+    border-top-left-radius: $border-radius-base;
+    border-bottom-left-radius: $border-radius-base;
+    padding: .125rem .25rem .25rem 0;
+    user-select: none;
+
+    .synth-tab-drag-handle {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 1rem;
+        height: 1.75rem;
+        padding: 0;
+        border: none;
+        background: none;
+        color: var(--synth-tab-color, #{$color-text-muted});
+        cursor: grab;
+        touch-action: none; // the handle drives the drag, never a scroll
+
+        .material-symbols-outlined {
+            font-size: 1.125rem;
+            // Brightness feedback on hover, so the identification color
+            // stays visible (same feedback as the card's color band)
+            transition: filter $transition-fast;
+        }
+
+        &:hover .material-symbols-outlined { filter: brightness(1.4); }
+    }
+
+    // Compact twin of .synth-play: icon only, same color semantics
+    // (red = playing/stop affordance)
+    .synth-tab-play {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 1.5rem;
+        width: 1.5rem;
+        padding: 0;
+        border: none;
+        border-radius: $border-radius-base;
+        cursor: pointer;
+        background-color: $color-accent-alt;
+        color: $color-text-secondary;
+        transition: background-color $transition-fast, color $transition-fast;
+
+        .material-symbols-outlined { font-size: 1.25rem; }
+
+        // Icon-only in the tab; the label exists so the shared state
+        // updater (setPlayButtonState) finds its hooks
+        .synth-play-label { display: none; }
+
+        &:hover {
+            background-color: $color-accent-alt-hover;
+            color: $color-text-secondary;
+        }
+
+        &.active {
+            background-color: $color-stop;
+            color: #fff;
+            &:hover { background-color: $color-stop-hover; }
+        }
+    }
+
+    // Dragging keeps the identification color (no border-color override:
+    // the shadow and grabbing cursor are enough as a drag affordance)
+    &.dragging {
+        z-index: 10;
+        box-shadow: 0 4px 10px rgba(0, 0, 0, .5);
+
+        .synth-tab-drag-handle { cursor: grabbing; }
+    }
+
+    // Volume gauge on the tab's bottom edge: a few pixels thick, in the
+    // synth's identification color, anchored on the right and growing
+    // leftward as the channel volume increases (100 % = full width).
+    // The width is driven by the --synth-volume variable (percent), kept
+    // in sync with the volume field, the wheel over it and the CC 7
+    // messages learned from the instrument. No background rail: at
+    // 0 % the bar simply disappears.
+    .synth-tab-volume-bar {
+        position: absolute;
+        right: 0;
+        bottom: 0;
+        height: 3px;
+        width: var(--synth-volume, 100%);
+        background-color: var(--synth-tab-color, #{$color-border});
+        pointer-events: none;
+        transition: width $transition-fast;
+    }
+}
+
+.placeholder-text {
+    color: $color-text-muted;
+    font-style: italic;
+}

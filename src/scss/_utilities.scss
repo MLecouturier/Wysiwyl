@@ -1,0 +1,189 @@
+// ==========================================================================
+// Utilities — single-purpose classes, Tailwind-style naming
+// ==========================================================================
+// Hand-rolled (no Node/build step), generated from maps where regular.
+//
+// Loaded LAST (see styles.scss): a utility always overrides a component
+// class of the same specificity applied to the same element, so markup
+// can tweak a component without touching its SCSS.
+//
+// Spacing scale (rem, 16 px root):
+//   0 = 0    .5 = .125rem    1 = .25rem    1\.5 = .375rem    2 = .5rem
+//   2\.5 = .625rem           3 = .75rem    4 = 1rem          5 = 1.25rem
+//   6 = 1.5rem
+
+@use 'variables' as *;
+
+// --------------------------------------------------------------------------
+// Spacing: padding, margin, gap
+// --------------------------------------------------------------------------
+// Fractional scale steps ("1\\.5" → the class .p-1\.5) are pre-escaped in
+// the map keys: interpolating a key emits a valid escaped CSS class name.
+$spacers: (
+    "0": 0,
+    "0\\.5": .125rem,
+    "1": .25rem,
+    "1\\.5": .375rem,
+    "2": .5rem,
+    "2\\.5": .625rem,
+    "3": .75rem,
+    "4": 1rem,
+    "5": 1.25rem,
+    "6": 1.5rem,
+);
+
+@each $key, $value in $spacers {
+    .p-#{$key}   { padding: $value; }
+    .px-#{$key}  { padding-left: $value; padding-right: $value; }
+    .py-#{$key}  { padding-top: $value; padding-bottom: $value; }
+    .pt-#{$key}  { padding-top: $value; }
+    .pb-#{$key}  { padding-bottom: $value; }
+
+    .m-#{$key}   { margin: $value; }
+    .mx-#{$key}  { margin-left: $value; margin-right: $value; }
+    .my-#{$key}  { margin-top: $value; margin-bottom: $value; }
+    .mt-#{$key}  { margin-top: $value; }
+    .mb-#{$key}  { margin-bottom: $value; }
+    .ml-#{$key}  { margin-left: $value; }
+    .mr-#{$key}  { margin-right: $value; }
+
+    .gap-#{$key} { gap: $value; }
+}
+
+.mx-auto { margin-left: auto; margin-right: auto; }
+.ml-auto { margin-left: auto; }
+.mr-auto { margin-right: auto; }
+
+// --------------------------------------------------------------------------
+// Display and flex
+// --------------------------------------------------------------------------
+.hidden        { display: none !important; }
+.flex          { display: flex; }
+.inline-flex   { display: inline-flex; }
+.block         { display: block; }
+.inline-block  { display: inline-block; }
+
+.flex-col         { flex-direction: column; }
+.flex-row         { flex-direction: row; }
+.flex-row-reverse { flex-direction: row-reverse; }
+
+.flex-1    { flex: 1 1 0%; }
+.flex-auto { flex: 1 1 auto; }
+.flex-none { flex: none; }
+.grow      { flex-grow: 1; }
+.shrink-0  { flex-shrink: 0; }
+
+// Signature filler of this app: grows to fill leftover space AND centers
+// its content (used to push groups apart in toolbars).
+.flex-fill {
+    flex-grow: 1;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.items-center  { align-items: center; }
+.items-start   { align-items: flex-start; }
+.items-end     { align-items: flex-end; }
+.items-stretch { align-items: stretch; }
+
+.justify-center  { justify-content: center; }
+.justify-start   { justify-content: flex-start; }
+.justify-end     { justify-content: flex-end; }
+.justify-between { justify-content: space-between; }
+
+// --------------------------------------------------------------------------
+// Sizing and overflow
+// --------------------------------------------------------------------------
+.w-full   { width: 100%; }
+.h-full   { height: 100%; }
+.w-4      { width: 1rem; }
+.h-4      { height: 1rem; }
+.min-w-0  { min-width: 0; }
+.min-h-0  { min-height: 0; }
+
+.overflow-hidden  { overflow: hidden; }
+.overflow-visible { overflow: visible; }
+.overflow-x-auto  { overflow-x: auto; }
+.overflow-y-auto  { overflow-y: auto; }
+
+// --------------------------------------------------------------------------
+// Position
+// --------------------------------------------------------------------------
+.relative  { position: relative; }
+.absolute  { position: absolute; }
+.fixed     { position: fixed; }
+.inset-0   { inset: 0; }
+.top-0     { top: 0; }
+.right-0   { right: 0; }
+.bottom-0  { bottom: 0; }
+.left-0    { left: 0; }
+
+// --------------------------------------------------------------------------
+// Typography
+// --------------------------------------------------------------------------
+// Scale aligned on the sizes actually used in the UI:
+$font-sizes: (
+    "2xs": .7rem,     // section titles, program labels
+    "xs": .78rem,     // info lines, pixel info, help body
+    "sm": .8rem,      // field labels, mode-bar hints, selects
+    "base": .85rem,   // primary/secondary/toggle buttons, bpm steps
+    "md": .9rem,      // synth card headers
+    "lg": 1rem,       // musical glyph toggles
+    "xl": 1.125rem,   // compact list-action icons
+    "2xl": 1.25rem,   // play icons
+);
+
+@each $key, $value in $font-sizes {
+    .text-#{$key} { font-size: $value; }
+}
+
+.font-normal   { font-weight: normal; }
+.font-semibold { font-weight: 600; }
+.font-bold     { font-weight: bold; }
+
+.italic    { font-style: italic; }
+.not-italic { font-style: normal; }
+.uppercase { text-transform: uppercase; }
+
+.text-left   { text-align: left; }
+.text-center { text-align: center; }
+.text-right  { text-align: right; }
+
+.tabular-nums      { font-variant-numeric: tabular-nums; }
+.whitespace-nowrap { white-space: nowrap; }
+.whitespace-pre-line { white-space: pre-line; }
+
+// --------------------------------------------------------------------------
+// Colors
+// --------------------------------------------------------------------------
+// Semantic names matching the $color-* variables (see _variables.scss):
+// text-{role} / bg-{role}.
+.text-primary   { color: $color-text-primary; }
+.text-secondary { color: $color-text-secondary; }
+.text-muted     { color: $color-text-muted; }
+.text-white     { color: #fff; }
+
+.bg-dark        { background-color: $color-bg-dark; }
+.bg-medium      { background-color: $color-bg-medium; }
+.bg-light       { background-color: $color-bg-light; }
+.bg-panel       { background-color: $color-bg-panel; }
+.bg-viewer      { background-color: $color-bg-viewer; }
+.bg-neutral     { background-color: $color-bg-neutral; }
+.bg-transparent { background-color: transparent; }
+
+// --------------------------------------------------------------------------
+// Borders and radius
+// --------------------------------------------------------------------------
+.rounded       { border-radius: $border-radius-base; }
+.rounded-full  { border-radius: 9999px; }   // circle on squares, pill on rects
+.rounded-round { border-radius: $border-radius-round; }
+
+// --------------------------------------------------------------------------
+// Interaction
+// --------------------------------------------------------------------------
+.cursor-pointer { cursor: pointer; }
+.select-none    { user-select: none; }
+
+.pointer-events-none { pointer-events: none; }
+.pointer-events-auto { pointer-events: auto; }

@@ -1,0 +1,35 @@
+// ==========================================================================
+// Main layout
+// ==========================================================================
+@use '../variables' as *;
+
+.app-container {
+    display: flex;
+    flex-direction: row;
+    height: 100vh;
+    width: 100vw;
+}
+
+.column {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+}
+
+.column-left {
+    flex: 1 1 auto;
+    min-width: 0;
+    border-right: 1px solid $color-border;
+}
+
+.column-right {
+    flex: 0 0 $sidebar-width;
+    width: $sidebar-width;
+}
+
+.content-area {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    padding: 1rem;
+}

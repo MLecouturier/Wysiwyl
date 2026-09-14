@@ -1,5 +1,5 @@
 /* Projection mirror window: overrides on top of the shared styles.css.
-   The same #image-viewer rules drive the layout (contain-fit image,
+   The same .image-viewer rules drive the layout (contain-fit image,
    absolute overlay canvas), so the projection matches the main viewer
    pixel for pixel — only the chrome differs: full-bleed, solid black
    background for the projector. */
@@ -10,12 +10,12 @@ body {
     background-color: #000;
 }
 
-.app-container .column .content-area#image-viewer-container {
+.content-area.image-viewer-container {
     padding: 0;
     gap: 0;
 }
 
-#image-viewer-container #image-viewer {
+.image-viewer-container .image-viewer {
     border: none;
     border-radius: 0;
     background-image: none;

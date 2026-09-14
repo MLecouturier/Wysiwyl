@@ -1,0 +1,56 @@
+// ==========================================================================
+// Icon font — Material Symbols (Outlined)
+// ==========================================================================
+// Self-hosted, so the app works fully offline (no CDN dependency).
+@font-face {
+    font-family: 'Material Symbols Outlined';
+    font-style: normal;
+    font-weight: 100 700;
+    src: url('../fonts/MaterialSymbolsOutlined.woff2') format('woff2');
+}
+
+// Usage: <span class="material-symbols-outlined" aria-hidden="true">icon_name</span>
+.material-symbols-outlined {
+    font-family: 'Material Symbols Outlined';
+    font-weight: normal;
+    font-style: normal;
+    font-size: 20px;
+    line-height: 1;
+    letter-spacing: normal;
+    text-transform: none;
+    display: inline-block;
+    white-space: nowrap;
+    word-wrap: normal;
+    direction: ltr;
+    vertical-align: middle;
+    font-feature-settings: 'liga';
+    -webkit-font-feature-settings: 'liga';
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
+}
+
+// ==========================================================================
+// Noto Music — musical symbols font
+// ==========================================================================
+// Self-hosted Google Fonts subset (musical glyphs only), loaded on demand
+// thanks to unicode-range: any Unicode music symbol in the UI will render
+// with it, even without the .noto-music class.
+@font-face {
+    font-family: 'Noto Music';
+    font-style: normal;
+    font-weight: 400;
+    src: url('../fonts/NotoMusic.woff2') format('woff2');
+    unicode-range: U+25CC, U+2669-266F, U+1D000-1D0F5, U+1D100-1D126, U+1D129-1D1EA, U+1D200-1D245;
+}
+
+// Usage: <span class="noto-music">𝄞</span>
+.noto-music {
+    font-family: 'Noto Music';
+    font-weight: normal;
+    font-style: normal;
+    line-height: 1;
+    display: inline-block;
+    white-space: nowrap;
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
+}

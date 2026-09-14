@@ -76,6 +76,38 @@ A JSON configuration file (opened with a gear button in the application settings
   - [`serde`](https://crates.io/crates/serde) and [`serde_json`](https://crates.io/crates/serde_json) for data exchange between the frontend and backend;
   - [`base64`](https://crates.io/crates/base64) for sending PNG previews to the frontend.
 
+## Front-end Conventions
+
+The interface is plain HTML/SCSS/JS (no framework, no bundler), organized around a hybrid utility/component model, so the markup can be read as a description of the layout.
+
+### Three kinds of classes
+
+- **Utility classes** — Tailwind-style single-purpose classes, hand-rolled in `src/scss/_utilities.scss` (`flex`, `flex-col`, `items-center`, `gap-2`, `mb-3`, `text-muted`, `hidden`...). They are loaded **last** in the cascade, so a utility always overrides a component class and the markup can fine-tune any component without new SCSS. The spacing and font-size scales are generated from SCSS maps at the top of the file.
+- **Component classes** — one per UI region or control role (`.image-viewer`, `.controls`, `.mode-panel`, `.icon-btn`, `.synth-block`...), with their states and pseudo-elements nested in SCSS. They live in `scss/components/`, one file per area of the interface.
+- **State classes** — toggled by JS at runtime: `.hidden` (with `!important`), `.active`, `.locked`, `.picking`, `.compact`, `.confirm-pending`, `.dragging`, `.reversed`...
+
+### Ids are hooks, never styled
+
+Every `id` — in the static pages as well as in the dynamic templates — exists only as a stable hook for `querySelector` or as a canvas layer; **CSS never targets an id**. Repeated dynamic elements (synth cards, tabs) are identified by classes and a `data-synth-id` attribute instead of generated ids.
+
+### Semantic colors — one meaning each
+
+- **Blue accent** — toggle/mode currently active;
+- **Red** — playback in progress (stop affordance) and destructive action awaiting confirmation;
+- **Green** — transient confirmation.
+
+### SCSS organization
+
+`styles.scss` is only the entry point: its `@use` order *is* the cascade order — fonts, reset, one component file per UI area, utilities last. Colors and design tokens are `$color-*` variables in `_variables.scss`. Dynamic markup built by `main.js` templates follows the same conventions; classes queried by the JS are hooks: never rename one without updating the matching `querySelector`.
+
+### Stylesheet compilation
+
+The compiled CSS is committed (`src/css/styles.css` + source map), so running the app needs no build step. After editing the SCSS, recompile with dart-sass (a standalone tool — Node.js is not required):
+
+```bash
+sass scss/styles.scss css/styles.css
+```
+
 ## Installation
 
 ### Prerequisites
@@ -131,13 +163,25 @@ wysiwyl/
 ├── package.json
 ├── src/
 │   ├── index.html
+│   ├── viewer.html
 │   ├── css/
-│   │   └── styles.css
+│   │   ├── styles.css
+│   │   └── mirror.css
+│   ├── fonts/
 │   ├── i18n/
 │   ├── scss/
-│   │   └── styles.scss
+│   │   ├── styles.scss
+│   │   ├── _variables.scss
+│   │   ├── _mixins.scss
+│   │   ├── _fonts.scss
+│   │   ├── _reset.scss
+│   │   ├── _utilities.scss
+│   │   └── components/
 │   └── js/
-│       └── main.js
+│       ├── main.js
+│       ├── mirror.js
+│       ├── viewer-render.js
+│       └── i18n.js
 └── src-tauri/
     ├── Cargo.toml
     ├── tauri.conf.json
