@@ -1,6 +1,10 @@
 import { initI18n, t, translateError, getLocale, setLocale, AVAILABLE_LOCALES, applyTranslations } from './i18n.js';
+import { computeLayout, cellSetFromZones, drawZones, drawCursorCell } from './viewer-render.js';
 
 const { invoke } = window.__TAURI__.core;
+const { emit, listen } = window.__TAURI__.event;
+const { WebviewWindow } = window.__TAURI__.webviewWindow;
+const { getCurrentWindow, currentMonitor, availableMonitors } = window.__TAURI__.window;
 
 await initI18n();
 
@@ -371,6 +375,10 @@ let gridH = 1; // current grid height in pixels
 // Tracks the current cursor per synth for drawing: Map<id, cursor>
 const synthCursors = new Map();
 
+// Last tick's muted flag per synth, for the mirror: a muted pixel keeps
+// its recorded position but is not drawn
+const synthCursorMuted = new Map();
+
 function resizeOverlay() {
     pixelOverlay.width  = pixelOverlay.offsetWidth;
     pixelOverlay.height = pixelOverlay.offsetHeight;
@@ -426,21 +434,15 @@ function drawSynthPixel(synthId, cursor, muted) {
     }
 
     synthCursors.set(synthId, cursor);
+    synthCursorMuted.set(synthId, !!muted);
     if (!muted) drawPixelAt(ctx, synthId, cursor, offsetX, offsetY, cellW, cellH);
+    pushMirrorCursors();
 }
 
 function drawPixelAt(ctx, synthId, cursor, offsetX, offsetY, cellW, cellH) {
     const color = synthColors.get(synthId);
     if (!color) return;
-    const col = cursor % gridW;
-    const row = Math.floor(cursor / gridW);
-    const x = offsetX + col * cellW;
-    const y = offsetY + row * cellH;
-    ctx.save();
-    ctx.globalAlpha = 0.75;
-    ctx.fillStyle = color;
-    ctx.fillRect(x, y, cellW, cellH);
-    ctx.restore();
+    drawCursorCell(ctx, { offsetX, offsetY, cellW, cellH, gridW }, { color, cursor });
 }
 
 // Removes one synth's cursor from the cursor layer: erases its cell and
@@ -448,6 +450,8 @@ function drawPixelAt(ctx, synthId, cursor, offsetX, offsetY, cellW, cellH) {
 function eraseSynthCursor(synthId) {
     const prev = synthCursors.get(synthId);
     synthCursors.delete(synthId);
+    synthCursorMuted.delete(synthId);
+    pushMirrorCursors();
     if (prev === undefined || !hasImage || !gridW || !gridH) return;
     const layout = getImageLayout();
     if (!layout) return;
@@ -471,6 +475,8 @@ function clearOverlay() {
     const cursorCtx = cursorOverlay.getContext('2d');
     cursorCtx.clearRect(0, 0, cursorOverlay.width, cursorOverlay.height);
     synthCursors.clear();
+    synthCursorMuted.clear();
+    pushMirrorCursors();
 }
 
 // ---------- Mouse-based zone selection ----------
@@ -643,7 +649,6 @@ window.addEventListener('keydown', (e) => {
         exitCropMode();
         closeTransformPanel();
         cancelZonePicking();
-        exitViewerFullscreen();
     }
 });
 
@@ -949,7 +954,7 @@ function lassoTogglePixels(id, points, start) {
     const locked = zoneAtPixel(id, synthCursors.get(id));
 
     // Current selection as a cell set
-    const selected = selectedCellSet(hi);
+    const selected = cellSetFromZones(hi.zones);
 
     // Toggle each enclosed pixel (XOR), skipping locked pixels that would
     // be deselected
@@ -991,7 +996,7 @@ function lassoToggleMutePixels(id, points, start) {
     const enclosed = lassoEnclosedCells(points, start);
     if (enclosed.size === 0) return false;
 
-    const selected = selectedCellSet(hi);
+    const selected = cellSetFromZones(hi.zones);
     const muted = muteCellSet(hi);
 
     let changed = false;
@@ -1136,7 +1141,7 @@ function rectOverlapsMuteZones(id, rect) {
 function addSynthMuteRect(id, rect) {
     const hi = synthHighlights.get(id);
     if (!hi) return;
-    const selected = selectedCellSet(hi);
+    const selected = cellSetFromZones(hi.zones);
     const cells = new Set();
     for (let row = rect.y; row < rect.y + rect.h; row++) {
         for (let col = rect.x; col < rect.x + rect.w; col++) {
@@ -1168,7 +1173,7 @@ function removeSynthMuteRect(id, rect) {
 function clipMuteZonesToSelection(id) {
     const hi = synthHighlights.get(id);
     if (!hi || hi.muteZones.length === 0) return;
-    const selected = selectedCellSet(hi);
+    const selected = cellSetFromZones(hi.zones);
     const muted = muteCellSet(hi);
     const kept = new Set([...muted].filter(k => selected.has(k)));
     if (kept.size === muted.size) return; // nothing deselected
@@ -1240,23 +1245,11 @@ function updateAllSynthZonesLabels() {
     });
 }
 
-// Computes the render dimensions of the image in the viewer (object-fit: contain)
+// Computes the render dimensions of the image in the viewer (object-fit:
+// contain). Thin binding of the shared renderer on the main window's
+// overlay canvas, so every call site keeps the same signature.
 function getImageLayout() {
-    const vw = pixelOverlay.width;
-    const vh = pixelOverlay.height;
-    if (!gridW || !gridH || !vw || !vh) return null;
-    const imgRatio  = gridW / gridH;
-    const viewRatio = vw / vh;
-    let renderW, renderH;
-    if (imgRatio > viewRatio) { renderW = vw; renderH = vw / imgRatio; }
-    else                      { renderH = vh; renderW = vh * imgRatio; }
-    return {
-        renderW, renderH,
-        offsetX: (vw - renderW) / 2,
-        offsetY: (vh - renderH) / 2,
-        cellW: renderW / gridW,
-        cellH: renderH / gridH,
-    };
+    return computeLayout(pixelOverlay.width, pixelOverlay.height, gridW, gridH);
 }
 
 // Refreshes the stored brightness bounds of a synth from its sliders and
@@ -1271,97 +1264,10 @@ function updateBrightnessBounds(id) {
     redrawAllHighlights();
 }
 
-// Mute rest glyph, drawn on every pixel of a synth's zones whose
-// brightness falls outside the [min, max] threshold. Rendered with the
-// Noto Music font (self-hosted, loaded on demand via unicode-range).
-const MUTE_GLYPH = '𝆝';
-
-// Draws the single outline of a cell set: every cell edge that doesn't
-// touch another selected cell is traced, producing one closed contour
-// per connected component — the irregular shape of the lasso instead of
-// the seams of the internal rectangles. Edge segments are merged into
-// runs (horizontal and vertical) to keep the number of path operations
-// low on large selections.
-function strokeCellOutline(ctx, cellSet, offsetX, offsetY, cellW, cellH) {
-    ctx.beginPath();
-    // Horizontal edges: between (col,row) and its top neighbor
-    for (const key of cellSet) {
-        const [col, row] = key.split(',').map(Number);
-        const x = offsetX + col * cellW;
-        const y = offsetY + row * cellH;
-        if (!cellSet.has(`${col},${row - 1}`)) {
-            ctx.moveTo(x, y);
-            ctx.lineTo(x + cellW, y);
-        }
-        if (!cellSet.has(`${col},${row + 1}`)) {
-            ctx.moveTo(x, y + cellH);
-            ctx.lineTo(x + cellW, y + cellH);
-        }
-        if (!cellSet.has(`${col - 1},${row}`)) {
-            ctx.moveTo(x, y);
-            ctx.lineTo(x, y + cellH);
-        }
-        if (!cellSet.has(`${col + 1},${row}`)) {
-            ctx.moveTo(x + cellW, y);
-            ctx.lineTo(x + cellW, y + cellH);
-        }
-    }
-    ctx.stroke();
-}
-
-// Builds the set of selected cells of a synth from its zone rectangles.
-function selectedCellSet(hi) {
-    const cells = new Set();
-    for (const z of hi.zones) {
-        for (let row = z.y; row < z.y + z.h; row++) {
-            for (let col = z.x; col < z.x + z.w; col++) {
-                cells.add(`${col},${row}`);
-            }
-        }
-    }
-    return cells;
-}
-
-function drawRangeHighlight(synthId) {
-    const hi = synthHighlights.get(synthId);
-    if (!hi || !hi.visible) return;
-    const layout = getImageLayout();
-    if (!layout) return;
-    const { offsetX, offsetY, cellW, cellH } = layout;
-    const color = synthColors.get(synthId);
-    if (!color) return;
-
-    const ctx = pixelOverlay.getContext('2d');
-    ctx.save();
-
-    // Light fill of every zone rect: the image stays readable underneath
-    ctx.globalAlpha = 0.3;
-    ctx.fillStyle = color;
-    for (const z of hi.zones) {
-        ctx.fillRect(
-            offsetX + z.x * cellW,
-            offsetY + z.y * cellH,
-            z.w * cellW,
-            z.h * cellH
-        );
-    }
-
-    // Single outline of the selection's union: one closed contour per
-    // connected component, showing the actual shape (lasso included)
-    // instead of the seams of the internal rectangles.
-    const cells = selectedCellSet(hi);
-    if (cells.size > 0) {
-        ctx.globalAlpha = 1;
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 1.5;
-        strokeCellOutline(ctx, cells, offsetX, offsetY, cellW, cellH);
-    }
-
-    // Mute marks: pixels muted by hand (Alt + square/lasso) and pixels
-    // outside the brightness window get the same semi-transparent black
-    // veil (readable at any cell size), topped with the rest glyph in
-    // the synth's color when cells are large enough for it to read
-    // (below ~9px it would turn into a colored blur).
+// Mute cells of a synth: pixels outside its brightness window plus the
+// manually silenced ones, precomputed so the mirror window can render
+// the marks without needing the processed pixel buffer.
+function computeMuteCells(synthId, hi) {
     const muteCells = new Set();
     const bounds = synthBrightnessBounds.get(synthId);
     if (bounds && processedPixels && (bounds.min > 0 || bounds.max < 127)) {
@@ -1381,33 +1287,27 @@ function drawRangeHighlight(synthId) {
     }
     // Manually silenced pixels: they always live within the selection
     if (hi.muteZones.length > 0) {
+        const selected = cellSetFromZones(hi.zones);
         for (const key of muteCellSet(hi)) {
-            if (cells.has(key)) muteCells.add(key);
+            if (selected.has(key)) muteCells.add(key);
         }
     }
-    if (muteCells.size > 0) {
-        const canDrawGlyphs = cellH >= 9 && cellW >= 9;
-        const fontSize = Math.min(cellW, cellH) * 0.9;
-        ctx.globalAlpha = 0.55;
-        ctx.fillStyle = 'black';
-        for (const key of muteCells) {
-            const [col, row] = key.split(',').map(Number);
-            const x = offsetX + col * cellW;
-            const y = offsetY + row * cellH;
-            ctx.fillRect(x, y, cellW, cellH);
-            if (canDrawGlyphs) {
-                ctx.globalAlpha = 0.9;
-                ctx.fillStyle = color;
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.font = `${fontSize}px "Noto Music"`;
-                ctx.fillText(MUTE_GLYPH, x + cellW / 2, y + cellH / 2);
-                ctx.globalAlpha = 0.55;
-                ctx.fillStyle = 'black';
-            }
-        }
-    }
-    ctx.restore();
+    return muteCells;
+}
+
+function drawRangeHighlight(synthId) {
+    const hi = synthHighlights.get(synthId);
+    if (!hi || !hi.visible) return;
+    const layout = getImageLayout();
+    if (!layout) return;
+    const color = synthColors.get(synthId);
+    if (!color) return;
+
+    drawZones(pixelOverlay.getContext('2d'), layout, {
+        color,
+        zones: hi.zones,
+        muteCells: computeMuteCells(synthId, hi),
+    });
 }
 
 function clearRangeHighlight(synthId) {
@@ -1421,6 +1321,7 @@ function redrawAllHighlights() {
     // Cursors live on their own layer (#cursor-overlay): they survive
     // zone redraws and no longer need to be repositioned here
     synthHighlights.forEach((_, sid) => drawRangeHighlight(sid));
+    pushMirrorZones();
 }
 
 // ---------- Color channel preview (hovering the R/G/B buttons) ----------
@@ -1702,6 +1603,8 @@ function updatePreviewSrc() {
 
     // The processed view is the grid render: show cells as crisp blocks
     previewCanvas.classList.toggle('pixelated', !showOrig && transformPreviewPixels === null);
+
+    pushMirrorImage();
 }
 
 function syncLabels() {
@@ -2396,6 +2299,7 @@ saveSessionBtn.addEventListener('click', async () => {
         clarity: Number(clarity.value),
         simplify: Number(simplify.value),
         auto_levels: autoLevelsBtn.classList.contains('active'),
+        mirror_show_zones: mirrorShowZones,
         synth_colors: Array.from(synthListBody.querySelectorAll('.synth-block')).map(el => ({
             id: Number(el.dataset.synthId),
             color: synthColors.get(Number(el.dataset.synthId)),
@@ -2452,6 +2356,8 @@ loadSessionBtn.addEventListener('click', async () => {
     clarity.value = session.image_settings.clarity ?? 0;
     simplify.value = session.image_settings.simplify ?? 0;
     autoLevelsBtn.classList.toggle('active', session.image_settings.auto_levels ?? false);
+    mirrorShowZones = session.image_settings.mirror_show_zones ?? false;
+    mirrorZonesBtn.classList.toggle('active', mirrorShowZones);
     showOriginalBtn.classList.remove('active');
     viewerEmpty.classList.add('hidden');
     syncLabels();
@@ -2584,31 +2490,314 @@ showOriginalBtn.addEventListener('click', () => {
     updatePreviewSrc();
 });
 
-// ---------- Viewer fullscreen (hide every panel) ----------
-// Performance mode: hides the controls, the right column and the footer
-// so the image takes the whole window. A floating exit button is overlaid
-// on the viewer; Escape also leaves the mode.
-const fullscreenBtn      = document.querySelector('#fullscreen-btn');
-const exitFullscreenBtn  = document.querySelector('#exit-fullscreen-btn');
+// ---------- Projection mirror window ----------
+// Performance mode: a display-only Tauri window that mirrors the image
+// area on a second screen/projector. The main window stays fully
+// interactive and pushes its viewer state to the mirror through Tauri
+// events, funneled through the same single points that repaint the main
+// viewer (updatePreviewSrc for the image surface, redrawAllHighlights
+// for the zones).
+const fullscreenBtn  = document.querySelector('#fullscreen-btn');
+const mirrorZonesBtn = document.querySelector('#mirror-zones-btn');
 
-let viewerFullscreen = false;
+const MIRROR_LABEL = 'mirror';
+let mirrorShowZones = false; // zones visible in the mirror, independent of the per-synth eye buttons
+let mirrorCreating   = false; // window creation in flight (guards double clicks)
+let mirrorWindowRef  = null;  // live WebviewWindow while the mirror is open
 
-function enterViewerFullscreen() {
-    if (viewerFullscreen) return;
-    viewerFullscreen = true;
-    exitCropMode();
-    closeTransformPanel();
-    document.body.classList.add('viewer-fullscreen');
+function mirrorOpen() {
+    return mirrorWindowRef !== null;
 }
 
-function exitViewerFullscreen() {
-    if (!viewerFullscreen) return;
-    viewerFullscreen = false;
-    document.body.classList.remove('viewer-fullscreen');
+// The fullscreen button stays enabled while the mirror is open (it then
+// closes it); it is disabled when no second screen is available.
+async function updateMirrorButtonStates() {
+    let hasSecondScreen = false;
+    try {
+        hasSecondScreen = (await availableMonitors()).length >= 2;
+    } catch (err) {
+        console.error('Error while detecting monitors:', err);
+    }
+    // Resync the reference with reality, in case the mirror went away
+    // without a close-requested event (killed, unplugged screen). While
+    // creation is in flight the window is not yet listed.
+    if (mirrorCreating) return;
+    try {
+        mirrorWindowRef = await WebviewWindow.getByLabel(MIRROR_LABEL);
+    } catch (err) {
+        mirrorWindowRef = null;
+    }
+    fullscreenBtn.disabled  = !hasSecondScreen && !mirrorOpen();
+    mirrorZonesBtn.disabled = !mirrorOpen();
 }
 
-fullscreenBtn.addEventListener('click', enterViewerFullscreen);
-exitFullscreenBtn.addEventListener('click', exitViewerFullscreen);
+// Opens the mirror on the first monitor other than the one hosting the
+// main window, in fullscreen. Built invisible, positioned on the target
+// monitor, then shown, so it never flashes on the wrong screen. When the
+// user leaves fullscreen (double-click inside the mirror), the floating
+// window keeps the monitor's geometry and can be dragged anywhere.
+async function openMirrorWindow() {
+    const monitors = await availableMonitors();
+    const current = await currentMonitor();
+    // First monitor other than the one hosting the main window. Names
+    // can be unavailable on some platforms: the second monitor is then
+    // the pragmatic answer (the floating mirror can always be dragged).
+    const target = monitors.find(m => !current || m.name !== current.name)
+        ?? (monitors.length > 1 ? monitors[1] : null);
+    if (!target) return;
+
+    const { PhysicalPosition, PhysicalSize } = window.__TAURI__.dpi;
+    const win = new WebviewWindow(MIRROR_LABEL, {
+        url: 'viewer.html',
+        title: 'Wysiwyl',
+        visible: false,
+        decorations: true,
+        resizable: true,
+    });
+    mirrorWindowRef = win;
+
+    win.once('tauri://created', async () => {
+        mirrorCreating = false;
+        if (mirrorWindowRef !== win) {
+            // The main window closed while creation was in flight: the
+            // mirror must not outlive its event source
+            try {
+                await win.destroy();
+            } catch (err) {
+                console.error('Error while closing the stale mirror window:', err);
+            }
+            return;
+        }
+        try {
+            await win.setPosition(new PhysicalPosition(target.position.x, target.position.y));
+            await win.setSize(new PhysicalSize(target.size.width, target.size.height));
+            await win.setFullscreen(true);
+            await win.show();
+        } catch (err) {
+            console.error('Error while placing the mirror window:', err);
+        }
+        updateMirrorButtonStates();
+    });
+
+    win.once('tauri://error', (e) => {
+        console.error('Mirror window error:', e);
+        mirrorWindowRef = null;
+        mirrorCreating = false;
+        updateMirrorButtonStates();
+    });
+}
+
+async function toggleMirrorWindow() {
+    if (mirrorWindowRef) {
+        const win = mirrorWindowRef;
+        try {
+            await win.close(); // mirror.js reports the closing via mirror:closed
+        } catch (err) {
+            // The window is already gone: resync the state
+            console.error('Error while closing the mirror window:', err);
+            mirrorWindowRef = null;
+            updateMirrorButtonStates();
+        }
+    } else if (!mirrorCreating) {
+        // The window is created asynchronously: the guard prevents a
+        // double click from spawning two windows with the same label
+        mirrorCreating = true;
+        await openMirrorWindow();
+    }
+}
+
+fullscreenBtn.addEventListener('click', toggleMirrorWindow);
+
+mirrorZonesBtn.addEventListener('click', () => {
+    mirrorShowZones = !mirrorShowZones;
+    mirrorZonesBtn.classList.toggle('active', mirrorShowZones);
+    pushMirrorZones();
+});
+
+// Playhead cursors: the positions of every playing synth, pushed on
+// each tick (tiny payloads, low frequency — no throttling needed). A
+// muted pixel keeps its position but is not drawn, matching the main
+// viewer.
+function pushMirrorCursors() {
+    if (!mirrorOpen()) return;
+    const cursors = [];
+    synthCursors.forEach((cursor, sid) => {
+        if (synthCursorMuted.get(sid)) return;
+        const color = synthColors.get(sid);
+        if (!color) return;
+        cursors.push({ cursor, color });
+    });
+    emit('mirror:cursors', { cursors });
+}
+
+// The mirror announces itself when loaded, and reports its own closing
+// (its close-requested handler runs before the window goes away).
+listen('mirror:ready', () => {
+    pushMirrorImage();
+    pushMirrorZones();
+    pushMirrorCursors();
+});
+
+listen('mirror:closed', () => {
+    mirrorWindowRef = null;
+    updateMirrorButtonStates();
+});
+
+// Re-check monitor availability whenever the main window regains focus:
+// plugging or unplugging a projector updates the buttons live.
+getCurrentWindow().onFocusChanged(() => {
+    updateMirrorButtonStates();
+});
+
+// Closing the main window closes the projection too: without this the
+// app would live on with a mirror whose source of events is gone. The
+// mirror is destroyed directly (bypassing its close-requested handler,
+// which would needlessly report back to a dying window).
+getCurrentWindow().onCloseRequested(async () => {
+    if (!mirrorWindowRef) return;
+    const win = mirrorWindowRef;
+    mirrorWindowRef = null;
+    try {
+        await win.destroy();
+    } catch (err) {
+        // The window may already be gone
+        console.error('Error while closing the mirror window:', err);
+    }
+    // No preventDefault: the main window then closes normally
+});
+
+// Snapshot of the currently displayed surface, downscaled for the
+// projection: photographic content (original, transform live preview)
+// ships as JPEG for fluidity — the full-resolution RGBA would be tens of
+// MB per frame through IPC — while the grid render ships as PNG so the
+// cells stay crisp on the projector.
+const MIRROR_SNAPSHOT_MAX_W = 1600;
+
+// The original <img> may not be decoded yet when the snapshot is taken
+// (its src was just set): the snapshot decodes its own copy and waits.
+function decodeImage(source) {
+    return new Promise((resolve, reject) => {
+        source.onload = () => resolve(source);
+        source.onerror = () => reject(new Error('image decode failed'));
+    });
+}
+
+async function mirrorImageSnapshot() {
+    const showOrig = showOriginalBtn.classList.contains('active');
+    const pixels = transformPreviewPixels ?? (showOrig ? null : processedPixels);
+
+    let source, w, h, lossy;
+    if (pixels) {
+        source = previewCanvas; // freshly painted by updatePreviewSrc
+        w = pixels.width;
+        h = pixels.height;
+        lossy = transformPreviewPixels !== null; // full-res preview → JPEG
+    } else if (showOrig && originalPng) {
+        const img = new Image();
+        const decoded = decodeImage(img);
+        img.src = `data:image/png;base64,${originalPng}`;
+        source = await decoded;
+        w = img.naturalWidth || origWidth;
+        h = img.naturalHeight || origHeight;
+        lossy = true;
+    } else {
+        return null;
+    }
+
+    const scale = Math.min(1, MIRROR_SNAPSHOT_MAX_W / w);
+    const cw = Math.max(1, Math.round(w * scale));
+    const ch = Math.max(1, Math.round(h * scale));
+
+    const offCanvas = document.createElement('canvas');
+    offCanvas.width = cw;
+    offCanvas.height = ch;
+    const ctx = offCanvas.getContext('2d');
+    ctx.imageSmoothingEnabled = lossy;
+    ctx.drawImage(source, 0, 0, cw, ch);
+
+    return {
+        src: lossy ? offCanvas.toDataURL('image/jpeg', 0.85)
+                   : offCanvas.toDataURL('image/png'),
+        lossy, // false = grid render: the mirror displays it pixelated, like the main viewer
+        gridW,
+        gridH,
+    };
+}
+
+// Trailing throttle: live manipulations (transform sliders) repaint far
+// faster than IPC needs to carry them — ~30 fps keeps the mirror fluid.
+const MIRROR_IMAGE_MIN_INTERVAL = 33; // ms
+let mirrorImageLast = 0;
+let mirrorImageTimer = 0;
+
+async function pushMirrorImage() {
+    if (!mirrorOpen()) return;
+    const now = performance.now();
+    const elapsed = now - mirrorImageLast;
+    if (elapsed < MIRROR_IMAGE_MIN_INTERVAL) {
+        if (mirrorImageTimer) return;
+        mirrorImageTimer = setTimeout(() => {
+            mirrorImageTimer = 0;
+            pushMirrorImage();
+        }, MIRROR_IMAGE_MIN_INTERVAL - elapsed);
+        return;
+    }
+    mirrorImageLast = now;
+    try {
+        const snapshot = await mirrorImageSnapshot();
+        if (snapshot) emit('mirror:image', snapshot);
+    } catch (err) {
+        console.error('Error while building the mirror snapshot:', err);
+    }
+}
+
+// Full snapshot of every synth's zones — regardless of their visibility
+// in the main window: the mirror toggle overrides the per-synth eye
+// buttons, and zones stay shown while a synth is playing. The mute-cell
+// computation only runs when the mirror actually shows zones.
+//
+// The snapshot is throttled and deduplicated: zone drags call
+// redrawAllHighlights at mousemove rate while the committed zones stay
+// unchanged — identical consecutive payloads are not re-sent.
+const MIRROR_ZONES_MIN_INTERVAL = 33; // ms
+let mirrorZonesLast = 0;
+let mirrorZonesTimer = 0;
+let lastMirrorZonesJson = null;
+
+function pushMirrorZones() {
+    if (!mirrorOpen()) return;
+    const now = performance.now();
+    const elapsed = now - mirrorZonesLast;
+    if (elapsed < MIRROR_ZONES_MIN_INTERVAL) {
+        if (mirrorZonesTimer) return;
+        mirrorZonesTimer = setTimeout(() => {
+            mirrorZonesTimer = 0;
+            pushMirrorZones();
+        }, MIRROR_ZONES_MIN_INTERVAL - elapsed);
+        return;
+    }
+    mirrorZonesLast = now;
+
+    const synths = [];
+    if (mirrorShowZones) {
+        synthHighlights.forEach((hi, sid) => {
+            const color = synthColors.get(sid);
+            if (!color) return;
+            synths.push({
+                color,
+                zones: hi.zones,
+                muteCells: Array.from(computeMuteCells(sid, hi)),
+            });
+        });
+    }
+    const payload = { showZones: mirrorShowZones, synths };
+    const json = JSON.stringify(payload);
+    if (json === lastMirrorZonesJson) return;
+    lastMirrorZonesJson = json;
+    emit('mirror:zones', payload);
+}
+
+updateMirrorButtonStates();
 
 // ---------- Init ----------
 syncLabels();

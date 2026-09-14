@@ -170,39 +170,6 @@ h2 {
 #image-viewer-container #image-viewer .viewer-empty.hidden {
   display: none;
 }
-#image-viewer-container #image-viewer #exit-fullscreen-btn {
-  display: none;
-  position: absolute;
-  bottom: 0.5rem;
-  right: 0.5rem;
-  z-index: 5;
-  align-items: center;
-  justify-content: center;
-  width: 1.75rem;
-  height: 1.75rem;
-  padding: 0;
-  border: 1px solid #333;
-  border-radius: 0.25rem;
-  background: rgba(0, 0, 0, 0.45);
-  color: #ccc;
-  cursor: pointer;
-  transition: color 0.2s ease, border-color 0.2s ease;
-}
-#image-viewer-container #image-viewer #exit-fullscreen-btn .material-symbols-outlined {
-  font-size: 1.05rem;
-}
-#image-viewer-container #image-viewer #exit-fullscreen-btn:hover {
-  color: #e0e0e0;
-  border-color: #888;
-}
-
-body.viewer-fullscreen .column-right,
-body.viewer-fullscreen #controls {
-  display: none;
-}
-body.viewer-fullscreen #image-viewer #exit-fullscreen-btn {
-  display: flex !important;
-}
 
 input[type=range],
 input[type=range].slider,

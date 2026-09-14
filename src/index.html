@@ -17,9 +17,6 @@
                     <img id="preview" data-i18n-alt="viewer.previewAlt" class="hidden" />
                     <canvas id="pixel-overlay"></canvas>
                     <canvas id="cursor-overlay"></canvas>
-                    <button id="exit-fullscreen-btn" data-i18n-title="controls.exitFullscreen">
-                        <span class="material-symbols-outlined" aria-hidden="true">fullscreen_exit</span>
-                    </button>
                     <p class="viewer-empty" id="viewer-empty" data-i18n="viewer.noImage"></p>
                 </div>
 
@@ -145,8 +142,11 @@
                         <div class="controls-column">
                             <div id="display-controls" class="controls-grid">
                                 <div class="flex-filler"></div>
-                                <button id="fullscreen-btn" class="toggle-btn" data-i18n-title="controls.fullscreen">
+                                <button id="fullscreen-btn" class="toggle-btn" data-i18n-title="controls.mirror" disabled>
                                     <span class="material-symbols-outlined" aria-hidden="true">present_to_all</span>
+                                </button>
+                                <button id="mirror-zones-btn" class="toggle-btn" data-i18n-title="controls.mirrorZones" disabled>
+                                    <span class="material-symbols-outlined" aria-hidden="true">grid_on</span>
                                 </button>
                                 <button id="show-original-btn" class="toggle-btn" data-i18n-title="controls.showOriginal">
                                     <span class="material-symbols-outlined">compare</span>

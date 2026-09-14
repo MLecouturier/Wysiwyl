@@ -274,43 +274,7 @@ h2 {
                 display: none;
             }
         }
-
-        // Floating exit button, overlaid on the viewer in fullscreen mode only
-        #exit-fullscreen-btn {
-            display: none;
-            position: absolute;
-            bottom: .5rem;
-            right: .5rem;
-            z-index: 5;
-            align-items: center;
-            justify-content: center;
-            width: 1.75rem;
-            height: 1.75rem;
-            padding: 0;
-            border: 1px solid $color-border;
-            border-radius: $border-radius-base;
-            background: rgba(0, 0, 0, 0.45);
-            color: $color-text-secondary;
-            cursor: pointer;
-            transition: color $transition-fast, border-color $transition-fast;
-
-            .material-symbols-outlined { font-size: 1.05rem; }
-
-            &:hover {
-                color: $color-text-primary;
-                border-color: $color-text-muted;
-            }
-        }
     }
-}
-
-// Viewer fullscreen (performance mode): hides every settings panel so the
-// image takes the whole window. Escape or the floating button leaves it.
-body.viewer-fullscreen {
-    .column-right,
-    #controls { display: none; }
-
-    #image-viewer #exit-fullscreen-btn { display: flex !important; }
 }
 
 // ==========================================================================

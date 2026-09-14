@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Wysiwyl</title>
+    <link rel="stylesheet" href="css/styles.css" />
+    <link rel="stylesheet" href="css/mirror.css" />
+</head>
+<body>
+    <div class="app-container">
+        <div class="column column-left">
+            <div class="content-area" id="image-viewer-container">
+                <div id="image-viewer">
+                    <img id="mirror-image" class="hidden" alt="" />
+                    <canvas id="pixel-overlay"></canvas>
+                    <canvas id="cursor-overlay"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script type="module" src="js/mirror.js"></script>
+</body>
+</html>

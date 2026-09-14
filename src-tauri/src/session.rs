@@ -24,7 +24,12 @@ pub struct SessionUi {
     pub texture: f32,
     pub clarity: f32,
     pub simplify: f32,
+    #[serde(default)]
     pub auto_levels: bool,
+    /// Zones visible in the projection mirror window. Absent in sessions
+    /// saved before the feature: the mirror starts with zones hidden.
+    #[serde(default)]
+    pub mirror_show_zones: bool,
     pub synth_colors: Vec<SynthUiEntry>,
 }
 
@@ -54,6 +59,9 @@ pub struct SessionImageSettings {
     pub simplify: f32,
     #[serde(default)]
     pub auto_levels: bool,
+    /// Zones visible in the projection mirror window (see SessionUi).
+    #[serde(default)]
+    pub mirror_show_zones: bool,
 }
 
 /// A synthesizer as stored in a session file: its identity, display color,
@@ -188,6 +196,7 @@ pub async fn save_session(
             clarity: ui.clarity,
             simplify: ui.simplify,
             auto_levels: ui.auto_levels,
+            mirror_show_zones: ui.mirror_show_zones,
         },
         synths,
     };
@@ -383,6 +392,38 @@ mod tests {
         let s: SessionImageSettings = serde_json::from_str(json).unwrap();
         assert_eq!(s.vibrance, -30.0);
         assert_eq!(s.grid_slider, 800);
+    }
+
+    /// The mirror zones toggle is optional: sessions saved before the
+    /// feature load with zones hidden, newer ones round-trip the value.
+    #[test]
+    fn image_settings_mirror_show_zones_defaults_and_round_trip() {
+        // Session saved before the feature: the key is absent
+        let legacy = r##"{
+            "grid_slider": 800,
+            "contrast": 10.0,
+            "brightness": 5,
+            "posterize_levels": 4
+        }"##;
+        let s: SessionImageSettings = serde_json::from_str(legacy).unwrap();
+        assert!(!s.mirror_show_zones);
+
+        // Newer session: the value survives a save → file → load cycle
+        let json = serde_json::to_string(&SessionImageSettings {
+            grid_slider: 800,
+            contrast: 10.0,
+            brightness: 5,
+            vibrance: -30.0,
+            posterize_levels: Some(4),
+            texture: 0.0,
+            clarity: 0.0,
+            simplify: 0.0,
+            auto_levels: true,
+            mirror_show_zones: true,
+        })
+        .unwrap();
+        let restored: SessionImageSettings = serde_json::from_str(&json).unwrap();
+        assert!(restored.mirror_show_zones);
     }
 
     /// Round-trip check: a synth's full parameter set survives a
