@@ -625,8 +625,22 @@ pixelOverlay.addEventListener('mousedown', (e) => {
         if (!hasImage) return;
         e.preventDefault(); // prevents image dragging during selection
         const rect = pixelOverlay.getBoundingClientRect();
-        cropDrag = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-        cropRect = { x: cropDrag.x, y: cropDrag.y, w: 0, h: 0 };
+        const px = e.clientX - rect.left;
+        const py = e.clientY - rect.top;
+        const target = cropDragTargetAt(px, py);
+        if (target.kind === 'new') {
+            cropDrag = { kind: 'new', handle: null, startX: px, startY: py, orig: null };
+            cropRect = { x: px, y: py, w: 0, h: 0 };
+        } else {
+            // Moving or resizing keeps the frame grabbed at press
+            cropDrag = {
+                kind: target.kind,
+                handle: target.handle,
+                startX: px,
+                startY: py,
+                orig: { ...cropRect },
+            };
+        }
         drawCropOverlay();
         return;
     }
@@ -643,16 +657,19 @@ pixelOverlay.addEventListener('mousedown', (e) => {
 });
 
 pixelOverlay.addEventListener('mousemove', (e) => {
+    if (cropMode && !cropDrag) {
+        // Hover feedback: the cursor hints at what a press would grab
+        const rect = pixelOverlay.getBoundingClientRect();
+        const target = cropDragTargetAt(e.clientX - rect.left, e.clientY - rect.top);
+        pixelOverlay.style.cursor = target.kind === 'move' ? 'move'
+            : target.kind === 'resize' ? CROP_HANDLE_CURSORS[target.handle]
+            : 'crosshair';
+    }
     if (cropDrag) {
         const rect = pixelOverlay.getBoundingClientRect();
         const cx = e.clientX - rect.left;
         const cy = e.clientY - rect.top;
-        cropRect = {
-            x: Math.min(cropDrag.x, cx),
-            y: Math.min(cropDrag.y, cy),
-            w: Math.abs(cx - cropDrag.x),
-            h: Math.abs(cy - cropDrag.y),
-        };
+        cropRect = updateCropDrag(cx, cy);
         drawCropOverlay();
         return;
     }
@@ -680,9 +697,10 @@ pixelOverlay.addEventListener('mousemove', (e) => {
 
 window.addEventListener('mouseup', (e) => {
     if (cropDrag) {
+        const wasNewFrame = cropDrag.kind === 'new';
         cropDrag = null;
         // A degenerate rect (simple click, no real drag) is discarded
-        if (cropRect && cropRect.w < 3 && cropRect.h < 3) cropRect = null;
+        if (wasNewFrame && cropRect && cropRect.w < 3 && cropRect.h < 3) cropRect = null;
         cropApplyBtn.disabled = !cropRect;
         drawCropOverlay();
         return;
@@ -1423,7 +1441,12 @@ function hideChannelOverlay() {
 new ResizeObserver(() => {
     resizeOverlay();
     clearOverlay();
-    if (cropMode) drawCropOverlay();
+    if (cropMode) {
+        // The overlay was resized: overlay pixels changed meaning, re-fit the
+        // frame inside the image bounds (ratio re-applied when locked)
+        if (cropRect) cropRect = cropRatio ? applyCropRatioToRect(cropRect) : clampCropRect(cropRect);
+        drawCropOverlay();
+    }
     else if (transformActive) redrawTransformOverlay();
 }).observe(pixelOverlay);
 
@@ -1786,9 +1809,173 @@ const cropBar          = document.querySelector('#crop-bar');
 const cropApplyBtn     = document.querySelector('#crop-apply-btn');
 const cropCancelBtn    = document.querySelector('#crop-cancel-btn');
 
-let cropMode = false;
-let cropRect = null; // { x, y, w, h } in overlay canvas pixels
-let cropDrag = null;  // start point while dragging
+let cropMode  = false;
+let cropRect  = null; // { x, y, w, h } in overlay canvas pixels
+let cropDrag  = null; // drag in progress: { kind: 'new'|'move'|'resize', handle, startX, startY, orig }
+let cropRatio = null; // forced aspect ratio (w/h), null = free
+
+const CROP_HANDLE_HIT  = 6; // grab tolerance around an edge/corner, in overlay px
+const CROP_HANDLE_DRAW = 8; // on-screen size of the handle squares
+const CROP_MIN_SIZE    = 1; // smallest frame a resize can produce, in overlay px
+const CROP_HANDLE_CURSORS = {
+    nw: 'nwse-resize', se: 'nwse-resize',
+    ne: 'nesw-resize', sw: 'nesw-resize',
+    n: 'ns-resize',   s: 'ns-resize',
+    e: 'ew-resize',   w: 'ew-resize',
+};
+
+// Image bounds in overlay canvas pixels: the frame never leaves them
+function cropImageBounds() {
+    const layout = getImageLayout();
+    if (layout) return { x: layout.offsetX, y: layout.offsetY, w: layout.renderW, h: layout.renderH };
+    return { x: 0, y: 0, w: pixelOverlay.width, h: pixelOverlay.height };
+}
+
+// Shifts the rect (size unchanged) so it stays inside the image bounds
+function clampCropRect(rect) {
+    const b = cropImageBounds();
+    rect.w = Math.min(rect.w, b.w);
+    rect.h = Math.min(rect.h, b.h);
+    rect.x = Math.min(Math.max(rect.x, b.x), b.x + b.w - rect.w);
+    rect.y = Math.min(Math.max(rect.y, b.y), b.y + b.h - rect.h);
+    return rect;
+}
+
+// Re-fits an existing rect onto the forced ratio: the size is capped by both
+// the current rect and the image bounds, the position keeps the rect center
+function applyCropRatioToRect(rect) {
+    if (!cropRatio) return rect;
+    const b = cropImageBounds();
+    let w = rect.w;
+    let h = w / cropRatio;
+    if (h > rect.h) { h = rect.h; w = h * cropRatio; }
+    if (w > b.w)    { w = b.w;    h = w / cropRatio; }
+    if (h > b.h)    { h = b.h;    w = h * cropRatio; }
+    const cx = rect.x + rect.w / 2;
+    const cy = rect.y + rect.h / 2;
+    return clampCropRect({ x: cx - w / 2, y: cy - h / 2, w, h });
+}
+
+// What a press at (px, py) would grab: a resize handle, the frame interior
+// (move), or empty space (draw a brand new frame)
+function cropDragTargetAt(px, py) {
+    if (!cropRect) return { kind: 'new', handle: null };
+    const { x, y, w, h } = cropRect;
+    const t = CROP_HANDLE_HIT;
+    const inside = px >= x && px <= x + w && py >= y && py <= y + h;
+    // A tiny frame is easier to move than to resize: interior presses move it
+    if (inside && w <= 2 * t && h <= 2 * t) return { kind: 'move', handle: null };
+    const nearL = Math.abs(px - x) <= t;
+    const nearR = Math.abs(px - (x + w)) <= t;
+    const nearT = Math.abs(py - y) <= t;
+    const nearB = Math.abs(py - (y + h)) <= t;
+    if (nearL && nearT) return { kind: 'resize', handle: 'nw' };
+    if (nearR && nearT) return { kind: 'resize', handle: 'ne' };
+    if (nearL && nearB) return { kind: 'resize', handle: 'sw' };
+    if (nearR && nearB) return { kind: 'resize', handle: 'se' };
+    if (nearT) return { kind: 'resize', handle: 'n' };
+    if (nearB) return { kind: 'resize', handle: 's' };
+    if (nearL) return { kind: 'resize', handle: 'w' };
+    if (nearR) return { kind: 'resize', handle: 'e' };
+    if (inside) return { kind: 'move', handle: null };
+    return { kind: 'new', handle: null };
+}
+
+// Computes the frame for the drag in progress from the current pointer
+// position. Every branch keeps the frame inside the image bounds.
+function updateCropDrag(cx, cy) {
+    const { kind, handle, startX, startY, orig } = cropDrag;
+    const b = cropImageBounds();
+    const dx = cx - startX;
+    const dy = cy - startY;
+
+    if (kind === 'move') {
+        return clampCropRect({ x: orig.x + dx, y: orig.y + dy, w: orig.w, h: orig.h });
+    }
+
+    if (kind === 'new') {
+        // Anchor clamped inside the image: pressing outside the image starts
+        // the frame on the nearest image edge
+        const ax = Math.max(b.x, Math.min(b.x + b.w, startX));
+        const ay = Math.max(b.y, Math.min(b.y + b.h, startY));
+        const dirX = cx >= ax ? 1 : -1;
+        const dirY = cy >= ay ? 1 : -1;
+        const availW = dirX > 0 ? b.x + b.w - ax : ax - b.x;
+        const availH = dirY > 0 ? b.y + b.h - ay : ay - b.y;
+        let w = Math.min(Math.abs(cx - ax), availW);
+        let h = Math.min(Math.abs(cy - ay), availH);
+        if (cropRatio) {
+            // Dominant drag axis drives the frame, the other follows
+            if (w >= h * cropRatio) {
+                h = w / cropRatio;
+                if (h > availH) { h = availH; w = h * cropRatio; }
+            } else {
+                w = h * cropRatio;
+                if (w > availW) { w = availW; h = w / cropRatio; }
+            }
+        }
+        return { x: dirX > 0 ? ax : ax - w, y: dirY > 0 ? ay : ay - h, w, h };
+    }
+
+    // --- resize ---
+    if (!cropRatio) {
+        let left = orig.x, right = orig.x + orig.w;
+        let top = orig.y, bottom = orig.y + orig.h;
+        if (handle.includes('w')) left = orig.x + dx;
+        if (handle.includes('e')) right = orig.x + orig.w + dx;
+        if (handle.includes('n')) top = orig.y + dy;
+        if (handle.includes('s')) bottom = orig.y + orig.h + dy;
+        left  = Math.min(Math.max(left, b.x), right - CROP_MIN_SIZE);
+        right = Math.min(Math.max(right, left + CROP_MIN_SIZE), b.x + b.w);
+        top   = Math.min(Math.max(top, b.y), bottom - CROP_MIN_SIZE);
+        bottom = Math.min(Math.max(bottom, top + CROP_MIN_SIZE), b.y + b.h);
+        return { x: left, y: top, w: right - left, h: bottom - top };
+    }
+
+    // Ratio-locked resize: the opposite edge/corner stays anchored. Corner
+    // handles follow the dominant drag axis; edge handles resize along their
+    // axis and stay centered on the other.
+    const horiz = handle.includes('w') || handle.includes('e');
+    const vert  = handle.includes('n') || handle.includes('s');
+    if (horiz && vert) {
+        const ax = handle.includes('w') ? orig.x + orig.w : orig.x; // anchored vertical edge
+        const ay = handle.includes('n') ? orig.y + orig.h : orig.y; // anchored horizontal edge
+        const availW = handle.includes('w') ? ax - b.x : b.x + b.w - ax;
+        const availH = handle.includes('n') ? ay - b.y : b.y + b.h - ay;
+        const wantW = handle.includes('w') ? orig.w - dx : orig.w + dx;
+        const wantH = handle.includes('n') ? orig.h - dy : orig.h + dy;
+        let w, h;
+        if (wantW >= wantH * cropRatio) { w = wantW; h = w / cropRatio; }
+        else                            { h = wantH; w = h * cropRatio; }
+        w = Math.max(CROP_MIN_SIZE, Math.min(w, availW));
+        h = w / cropRatio;
+        if (h > availH) { h = availH; w = h * cropRatio; }
+        return clampCropRect({
+            x: handle.includes('w') ? ax - w : ax,
+            y: handle.includes('n') ? ay - h : ay,
+            w, h,
+        });
+    }
+    const centerX = orig.x + orig.w / 2;
+    const centerY = orig.y + orig.h / 2;
+    let w, h;
+    if (horiz) {
+        const availW = Math.min(centerX - b.x, b.x + b.w - centerX) * 2;
+        const wantW = handle === 'w' ? orig.w - dx : orig.w + dx;
+        w = Math.max(CROP_MIN_SIZE, Math.min(wantW, availW));
+        h = w / cropRatio;
+        const availH = Math.min(centerY - b.y, b.y + b.h - centerY) * 2;
+        if (h > availH) { h = availH; w = h * cropRatio; }
+    } else {
+        const availH = Math.min(centerY - b.y, b.y + b.h - centerY) * 2;
+        const wantH = handle === 'n' ? orig.h - dy : orig.h + dy;
+        h = Math.max(CROP_MIN_SIZE, Math.min(wantH, availH));
+        w = h * cropRatio;
+        const availW = Math.min(centerX - b.x, b.x + b.w - centerX) * 2;
+        if (w > availW) { w = availW; h = w / cropRatio; }
+    }
+    return clampCropRect({ x: centerX - w / 2, y: centerY - h / 2, w, h });
+}
 
 function drawCropOverlay() {
     const ctx = pixelOverlay.getContext('2d');
@@ -1810,6 +1997,17 @@ function drawCropOverlay() {
     ctx.lineWidth = 1.5;
     ctx.setLineDash([6, 4]);
     ctx.strokeRect(x, y, w, h);
+    // Corner & edge handles
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#ffffff';
+    const hs = CROP_HANDLE_DRAW;
+    for (const [hx, hy] of [
+        [x, y], [x + w / 2, y], [x + w, y],
+        [x + w, y + h / 2], [x + w, y + h], [x + w / 2, y + h],
+        [x, y + h], [x, y + h / 2],
+    ]) {
+        ctx.fillRect(hx - hs / 2, hy - hs / 2, hs, hs);
+    }
     ctx.restore();
 }
 
@@ -1820,8 +2018,14 @@ function enterCropMode() {
     cropMode = true;
     cropRect = null;
     cropDrag = null;
+    // Each session starts free-form: predictable behavior across sessions
+    cropRatio = null;
+    cropRatioGroup.querySelectorAll('.ratio-btn').forEach(btn => {
+        btn.classList.toggle('active', !btn.dataset.cropRatio);
+    });
     cropBtn.classList.add('active');
     pixelOverlay.classList.add('picking');
+    pixelOverlay.style.cursor = 'crosshair';
     cropBar.classList.remove('hidden');
     cropApplyBtn.disabled = true;
     drawCropOverlay();
@@ -1834,12 +2038,38 @@ function exitCropMode() {
     cropDrag = null;
     cropBtn.classList.remove('active');
     pixelOverlay.classList.remove('picking');
+    pixelOverlay.style.cursor = '';
     cropBar.classList.add('hidden');
     redrawAllHighlights();
 }
 
 cropBtn.addEventListener('click', () => cropMode ? exitCropMode() : enterCropMode());
 cropCancelBtn.addEventListener('click', exitCropMode);
+
+// ---------- Crop: forced aspect ratio ----------
+const cropRatioGroup = document.querySelector('#crop-ratio-group');
+
+// "1", "4/3", "16/9"... -> number (w/h); "" -> null (free form)
+function parseCropRatio(str) {
+    if (!str) return null;
+    const m = str.match(/^(\d+(?:\.\d+)?)(?:\s*\/\s*(\d+(?:\.\d+)?))?$/);
+    if (!m) return null;
+    return m[2] ? Number(m[1]) / Number(m[2]) : Number(m[1]);
+}
+
+cropRatioGroup.addEventListener('click', (e) => {
+    const btn = e.target.closest('.ratio-btn');
+    if (!btn) return;
+    const ratio = parseCropRatio(btn.dataset.cropRatio);
+    if (ratio === cropRatio) return;
+    cropRatio = ratio;
+    cropRatioGroup.querySelectorAll('.ratio-btn').forEach(b => b.classList.toggle('active', b === btn));
+    // An existing frame is re-fitted onto the new ratio
+    if (cropRect) {
+        cropRect = applyCropRatioToRect(cropRect);
+        drawCropOverlay();
+    }
+});
 
 cropApplyBtn.addEventListener('click', async () => {
     if (!cropMode || !cropRect || !hasImage) return;

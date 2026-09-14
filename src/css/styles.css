@@ -474,6 +474,14 @@ select:disabled {
   padding: 4px 0.75rem;
   font-size: 0.8rem;
 }
+#controls .ratio-group {
+  display: flex;
+  gap: 4px;
+}
+#controls .ratio-group button {
+  min-width: 2.4rem;
+  justify-content: center;
+}
 #controls #transform-panel,
 #controls #crop-bar {
   position: absolute;
@@ -490,6 +498,14 @@ select:disabled {
   border-radius: 0.25rem;
   background-color: #1a1a1a;
   box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.5);
+}
+#controls #crop-bar {
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.5rem;
+}
+#controls #crop-bar .mode-bar {
+  margin-bottom: 0;
 }
 #controls.locked label:has(input:disabled) {
   opacity: 0.5;
@@ -1209,4 +1225,6 @@ select:disabled {
 ::-webkit-scrollbar-thumb {
   background-color: #444;
   border-radius: 0.25rem;
-}/*# sourceMappingURL=styles.css.map */
+}
+
+/*# sourceMappingURL=styles.css.map */

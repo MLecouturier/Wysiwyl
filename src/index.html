@@ -48,6 +48,16 @@
                                         <button id="crop-apply-btn" class="primary" data-i18n="controls.apply" disabled></button>
                                         <button id="crop-cancel-btn" class="secondary" data-i18n="controls.cancel"></button>
                                     </div>
+                                    <div class="controls-grid mode-bar">
+                                        <div id="crop-ratio-group" class="ratio-group" data-i18n-title="controls.cropRatio">
+                                            <button class="toggle-btn ratio-btn active" data-crop-ratio="" data-i18n="controls.cropRatioFree"></button>
+                                            <button class="toggle-btn ratio-btn" data-crop-ratio="1">1:1</button>
+                                            <button class="toggle-btn ratio-btn" data-crop-ratio="4/3">4:3</button>
+                                            <button class="toggle-btn ratio-btn" data-crop-ratio="3/2">3:2</button>
+                                            <button class="toggle-btn ratio-btn" data-crop-ratio="16/9">16:9</button>
+                                        </div>
+                                        <div class="flex-filler"></div>
+                                    </div>
                                 </div>
                                 <div id="transform-panel" class="hidden">
                                     <div class="mode-bar">
@@ -134,10 +144,10 @@
                         <div class="controls-column">
                             <div id="display-controls" class="controls-grid">
                                 <div class="flex-filler"></div>
-                                <button id="fullscreen-btn" class="secondary" data-i18n-title="controls.fullscreen">
+                                <button id="fullscreen-btn" class="toggle-btn" data-i18n-title="controls.fullscreen">
                                     <span class="material-symbols-outlined" aria-hidden="true">present_to_all</span>
                                 </button>
-                                <button id="show-original-btn" class="secondary" data-i18n-title="controls.showOriginal">
+                                <button id="show-original-btn" class="toggle-btn" data-i18n-title="controls.showOriginal">
                                     <span class="material-symbols-outlined">compare</span>
                                 </button>
                             </div>

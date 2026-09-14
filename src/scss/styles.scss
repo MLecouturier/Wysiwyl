@@ -584,6 +584,19 @@ select:disabled {
         }
     }
 
+    // Forced aspect-ratio buttons of the crop bar (Free / 1:1 / 4:3 / 3:2 / 16:9).
+    // The visuals come from the shared .toggle-btn and the compact sizing from
+    // the .mode-bar button rule above; this rule only handles the layout.
+    .ratio-group {
+        display: flex;
+        gap: 4px;
+
+        button {
+            min-width: 2.4rem;
+            justify-content: center;
+        }
+    }
+
     // Fine rotation + perspective adjustment panel
     // Overlays the controls below instead of pushing them, so the image
     // viewer keeps a constant size.
@@ -603,6 +616,16 @@ select:disabled {
         border-radius: $border-radius-base;
         background-color: $color-bg-panel;
         box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.5);
+    }
+
+    // The crop bar stacks two rows (actions + forced ratio buttons) instead
+    // of the single row shared with the transform panel
+    #crop-bar {
+        flex-direction: column;
+        justify-content: center;
+        gap: .5rem;
+
+        .mode-bar { margin-bottom: 0; }
     }
 
     // Controls locked while a synthesizer is playing
