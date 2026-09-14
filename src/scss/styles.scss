@@ -869,15 +869,18 @@ $metronome-led-transition: 0.05s ease;
 // borders and the drag handle take the synth's identification color,
 // set inline via --synth-tab-color (same mechanism as --hue-rot).
 .synth-tab {
+    position: relative; // anchor of the volume bar
     display: flex;
     align-items: center;
     gap: .25rem;
     background-color: $color-bg-light;
     border: 1px solid $color-border;
-    border-color: var(--synth-tab-color, #{$color-border});
+    border-top-color: var(--synth-tab-color, #{$color-border});
+    border-left-color: var(--synth-tab-color, #{$color-border});
+    border-bottom-color: var(--synth-tab-color, #{$color-border});
     border-top-left-radius: $border-radius-base;
     border-bottom-left-radius: $border-radius-base;
-    padding: .125rem .25rem .125rem 0;
+    padding: .125rem .25rem .25rem 0;
     user-select: none;
 
     .synth-tab-drag-handle {
@@ -944,6 +947,24 @@ $metronome-led-transition: 0.05s ease;
         box-shadow: 0 4px 10px rgba(0, 0, 0, .5);
 
         .synth-tab-drag-handle { cursor: grabbing; }
+    }
+
+    // Volume gauge on the tab's bottom edge: a few pixels thick, in the
+    // synth's identification color, anchored on the right and growing
+    // leftward as the channel volume increases (100 % = full width).
+    // The width is driven by the --synth-volume variable (percent), kept
+    // in sync with the volume field, the wheel over it and the CC 7
+    // messages learned from the instrument. No background rail: at
+    // 0 % the bar simply disappears.
+    .synth-tab-volume-bar {
+        position: absolute;
+        right: 0;
+        bottom: 0;
+        height: 3px;
+        width: var(--synth-volume, 100%);
+        background-color: var(--synth-tab-color, #{$color-border});
+        pointer-events: none;
+        transition: width $transition-fast;
     }
 }
 
@@ -1178,6 +1199,40 @@ $metronome-led-transition: 0.05s ease;
                 &.reversed {
                     flex-direction: row-reverse;
                 }
+            }
+        }
+
+        // Channel volume input, on the play row. Amber border when the
+        // (port, channel) is shared with another synth: the last CC 7
+        // sent wins, overruling this input's value.
+        .synth-volume {
+            width: 3.25rem;
+            height: 1.75rem;
+            padding: .25rem .375rem;
+            font-size: .78rem;
+            background-color: $color-bg-medium;
+            color: $color-text-primary;
+            border: 1px solid $color-border;
+            border-radius: $border-radius-base;
+            outline: none;
+            text-align: center;
+            font-variant-numeric: tabular-nums;
+            cursor: ns-resize;
+
+            &::-webkit-inner-spin-button,
+            &::-webkit-outer-spin-button {
+                -webkit-appearance: none;
+                margin: 0;
+            }
+
+            &:hover { border-color: $color-accent; }
+            &:focus { border-color: $color-accent; }
+
+            &.shared-channel {
+                border-color: #e0a016;
+
+                &:hover,
+                &:focus { border-color: #e0a016; }
             }
         }
 

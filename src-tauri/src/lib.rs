@@ -77,6 +77,7 @@ pub fn run() {
             synth::set_synth_brightness_range,
             synth::set_synth_velocity_range,
             synth::set_synth_velocity_relative,
+            synth::set_synth_volume,
             synth::set_synth_loop,
             synth::set_synth_back_n_forth,
             synth::set_synth_reading_direction,

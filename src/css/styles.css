@@ -709,15 +709,18 @@ select:disabled {
 }
 
 .synth-tab {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 0.25rem;
   background-color: #262626;
   border: 1px solid #333;
-  border-color: var(--synth-tab-color, #333);
+  border-top-color: var(--synth-tab-color, #333);
+  border-left-color: var(--synth-tab-color, #333);
+  border-bottom-color: var(--synth-tab-color, #333);
   border-top-left-radius: 0.25rem;
   border-bottom-left-radius: 0.25rem;
-  padding: 0.125rem 0.25rem 0.125rem 0;
+  padding: 0.125rem 0.25rem 0.25rem 0;
   user-select: none;
 }
 .synth-tab .synth-tab-drag-handle {
@@ -777,6 +780,16 @@ select:disabled {
 }
 .synth-tab.dragging .synth-tab-drag-handle {
   cursor: grabbing;
+}
+.synth-tab .synth-tab-volume-bar {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  width: var(--synth-volume, 100%);
+  background-color: var(--synth-tab-color, #333);
+  pointer-events: none;
+  transition: width 0.2s ease;
 }
 
 .placeholder-text {
@@ -983,6 +996,36 @@ select:disabled {
 }
 .synth-block .synth-body .synth-section .synth-section-body.reversed {
   flex-direction: row-reverse;
+}
+.synth-block .synth-body .synth-volume {
+  width: 3.25rem;
+  height: 1.75rem;
+  padding: 0.25rem 0.375rem;
+  font-size: 0.78rem;
+  background-color: #232323;
+  color: #e0e0e0;
+  border: 1px solid #333;
+  border-radius: 0.25rem;
+  outline: none;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  cursor: ns-resize;
+}
+.synth-block .synth-body .synth-volume::-webkit-inner-spin-button, .synth-block .synth-body .synth-volume::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.synth-block .synth-body .synth-volume:hover {
+  border-color: #3a7bd5;
+}
+.synth-block .synth-body .synth-volume:focus {
+  border-color: #3a7bd5;
+}
+.synth-block .synth-body .synth-volume.shared-channel {
+  border-color: #e0a016;
+}
+.synth-block .synth-body .synth-volume.shared-channel:hover, .synth-block .synth-body .synth-volume.shared-channel:focus {
+  border-color: #e0a016;
 }
 .synth-block .synth-body .synth-play {
   display: flex;
@@ -1199,6 +1242,4 @@ select:disabled {
 ::-webkit-scrollbar-thumb {
   background-color: #444;
   border-radius: 0.25rem;
-}
-
-/*# sourceMappingURL=styles.css.map */
+}/*# sourceMappingURL=styles.css.map */

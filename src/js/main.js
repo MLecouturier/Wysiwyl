@@ -2984,6 +2984,12 @@ function synthTabById(id) {
     return synthTabs.querySelector(`.synth-tab[data-synth-id="${id}"]`);
 }
 
+// Reflects the synth's channel volume on its tab: the bottom bar's
+// width follows the volume percent (see .synth-tab-volume-bar).
+function setTabVolumeBar(tab, volume) {
+    tab?.style.setProperty('--synth-volume', `${Math.max(0, Math.min(100, volume))}%`);
+}
+
 // Reflects a newly created synth's backend state (built from the
 // default-synth template) into its UI. No backend calls needed: the state
 // is already applied server-side.
@@ -3024,6 +3030,11 @@ function applySynthConfig(el, cfg) {
     el.querySelector('.velocity-max-val').textContent = cfg.velocity_max;
     el.querySelector('.synth-relative-velocity-range')
         .classList.toggle('active', !!cfg.velocity_relative);
+    // Channel volume (percent), sent as MIDI CC 7. Default for sessions
+    // saved before the setting existed.
+    const volume = Number.isFinite(cfg.volume) ? cfg.volume : 100;
+    el.querySelector('.synth-volume').value = volume;
+    setTabVolumeBar(el._tab, volume);
     // Hue shift (monophonic panel)
     const hueInput = el.querySelector('.synth-hue-shift');
     hueInput.value = cfg.hue_shift;
@@ -3107,7 +3118,8 @@ function createSynthElement(id, cfg = null) {
         <button class="synth-tab-play" tabindex="-1">
             <span class="material-symbols-outlined synth-play-icon" aria-hidden="true">play_arrow</span>
             <span class="synth-play-label"></span>
-        </button>`;
+        </button>
+        <div class="synth-tab-volume-bar"></div>`;
     const tabPlayBtn = tab.querySelector('.synth-tab-play');
     setPlayButtonState(tabPlayBtn, false);
     tabPlayBtn.addEventListener('click', () => onSynthPlayClick(id, el));
@@ -3233,6 +3245,7 @@ function createSynthElement(id, cfg = null) {
                     <button class="synth-step-forward icon-btn" data-i18n-title="synth.stepForward">
                         <span class="material-symbols-outlined" aria-hidden="true">step</span>
                     </button>
+                    <input type="number" class="synth-volume" min="0" max="100" step="1" value="100" data-i18n-title="synth.volume" />
                 </div>
             </div>
 
@@ -3423,6 +3436,48 @@ function createSynthElement(id, cfg = null) {
             .catch(err => console.error('Error in step_synth:', err));
     });
 
+    // ---- Channel volume (percent), sent as MIDI CC 7 ----
+    // Editable live while playing. Scrolling over the input adjusts the
+    // value by ±1; the wheel's page scroll is suppressed while over it.
+    const volumeInput = el.querySelector('.synth-volume');
+    const sendSynthVolume = () => {
+        let volume = Math.round(Number(volumeInput.value));
+        if (!Number.isFinite(volume)) volume = 100;
+        volume = Math.max(0, Math.min(100, volume));
+        volumeInput.value = String(volume);
+        setTabVolumeBar(tab, volume);
+        invoke('set_synth_volume', { id, volume })
+            .catch(err => console.error('Error in set_synth_volume:', err));
+    };
+    // Nudges the volume by the given delta and sends it. Shared by the
+    // input's own wheel and the tab's: the tab carries the volume bar,
+    // so scrolling over it adjusts the value the same way.
+    const adjustSynthVolume = (delta) => {
+        let current = Math.round(Number(volumeInput.value));
+        if (!Number.isFinite(current)) current = 100;
+        const next = Math.max(0, Math.min(100, current + delta));
+        volumeInput.value = String(next);
+        sendSynthVolume();
+    };
+    // Wheel/trackpad sensitivity: trackpads emit a continuous stream of
+    // small deltas (two-finger scroll), which made the adjustment far
+    // too fast — each event moved the value by ±1. The deltas are
+    // accumulated instead, and one step is applied per ~100 accumulated
+    // units (roughly one mouse-wheel notch), so a mouse notch still
+    // adjusts by ±1 while a trackpad swipe adjusts smoothly and slowly.
+    let volumeWheelAccum = 0;
+    const onVolumeWheel = (e) => {
+        e.preventDefault();
+        volumeWheelAccum += e.deltaY;
+        const steps = Math.trunc(volumeWheelAccum / 100);
+        if (steps === 0) return;
+        volumeWheelAccum -= steps * 100;
+        adjustSynthVolume(-steps);
+    };
+    volumeInput.addEventListener('change', sendSynthVolume);
+    volumeInput.addEventListener('wheel', onVolumeWheel, { passive: false });
+    tab.addEventListener('wheel', onVolumeWheel, { passive: false });
+
     // ---- Program: bank (A–P) + program (1–128) sent to the instrument ----
     // Both inputs are always visible; each change sends the current
     // selection (see sendProgramSelection). The display also reflects
@@ -3470,6 +3525,7 @@ function createSynthElement(id, cfg = null) {
         invoke('set_synth_channel', { id, channel: Number(e.target.value) })
             .catch(err => console.error('Error in set_synth_channel:', err));
         updateProgramDisplay(el);
+        updateVolumeSharedChannelWarnings();
     });
 
     // MIDI output port: one connection per port is opened lazily by the
@@ -3491,11 +3547,13 @@ function createSynthElement(id, cfg = null) {
         // The program display depends on the port: refresh it now that
         // the select has its final value.
         updateProgramDisplay(el);
+        updateVolumeSharedChannelWarnings();
     }).catch(err => console.error('Error in list_midi_ports:', err));
     midiPortSelect.addEventListener('change', (e) => {
         invoke('set_synth_midi_port', { id, port: Number(e.target.value) })
             .catch(err => console.error('Error in set_synth_midi_port:', err));
         updateProgramDisplay(el);
+        updateVolumeSharedChannelWarnings();
     });
 
     // Tempo relative to the main metronome (e.g. 0.5 = one pixel every two ticks)
@@ -3920,6 +3978,53 @@ function syncPlayAllButton() {
         : t('synthList.playAllStart');
 }
 
+// CC 7 addresses the MIDI channel, not the synth: several synths sharing
+// the same (port, channel) override each other's volume — the last
+// setting sent wins. Flags the volume inputs of every synth in that
+// case with the shared-channel warning style and tooltip.
+function updateVolumeSharedChannelWarnings() {
+    const blocks = Array.from(synthDevices.querySelectorAll('.synth-block'));
+    const counts = new Map();
+    const keyOf = block => {
+        const port = block.querySelector('.synth-midi-port')?.value;
+        const channel = block.querySelector('.synth-channel')?.value;
+        return `${port}:${channel}`;
+    };
+    blocks.forEach(block => {
+        const key = keyOf(block);
+        counts.set(key, (counts.get(key) || 0) + 1);
+    });
+    blocks.forEach(block => {
+        const input = block.querySelector('.synth-volume');
+        if (!input) return;
+        const shared = counts.get(keyOf(block)) > 1;
+        input.classList.toggle('shared-channel', shared);
+        const key = shared ? 'synth.volumeSharedChannel' : 'synth.volume';
+        input.dataset.i18nTitle = key;
+        input.title = t(key);
+    });
+}
+
+// Channel volume learned from the MIDI input (CC 7 turned on the
+// instrument): the backend has already updated the matching synths'
+// state; refresh the volume field of every synth on that (port,
+// channel), unless the user is currently editing it.
+window.__TAURI__.event.listen('midi-volume', (event) => {
+    const { port, channel, volume } = event.payload;
+    synthDevices.querySelectorAll('.synth-block').forEach(block => {
+        const blockPort = Number(block.querySelector('.synth-midi-port')?.value);
+        const blockChannel = Number(block.querySelector('.synth-channel')?.value);
+        if (blockPort !== port || blockChannel !== channel) return;
+        const input = block.querySelector('.synth-volume');
+        if (input && document.activeElement !== input) {
+            input.value = String(volume);
+        }
+        // The tab's volume bar reflects the learned volume even while
+        // the field is being edited: it mirrors the backend state
+        setTabVolumeBar(block._tab, volume);
+    });
+});
+
 // Locks/unlocks the controls specific to a synth while it is playing
 // (MIDI channel, mono/poly mode, and the step forward). Everything else
 // (hue shift, R/G/B toggles, velocity, loop, highlight, zone selection...)
@@ -4195,6 +4300,7 @@ async function onSynthRemoveClick(id, el) {
     el.remove();
     await renumberSynthIds();
     redrawAllHighlights();
+    updateVolumeSharedChannelWarnings();
 
     if (synthListBody.querySelectorAll('.synth-block').length === 0) {
         placeholder.classList.remove('hidden');

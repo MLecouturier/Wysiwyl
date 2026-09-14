@@ -124,7 +124,11 @@ pub fn reset_synth_cursor(id: u32, state: State<SynthState>) -> Result<(), AppEr
 }
 
 #[tauri::command]
-pub fn start_synth(id: u32, state: State<SynthState>) -> Result<(), AppError> {
+pub fn start_synth(
+    id: u32,
+    state: State<SynthState>,
+    midi_state: State<MidiState>,
+) -> Result<(), AppError> {
     let mut synths = state.synths.lock().unwrap();
     match synths.get_mut(&id) {
         Some(synth) => {
@@ -132,6 +136,9 @@ pub fn start_synth(id: u32, state: State<SynthState>) -> Result<(), AppError> {
             // A fresh start always replays from the beginning of the sequence
             // (e.g. after manually stepping to the end while paused)
             synth.end_pending = false;
+            // Reassert the channel volume so the instrument matches the
+            // synth's setting even if it was reconnected or reset meanwhile
+            midi_state.send_channel_volume(synth.midi_port, synth.channel, synth.volume);
             Ok(())
         }
         None => Err(synth_not_found(id)),
@@ -277,6 +284,31 @@ pub fn set_synth_program(
         (synth.midi_port, synth.channel)
     };
     Ok(midi.send_program_change(port, channel, program, bank_msb, bank_lsb))
+}
+
+/// Sets the synth's channel volume in percent (0–100) and immediately
+/// sends it as MIDI CC 7 on its output port and channel. Caveat: CC 7
+/// addresses the channel, so synths sharing the same (port, channel)
+/// override each other — the last setting sent wins.
+#[tauri::command]
+pub fn set_synth_volume(
+    id: u32,
+    volume: u8,
+    state: State<SynthState>,
+    midi: State<MidiState>,
+) -> Result<(), AppError> {
+    let (port, channel) = {
+        let mut synths = state.synths.lock().unwrap();
+        match synths.get_mut(&id) {
+            Some(synth) => {
+                synth.volume = volume.min(100);
+                (synth.midi_port, synth.channel)
+            }
+            None => return Err(synth_not_found(id)),
+        }
+    };
+    midi.send_channel_volume(port, channel, volume.min(100));
+    Ok(())
 }
 
 /// Toggles the velocity mapping mode: relative (rescaled onto the

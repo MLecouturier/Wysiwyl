@@ -356,6 +356,8 @@ mod tests {
         // velocity_relative didn't exist either: defaults to the
         // historical relative mapping
         assert!(s.settings.velocity_relative);
+        // Volume didn't exist in that format either: full volume
+        assert_eq!(s.settings.volume, 100);
         // Programs didn't exist in that format either
         assert_eq!(s.program, None);
     }
@@ -445,6 +447,7 @@ mod tests {
         synth.velocity_min = 40;
         synth.velocity_max = 110;
         synth.velocity_relative = false;
+        synth.volume = 55;
         synth.hue_shift = 180;
         synth.channel_enabled = [true, false, true];
         synth.note_lengths = vec![NoteLength::Whole, NoteLength::Eighth];
@@ -496,6 +499,7 @@ mod tests {
         assert_eq!(s.velocity_min, synth.velocity_min);
         assert_eq!(s.velocity_max, synth.velocity_max);
         assert_eq!(s.velocity_relative, synth.velocity_relative);
+        assert_eq!(s.volume, synth.volume);
         assert_eq!(s.hue_shift, synth.hue_shift);
         assert_eq!(s.channel_enabled, synth.channel_enabled);
         assert_eq!(s.note_lengths, synth.note_lengths);

@@ -161,6 +161,8 @@ pub struct Synth {
     pub velocity_max: u8,     // ceiling of the velocity range (1–127)
     pub velocity_relative: bool, // true: saturation rescaled onto [min, max];
                                  // false: native 1–127 mapping, clamped to [min, max]
+    pub volume: u8, // channel volume in percent (0–100), sent as MIDI CC 7;
+                    // 100 is mapped to the full CC value 127
 
     // --- Pixel-to-note translation modes ---
     pub mode: SynthMode,
@@ -220,6 +222,7 @@ impl Synth {
             velocity_min: 0,
             velocity_max: 127,
             velocity_relative: true,
+            volume: 100,
 
             mode: SynthMode::Monophonic,
             hue_shift: 0,
