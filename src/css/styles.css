@@ -141,6 +141,13 @@ h2 {
 #image-viewer-container #image-viewer #pixel-overlay.picking.picking-silence {
   cursor: cell;
 }
+#image-viewer-container #image-viewer #cursor-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
 #image-viewer-container #image-viewer img,
 #image-viewer-container #image-viewer #processed-preview {
   width: 100%;

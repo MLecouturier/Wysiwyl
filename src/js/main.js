@@ -323,6 +323,7 @@ const preview         = document.querySelector('#preview');
 const previewCanvas   = document.querySelector('#processed-preview');
 const viewerEmpty     = document.querySelector('#viewer-empty');
 const pixelOverlay    = document.querySelector('#pixel-overlay');
+const cursorOverlay   = document.querySelector('#cursor-overlay');
 
 const gridSlider      = document.querySelector('#grid-width');
 const gridValue       = document.querySelector('#grid-width-value');
@@ -373,6 +374,8 @@ const synthCursors = new Map();
 function resizeOverlay() {
     pixelOverlay.width  = pixelOverlay.offsetWidth;
     pixelOverlay.height = pixelOverlay.offsetHeight;
+    cursorOverlay.width  = cursorOverlay.offsetWidth;
+    cursorOverlay.height = cursorOverlay.offsetHeight;
 }
 
 function drawSynthPixel(synthId, cursor, muted) {
@@ -380,11 +383,11 @@ function drawSynthPixel(synthId, cursor, muted) {
     const color = synthColors.get(synthId);
     if (!color) return;
 
-    const ctx = pixelOverlay.getContext('2d');
+    const ctx = cursorOverlay.getContext('2d');
 
     // Rendered dimensions of the image in the viewer (object-fit: contain)
-    const vw = pixelOverlay.width;
-    const vh = pixelOverlay.height;
+    const vw = cursorOverlay.width;
+    const vh = cursorOverlay.height;
     const imgRatio = gridW / gridH;
     const viewRatio = vw / vh;
 
@@ -440,9 +443,33 @@ function drawPixelAt(ctx, synthId, cursor, offsetX, offsetY, cellW, cellH) {
     ctx.restore();
 }
 
+// Removes one synth's cursor from the cursor layer: erases its cell and
+// repaints the cursors of any other synth sitting on that same cell
+function eraseSynthCursor(synthId) {
+    const prev = synthCursors.get(synthId);
+    synthCursors.delete(synthId);
+    if (prev === undefined || !hasImage || !gridW || !gridH) return;
+    const layout = getImageLayout();
+    if (!layout) return;
+    const { offsetX, offsetY, cellW, cellH } = layout;
+    const ctx = cursorOverlay.getContext('2d');
+    const pc = prev % gridW;
+    const pr = Math.floor(prev / gridW);
+    ctx.clearRect(
+        offsetX + pc * cellW - 1,
+        offsetY + pr * cellH - 1,
+        cellW + 2, cellH + 2
+    );
+    synthCursors.forEach((c, sid) => {
+        if (c === prev) drawPixelAt(ctx, sid, c, offsetX, offsetY, cellW, cellH);
+    });
+}
+
 function clearOverlay() {
     const ctx = pixelOverlay.getContext('2d');
     ctx.clearRect(0, 0, pixelOverlay.width, pixelOverlay.height);
+    const cursorCtx = cursorOverlay.getContext('2d');
+    cursorCtx.clearRect(0, 0, cursorOverlay.width, cursorOverlay.height);
     synthCursors.clear();
 }
 
@@ -1391,7 +1418,8 @@ function clearRangeHighlight(synthId) {
 function redrawAllHighlights() {
     const ctx = pixelOverlay.getContext('2d');
     ctx.clearRect(0, 0, pixelOverlay.width, pixelOverlay.height);
-    synthCursors.clear(); // active cursors will be redrawn on the next tick
+    // Cursors live on their own layer (#cursor-overlay): they survive
+    // zone redraws and no longer need to be repositioned here
     synthHighlights.forEach((_, sid) => drawRangeHighlight(sid));
 }
 
@@ -2631,7 +2659,7 @@ async function stopMetronomeIfIdle() {
     // Restore the highlights hidden during playback
     synthListBody.querySelectorAll('.synth-block').forEach(el => {
         const sid = Number(el.dataset.synthId);
-        synthCursors.delete(sid);
+        eraseSynthCursor(sid);
         const hi = synthHighlights.get(sid);
         if (hi && hi._wasVisible) {
             hi.visible = true;
@@ -3766,9 +3794,8 @@ function restoreHighlightAfterStop(id, el) {
         syncEyeButton(el, true);
         redrawAllHighlights();
     }
-    // Clear this synth's cursor from the canvas
-    synthCursors.delete(id);
-    redrawAllHighlights();
+    // Clear this synth's cursor from the cursor layer
+    eraseSynthCursor(id);
 }
 
 // ---------- Tab drag & drop (stack reordering) ----------
@@ -3968,7 +3995,7 @@ async function onSynthRemoveClick(id, el) {
     if (zonePickState && zonePickState.id === id) cancelZonePicking();
 
     synthColors.delete(id);
-    synthCursors.delete(id);
+    eraseSynthCursor(id);
     synthHighlights.delete(id);
     synthBrightnessBounds.delete(id);
     synthNames.delete(id);
@@ -4044,7 +4071,7 @@ window.__TAURI__.event.listen('synth-stopped', async (event) => {
     const el = synthElementById(id);
     if (!el) return;
     setSynthPlaying(id, false);
-    synthCursors.delete(id);
+    eraseSynthCursor(id);
     restoreHighlightAfterStop(id, el);
     syncPlayAllButton();
     await stopMetronomeIfIdle();
