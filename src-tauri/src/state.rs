@@ -135,42 +135,42 @@ pub struct Synth {
     pub display_number: u32,
     pub name: Option<String>, // custom display name; None = default "Synth #id"
     pub playing: bool,
-    pub cursor: usize,      // index into the zone pixel sequence (0..sequence length)
-    pub note: u8,           // fixed MIDI note for now: A4 = 69
-    pub channel: u8,        // MIDI channel 0-15
-    pub midi_port: usize,   // MIDI output port index (see list_midi_ports)
+    pub cursor: usize,    // index into the zone pixel sequence (0..sequence length)
+    pub note: u8,         // fixed MIDI note for now: A4 = 69
+    pub channel: u8,      // MIDI channel 0-15
+    pub midi_port: usize, // MIDI output port index (see list_midi_ports)
     pub zones: Vec<PixelZone>, // rectangular zones to play (empty = nothing selected)
     pub mute_zones: Vec<PixelZone>, // manually silenced pixels (rests): the playhead still
-                                    // travels over them but no note is sounded (empty = none)
+    // travels over them but no note is sounded (empty = none)
     pub loop_enabled: bool,   // loop playback or stop at end of range
     pub back_and_forth: bool, // bounce back and forth between the sequence
-                              // bounds (mutually exclusive with the loop)
+    // bounds (mutually exclusive with the loop)
     pub reading_direction: ReadingDirection, // order in which the sequence is built
-    pub sorted_reading: bool,   // read the pixels by their absolute position in
-                                // the image instead of zone by zone
-    pub play_forward: bool,   // current travel direction through the sequence
-                              // (flipped by the back-and-forth mode)
-    pub end_pending: bool,    // end of a non-looping sequence reached: stop on the next tick
-                              // (gives the final note a full step duration)
-    pub tempo_ratio: f64,      // playback speed relative to the metronome (1.0 = metronome tempo)
+    pub sorted_reading: bool,                // read the pixels by their absolute position in
+    // the image instead of zone by zone
+    pub play_forward: bool, // current travel direction through the sequence
+    // (flipped by the back-and-forth mode)
+    pub end_pending: bool, // end of a non-looping sequence reached: stop on the next tick
+    // (gives the final note a full step duration)
+    pub tempo_ratio: f64, // playback speed relative to the metronome (1.0 = metronome tempo)
     pub tempo_accumulator: f64, // fractional-tick accumulator: a synth with tempo < 1.0
-                               // only advances once enough metronome ticks have accumulated
-    pub brightness_min: u8,   // minimum brightness threshold (0–127)
-    pub brightness_max: u8,   // maximum brightness threshold (0–127)
-    pub active_note: bool,     // false if the current pixel is out of range (muted)
-    pub note_is_on: bool,      // true if a MIDI note is currently sounding (sustain)
-    pub velocity: u8,          // current MIDI velocity, derived from the pixel's brightness (1–127)
-    pub velocity_min: u8,      // floor of the velocity range (0–126): brightness is
-                               // mapped between this value and velocity_max
-    pub velocity_max: u8,     // ceiling of the velocity range (1–127)
+    // only advances once enough metronome ticks have accumulated
+    pub brightness_min: u8, // minimum brightness threshold (0–127)
+    pub brightness_max: u8, // maximum brightness threshold (0–127)
+    pub active_note: bool,  // false if the current pixel is out of range (muted)
+    pub note_is_on: bool,   // true if a MIDI note is currently sounding (sustain)
+    pub velocity: u8,       // current MIDI velocity, derived from the pixel's brightness (1–127)
+    pub velocity_min: u8,   // floor of the velocity range (0–126): brightness is
+    // mapped between this value and velocity_max
+    pub velocity_max: u8,        // ceiling of the velocity range (1–127)
     pub velocity_relative: bool, // true: saturation rescaled onto [min, max];
-                                 // false: native 1–127 mapping, clamped to [min, max]
+    // false: native 1–127 mapping, clamped to [min, max]
     pub volume: u8, // channel volume in percent (0–100), sent as MIDI CC 7;
-                    // 100 is mapped to the full CC value 127
+    // 100 is mapped to the full CC value 127
 
     // --- Pixel-to-note translation modes ---
     pub mode: SynthMode,
-    pub hue_shift: u16,             // hue shift in degrees (0–360), monophonic mode
+    pub hue_shift: u16, // hue shift in degrees (0–360), monophonic mode
     pub channel_enabled: [bool; 3], // R, G, B enabled/disabled, polyphonic mode
     pub poly_voices: [ChannelVoice; 3], // independent MIDI state per R, G, B channel
 
@@ -178,16 +178,16 @@ pub struct Synth {
     pub note_lengths: Vec<NoteLength>, // enabled lengths; empty = all quarter notes
     pub note_length_reversed: bool,    // flip the brightness→length mapping direction
     pub note_sustain: bool,            // true: notes hold their full length (the Note
-                                       // Off arrives with the next note); false:
-                                       // pizzicato — the Note Off is sent right
-                                       // after the Note On and the instrument's
-                                       // natural decay (release phase) shapes the tail
-    pub note_generation: u32,          // bumped on each note articulation, so stale
-                                       // delayed Note Offs can cancel themselves
+    // Off arrives with the next note); false:
+    // pizzicato — the Note Off is sent right
+    // after the Note On and the instrument's
+    // natural decay (release phase) shapes the tail
+    pub note_generation: u32, // bumped on each note articulation, so stale
+    // delayed Note Offs can cancel themselves
 
     // --- MIDI note range filters ---
-    pub mono_note_range: [bool; 3],       // bass, medium, treble enabled for the
-                                           // monophonic note (all off = full 0–127)
+    pub mono_note_range: [bool; 3], // bass, medium, treble enabled for the
+    // monophonic note (all off = full 0–127)
     pub voice_note_ranges: [[bool; 3]; 3], // same, per R/G/B voice, polyphonic mode
 
     // --- Scale quantization ---
@@ -208,9 +208,9 @@ impl Synth {
             note: 69, // A4
             channel: 0,
             midi_port: 0,
-            zones: Vec::new(),    // empty = nothing selected
+            zones: Vec::new(),      // empty = nothing selected
             mute_zones: Vec::new(), // empty = no manually silenced pixel
-            loop_enabled: true,   // loop enabled by default
+            loop_enabled: true,     // loop enabled by default
             back_and_forth: false,
             reading_direction: ReadingDirection::LeftToRight,
             sorted_reading: false,
@@ -231,7 +231,11 @@ impl Synth {
             mode: SynthMode::Monophonic,
             hue_shift: 0,
             channel_enabled: [true, true, true],
-            poly_voices: [ChannelVoice::new(), ChannelVoice::new(), ChannelVoice::new()],
+            poly_voices: [
+                ChannelVoice::new(),
+                ChannelVoice::new(),
+                ChannelVoice::new(),
+            ],
 
             note_lengths: vec![NoteLength::Quarter],
             note_length_reversed: false,
@@ -280,6 +284,10 @@ pub struct MidiState {
     /// the app's lifetime so Program Change / Bank Select messages sent
     /// by the instruments keep being tracked.
     pub input_connections: Mutex<Vec<midir::MidiInputConnection<()>>>,
+    /// Cache of the output-port indices used by the master clock
+    /// broadcast, with the instant it was built: refreshed at most once
+    /// per second (see `midi::broadcast_realtime`).
+    pub broadcast_ports: Mutex<Option<(std::time::Instant, Vec<usize>)>>,
 }
 
 impl Default for MidiState {
@@ -288,6 +296,7 @@ impl Default for MidiState {
             connections: Mutex::new(HashMap::new()),
             known_programs: Mutex::new(HashMap::new()),
             input_connections: Mutex::new(Vec::new()),
+            broadcast_ports: Mutex::new(None),
         }
     }
 }

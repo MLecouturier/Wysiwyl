@@ -137,13 +137,16 @@ export function drawZones(ctx, layout, { color, zones, muteCells }) {
 }
 
 // Draws one playhead cell: semi-transparent fill of the whole cell in
-// the synth's color, like the main viewer's cursor layer.
-export function drawCursorCell(ctx, layout, { color, cursor }) {
+// the synth's color, like the main viewer's cursor layer. A muted cell
+// (manual silence or pixel outside the brightness window) keeps its
+// cursor, drawn at half opacity so it stays visible above the silence
+// veil.
+export function drawCursorCell(ctx, layout, { color, cursor, muted }) {
     const { offsetX, offsetY, cellW, cellH, gridW } = layout;
     const col = cursor % gridW;
     const row = Math.floor(cursor / gridW);
     ctx.save();
-    ctx.globalAlpha = 0.75;
+    ctx.globalAlpha = muted ? 0.375 : 0.75;
     ctx.fillStyle = color;
     ctx.fillRect(offsetX + col * cellW, offsetY + row * cellH, cellW, cellH);
     ctx.restore();

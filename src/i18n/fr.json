@@ -44,7 +44,16 @@
   },
   "metronome": {
     "title": "Tempo (BPM)",
-    "tempo": "Tempo (BPM)"
+    "tempo": "Tempo (BPM)",
+    "syncBadge": "Synchro DAW",
+    "masterBadge": "Horloge maître",
+    "clockMode": "Source d'horloge",
+    "clockOff": "Interne",
+    "clockAuto": "Synchro auto",
+    "clockInput": "Source…",
+    "clockMaster": "Maître",
+    "clockSource": "Source de synchro : port d'entrée MIDI dont l'horloge est suivie",
+    "virtualSource": "Wysiwyl (virtuel — DAW)"
   },
   "synthList": {
     "title": "Synth·s",
@@ -91,6 +100,7 @@
     "channelLabel": "Canal MIDI",
     "channelOption": "CH {number}",
     "midiPort": "Port de sortie MIDI",
+    "virtualPort": "Wysiwyl (virtuel — DAW)",
     "noMidiPort": "Aucun port MIDI",
     "modeLabel": "Mode",
     "modeMonophonic": "Monophonique",
@@ -177,7 +187,11 @@
     "synthList.add": "Ajoute un nouveau synthétiseur. Chaque synthé possède ses propres zones sur l'image et joue en parallèle des autres.",
     "synthList.playAllStart": "Démarre la lecture de tous les synthés en même temps, ou arrête tout si au moins un tourne déjà.",
     "synthList.panic": "Coupe immédiatement toutes les notes MIDI en cours. Utile si un synthétiseur externe reste bloqué sur une note.",
-    "synth.midiPort": "Port MIDI de sortie utilisé par ce synthé : choisissez ici l'instrument matériel ou logiciel à piloter.",
+    "synth.midiPort": "Port MIDI de sortie utilisé par ce synthé : choisissez ici l'instrument matériel ou logiciel à piloter. Le port virtuel « Wysiwyl (virtuel — DAW) » apparaît comme entrée MIDI dans votre DAW (Ableton Live sur Mac ne voit pas les ports virtuels : passez par le bus IAC, voir le README) : sélectionnez-le comme source MIDI d'une piste instrument pour jouer un synthé logiciel du projet.",
+    "metronome.syncBadge": "Le métronome suit l'horloge MIDI d'un DAW ou d'un appareil externe : le tempo affiché est celui du projet, les contrôles de tempo sont désactivés le temps de la synchro. À l'arrêt de l'horloge, le métronome continue au dernier tempo synchronisé et les contrôles redeviennent libres.",
+    "metronome.clockMode": "Source du tempo du métronome. Interne : le tempo réglé ici est le seul maître. Synchro auto : toute horloge MIDI entrante (celle d'un DAW, d'un instrument) prend le contrôle du tempo tant qu'elle est diffusée — c'est le comportement historique par défaut. Source… : seule l'horloge MIDI reçue sur le port d'entrée choisi est suivie, les autres appareils sont ignorés. Maître : l'app diffuse sa propre horloge MIDI (24 pulses par noire) vers toutes les sorties MIDI tant qu'un synthé joue, avec un Start au début de la lecture et un Stop à la fin, pour que les séquenceurs et arpèges externes suivent ce tempo.",
+    "metronome.clockSource": "Port d'entrée MIDI dont le métronome suit l'horloge en mode « Source… ». L'entrée « Wysiwyl (virtuel — DAW) » est le port propre à l'app, celui auquel un DAW adresse sa synchro ; les autres entrées sont les entrées physiques, typiquement l'horloge d'un instrument ou d'une interface.",
+    "metronome.masterBadge": "Le métronome diffuse sa propre horloge MIDI vers toutes les sorties MIDI : les appareils et DAWs qui la suivent jouent au tempo réglé ici. L'horloge est diffusée tant qu'au moins un synthé joue, avec un message Start au démarrage de la lecture et un Stop à son arrêt. Les contrôles de tempo restent actifs : ils pilotent tous les suiveurs en direct.",
     "synth.renameHint": "Double-cliquez le nom du synthé pour le personnaliser.",
     "synth.dragHandle": "Glissez pour déplacer ce synthé dans le stack ; l'ensemble du stack est renuméroté en conséquence.",
     "synth.saveAsTemplate": "Fait de ce synthé le modèle par défaut : tout nouveau synthé reprendra ses réglages (mode, plage de notes, longueurs de notes, seuils…).",

@@ -1,18 +1,76 @@
 use midir::{MidiInput, MidiOutput, MidiOutputConnection};
 use serde::Serialize;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use crate::metronome::{self, MetronomeState};
 use crate::state::{MidiState, ProgramState, SynthState};
+
+#[cfg(unix)]
+use midir::os::unix::{VirtualInput, VirtualOutput};
+
+/// System realtime messages: the MIDI clock stream (24 pulses per
+/// quarter note) and the transport messages that accompany it, sent in
+/// master mode and received from a DAW in slave mode.
+pub const MIDI_CLOCK: u8 = 0xF8;
+pub const MIDI_START: u8 = 0xFA;
+pub const MIDI_CONTINUE: u8 = 0xFB;
+pub const MIDI_STOP: u8 = 0xFC;
+
+/// Index of the app's virtual MIDI output port. A sentinel far above any
+/// physical port index: it must stay well below 2^53 to survive the
+/// JS/JSON round-trip unharmed, and never collide with a physical index.
+#[cfg(unix)]
+pub const VIRTUAL_PORT_INDEX: usize = 1_000_000;
+
+/// Name given to both virtual endpoints (input and output): in the DAW,
+/// the app appears as a MIDI source and a sync destination named "Wysiwyl".
+#[cfg(unix)]
+pub const VIRTUAL_PORT_NAME: &str = "Wysiwyl";
 
 #[derive(Serialize, Clone)]
 pub struct MidiPortInfo {
     pub index: usize,
     pub name: String,
+    /// True for the app's own virtual port, created for DAW routing.
+    #[serde(rename = "isVirtual")]
+    pub is_virtual: bool,
+}
+
+/// An entry of the MIDI input port list, offered when choosing the
+/// metronome's clock sync source. Unlike output ports, input ports are
+/// identified by name: it is the exact string the input listeners report
+/// (and the value stored in the config as the sync source).
+#[derive(Serialize, Clone)]
+pub struct MidiInputPortInfo {
+    pub name: String,
+    /// True for the app's own virtual input port, the route a DAW's MIDI
+    /// clock takes into the app.
+    #[serde(rename = "isVirtual")]
+    pub is_virtual: bool,
+}
+
+/// Opens the connection to the given output port index, or None if the
+/// port doesn't exist or can't be opened. On unix, the virtual port
+/// sentinel is created on demand instead of connected.
+#[cfg(unix)]
+fn open_connection(port_index: usize) -> Option<MidiOutputConnection> {
+    if port_index == VIRTUAL_PORT_INDEX {
+        return create_virtual_connection();
+    }
+    open_physical_connection(port_index)
 }
 
 /// Opens the connection to the given output port index, or None if the
 /// port doesn't exist or can't be opened.
+#[cfg(not(unix))]
 fn open_connection(port_index: usize) -> Option<MidiOutputConnection> {
+    open_physical_connection(port_index)
+}
+
+/// Opens the connection to the given physical output port index, or None
+/// if the port doesn't exist or can't be opened.
+fn open_physical_connection(port_index: usize) -> Option<MidiOutputConnection> {
     let midi_out = match MidiOutput::new("Wysiwyl") {
         Ok(m) => m,
         Err(e) => {
@@ -46,6 +104,30 @@ fn open_connection(port_index: usize) -> Option<MidiOutputConnection> {
         }
         Err(e) => {
             eprintln!("Failed to connect to MIDI port {port_index} ({port_name}): {e}");
+            None
+        }
+    }
+}
+
+/// Creates the app's own virtual MIDI output port: it shows up in every
+/// DAW as a MIDI input source, so Wysiwyl can drive software instruments
+/// without any hardware device.
+#[cfg(unix)]
+fn create_virtual_connection() -> Option<MidiOutputConnection> {
+    let midi_out = match MidiOutput::new("Wysiwyl") {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("Unable to initialize MIDI: {e}");
+            return None;
+        }
+    };
+    match midi_out.create_virtual(VIRTUAL_PORT_NAME) {
+        Ok(conn) => {
+            println!("Virtual MIDI output port '{VIRTUAL_PORT_NAME}' created");
+            Some(conn)
+        }
+        Err(e) => {
+            eprintln!("Failed to create the virtual MIDI output port: {e}");
             None
         }
     }
@@ -131,9 +213,12 @@ impl MidiState {
 
 /// Opens the first available MIDI output port eagerly, so the app is
 /// usable right away. Other ports are opened lazily by the synths that
-/// use them. Not a blocking error: the app must remain usable even
-/// without a MIDI device connected.
+/// use them. The virtual port is created eagerly too, so a DAW can see
+/// it right from launch. Not a blocking error: the app must remain
+/// usable even without a MIDI device connected.
 pub fn auto_connect(state: &MidiState) {
+    #[cfg(unix)]
+    state.with_connection(VIRTUAL_PORT_INDEX, |_| {});
     state.with_connection(0, |_| {});
 }
 
@@ -163,29 +248,112 @@ fn midi_to_percent(value: u8) -> u8 {
 }
 
 /// Lists the available MIDI output ports. The index of each entry is the
-/// port identifier to pass to `set_synth_midi_port`.
+/// port identifier to pass to `set_synth_midi_port`. On unix the app's
+/// own virtual port comes first, so a DAW user finds it without digging
+/// through their hardware interfaces.
 #[tauri::command]
 pub fn list_midi_ports() -> Vec<MidiPortInfo> {
-    let midi_out = match MidiOutput::new("Wysiwyl") {
-        Ok(m) => m,
-        Err(_) => return Vec::new(),
-    };
-    midi_out
-        .ports()
-        .iter()
-        .enumerate()
-        .map(|(index, port)| MidiPortInfo {
-            index,
-            name: midi_out
+    let mut ports = Vec::new();
+
+    #[cfg(unix)]
+    ports.push(MidiPortInfo {
+        index: VIRTUAL_PORT_INDEX,
+        name: VIRTUAL_PORT_NAME.to_string(),
+        is_virtual: true,
+    });
+
+    if let Ok(midi_out) = MidiOutput::new("Wysiwyl") {
+        for (index, port) in midi_out.ports().iter().enumerate() {
+            let name = midi_out
                 .port_name(port)
-                .unwrap_or_else(|_| format!("Port {index}")),
-        })
-        .collect()
+                .unwrap_or_else(|_| format!("Port {index}"));
+            // The app's own virtual input port (a destination on macOS and
+            // Linux, created for the DAW's MIDI clock) shows up in this
+            // list too: connecting a synth to it would only loop our own
+            // messages back. Hide it — the labeled virtual port entry
+            // above is the real DAW route.
+            #[cfg(unix)]
+            if name == VIRTUAL_PORT_NAME {
+                continue;
+            }
+            ports.push(MidiPortInfo {
+                index,
+                name,
+                is_virtual: false,
+            });
+        }
+    }
+    ports
 }
 
 #[tauri::command]
 pub fn is_midi_connected(state: State<'_, MidiState>) -> bool {
     !state.connections.lock().unwrap().is_empty()
+}
+
+/// How long the broadcast port list stays valid before the MIDI devices
+/// are enumerated again (hot-plugged devices are picked up within a
+/// second, while the 24 pulses-per-beat master clock stays cheap).
+const BROADCAST_PORTS_TTL: Duration = Duration::from_secs(1);
+
+/// Sends a system realtime byte (MIDI clock, Start, Stop) to every
+/// output port, opening the connections lazily — used by the metronome
+/// in master mode. The port list is cached in `MidiState` for a second:
+/// enumerating the OS's MIDI devices on every pulse would be far too
+/// expensive.
+pub fn broadcast_realtime(state: &MidiState, byte: u8) {
+    let ports = {
+        let mut cache = state.broadcast_ports.lock().unwrap();
+        let fresh = cache
+            .as_ref()
+            .is_some_and(|(at, _)| at.elapsed() < BROADCAST_PORTS_TTL);
+        if !fresh {
+            let ports = list_midi_ports()
+                .into_iter()
+                .map(|port| port.index)
+                .collect::<Vec<_>>();
+            *cache = Some((Instant::now(), ports));
+        }
+        cache.as_ref().expect("just refreshed").1.clone()
+    };
+    for index in ports {
+        state.with_connection(index, |conn| {
+            let _ = conn.send(&[byte]);
+        });
+    }
+}
+
+/// Lists the available MIDI input ports, offered as the metronome's clock
+/// sync source in `Input` mode. The names match exactly those the input
+/// listeners report, so the config-stored source filters the right
+/// port. On unix the app's own virtual input port comes last, labeled as
+/// the DAW's route; the app's own virtual output port (which also shows
+/// up here as a source) is hidden, as in the input listeners.
+#[tauri::command]
+pub fn list_midi_input_ports() -> Vec<MidiInputPortInfo> {
+    let mut ports = Vec::new();
+    if let Ok(midi_in) = MidiInput::new("Wysiwyl") {
+        for port in midi_in.ports().iter() {
+            let name = midi_in.port_name(port).unwrap_or_default();
+            #[cfg(unix)]
+            if name == VIRTUAL_PORT_NAME {
+                continue;
+            }
+            if name.is_empty() {
+                continue;
+            }
+            ports.push(MidiInputPortInfo {
+                name,
+                is_virtual: false,
+            });
+        }
+    }
+    #[cfg(unix)]
+    ports.push(MidiInputPortInfo {
+        name: VIRTUAL_PORT_NAME.to_string(),
+        is_virtual: true,
+    });
+    ports
 }
 
 // ---------------------------------------------------------------------------
@@ -254,7 +422,17 @@ pub fn start_midi_input_listeners(app: &AppHandle, state: &MidiState) {
     };
     let mut connections = state.input_connections.lock().unwrap();
     for (port, port_name) in ports {
-        let Ok(midi_in) = MidiInput::new("Wysiwyl") else { continue };
+        // The app's own virtual output port is a source on macOS and Linux:
+        // listening to it would only echo our own outgoing messages back.
+        // The DAW's clock arrives through the dedicated virtual input
+        // listener instead.
+        #[cfg(unix)]
+        if port_name == VIRTUAL_PORT_NAME {
+            continue;
+        }
+        let Ok(midi_in) = MidiInput::new("Wysiwyl") else {
+            continue;
+        };
         let listener_app = app.clone();
         let listener_name = port_name.clone();
         let connected = midi_in.connect(
@@ -278,13 +456,60 @@ pub fn start_midi_input_listeners(app: &AppHandle, state: &MidiState) {
     }
 }
 
+/// Creates the app's own virtual MIDI input port, so a DAW can send its
+/// MIDI clock (and program changes) straight to Wysiwyl. The port is kept
+/// alive for the app's lifetime like the physical input listeners. Unix
+/// only: midir's Windows backend has no virtual ports (a loopMIDI bus
+/// serves the same purpose there).
+#[cfg(unix)]
+pub fn start_virtual_input_listener(app: &AppHandle) {
+    let Ok(midi_in) = MidiInput::new("Wysiwyl") else {
+        return;
+    };
+    let listener_app = app.clone();
+    match midi_in.create_virtual(
+        VIRTUAL_PORT_NAME,
+        move |_timestamp, data: &[u8], _: &mut ()| {
+            handle_input_message(&listener_app, VIRTUAL_PORT_NAME, data);
+        },
+        (),
+    ) {
+        Ok(conn) => {
+            app.state::<MidiState>()
+                .input_connections
+                .lock()
+                .unwrap()
+                .push(conn);
+            println!("Virtual MIDI input port '{VIRTUAL_PORT_NAME}' created (DAW sync)");
+        }
+        Err(e) => eprintln!("Failed to create the virtual MIDI input port: {e}"),
+    }
+}
+
 /// Parses one incoming MIDI message, updating the known-program state and
 /// emitting a `midi-program` event when it is a Bank Select or Program
 /// Change, or the matching synths' volume and a `midi-volume` event when
 /// it is a Channel Volume (CC 7). Our own outgoing messages may loop back
 /// here (IAC/thru): updating with the same value is harmless, and nothing
-/// is ever sent back in response.
+/// is ever sent back in response. Single-byte system realtime messages
+/// (a DAW's MIDI clock) are dispatched to the metronome's clock sync.
 fn handle_input_message(app: &AppHandle, input_name: &str, data: &[u8]) {
+    // System realtime messages (single byte): MIDI clock from a DAW or
+    // any external device drives the metronome's tempo. A Stop message
+    // (0xFC) is honored too, for an immediate fallback to the internal
+    // tempo instead of the pulse timeout. The clock mode decides which
+    // input is accepted (see `MetronomeState::clock_accepts`).
+    if data.len() == 1 {
+        let metronome = app.state::<MetronomeState>();
+        match data[0] {
+            MIDI_CLOCK => metronome::on_clock_pulse(&metronome, input_name),
+            MIDI_START | MIDI_CONTINUE => metronome::on_clock_start(&metronome, input_name),
+            MIDI_STOP => metronome::on_clock_stop(&metronome, input_name),
+            _ => {}
+        }
+        return;
+    }
+
     if data.len() < 2 {
         return;
     }

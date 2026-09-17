@@ -203,6 +203,9 @@ invoke('get_config').then(config => {
     }
     ENABLED_SCALES.add('chromatic');
     document.querySelectorAll('.synth-block').forEach(el => refreshScaleSelects(el));
+    // Clock source of the metronome (master / slave), persisted by the
+    // backend and applied live on its side; the selects just reflect it.
+    hydrateClockMode(config.clock_mode, config.clock_source);
 }).catch(err => console.error('Error in get_config:', err));
 
 document.querySelector('#open-config-btn').addEventListener('click', () => {
@@ -218,6 +221,8 @@ window.addEventListener('locale-changed', () => {
     if (typeof syncLabels === 'function') syncLabels();
     if (lastDimensionsInfo) dimensionsInfo.textContent = t('controls.dimensionsInfo', lastDimensionsInfo);
     if (typeof syncPlayAllButton === 'function') syncPlayAllButton();
+    // The clock badge's label is locale-dependent too
+    if (typeof refreshClockBadge === 'function') refreshClockBadge();
 });
 
 // ---------- Contextual help mode (live-help button) ----------
@@ -372,8 +377,9 @@ let gridH = 1; // current grid height in pixels
 // Tracks the current cursor per synth for drawing: Map<id, cursor>
 const synthCursors = new Map();
 
-// Last tick's muted flag per synth, for the mirror: a muted pixel keeps
-// its recorded position but is not drawn
+// Last tick's muted flag per synth: a muted pixel keeps its recorded
+// position and stays drawn, at half opacity (main viewer and mirror
+// alike)
 const synthCursorMuted = new Map();
 
 function resizeOverlay() {
@@ -426,20 +432,20 @@ function drawSynthPixel(synthId, cursor, muted) {
         );
         // Redraw other synths that occupy this pixel
         synthCursors.forEach((c, sid) => {
-            if (sid !== synthId && c === prev) drawPixelAt(ctx, sid, c, offsetX, offsetY, cellW, cellH);
+            if (sid !== synthId && c === prev) drawPixelAt(ctx, sid, c, offsetX, offsetY, cellW, cellH, synthCursorMuted.get(sid));
         });
     }
 
     synthCursors.set(synthId, cursor);
     synthCursorMuted.set(synthId, !!muted);
-    if (!muted) drawPixelAt(ctx, synthId, cursor, offsetX, offsetY, cellW, cellH);
+    drawPixelAt(ctx, synthId, cursor, offsetX, offsetY, cellW, cellH, muted);
     pushMirrorCursors();
 }
 
-function drawPixelAt(ctx, synthId, cursor, offsetX, offsetY, cellW, cellH) {
+function drawPixelAt(ctx, synthId, cursor, offsetX, offsetY, cellW, cellH, muted) {
     const color = synthColors.get(synthId);
     if (!color) return;
-    drawCursorCell(ctx, { offsetX, offsetY, cellW, cellH, gridW }, { color, cursor });
+    drawCursorCell(ctx, { offsetX, offsetY, cellW, cellH, gridW }, { color, cursor, muted });
 }
 
 // Removes one synth's cursor from the cursor layer: erases its cell and
@@ -462,7 +468,7 @@ function eraseSynthCursor(synthId) {
         cellW + 2, cellH + 2
     );
     synthCursors.forEach((c, sid) => {
-        if (c === prev) drawPixelAt(ctx, sid, c, offsetX, offsetY, cellW, cellH);
+        if (c === prev) drawPixelAt(ctx, sid, c, offsetX, offsetY, cellW, cellH, synthCursorMuted.get(sid));
     });
 }
 
@@ -2614,16 +2620,15 @@ mirrorZonesBtn.addEventListener('click', () => {
 
 // Playhead cursors: the positions of every playing synth, pushed on
 // each tick (tiny payloads, low frequency — no throttling needed). A
-// muted pixel keeps its position but is not drawn, matching the main
-// viewer.
+// muted pixel keeps its position and is drawn at half opacity, matching
+// the main viewer.
 function pushMirrorCursors() {
     if (!mirrorOpen()) return;
     const cursors = [];
     synthCursors.forEach((cursor, sid) => {
-        if (synthCursorMuted.get(sid)) return;
         const color = synthColors.get(sid);
         if (!color) return;
-        cursors.push({ cursor, color });
+        cursors.push({ cursor, color, muted: !!synthCursorMuted.get(sid) });
     });
     emit('mirror:cursors', { cursors });
 }
@@ -2894,6 +2899,7 @@ document.addEventListener('wheel', (event) => {
                 : track.querySelector('input[type="range"]'))
             : event.target.closest('input[type="number"], input[type="range"]');
     if (!input) return;
+    if (input.disabled) return; // e.g. the BPM input while synced to a DAW
     event.preventDefault();
 
     // On macOS, Shift+scroll can translate the vertical gesture into
@@ -2946,6 +2952,125 @@ window.__TAURI__.event.listen('metronome-tick', (event) => {
     metronomeLed.classList.add('active');
     setTimeout(() => metronomeLed.classList.remove('active'), 100);
 });
+
+// DAW sync and master clock: while an external MIDI clock (24 ppqn)
+// streams in, the metronome follows it and the tempo controls are
+// disabled — the backend pushes the measured BPM so the display keeps
+// showing the DAW's tempo. When the clock stops, the controls are
+// released and the metronome keeps running at the last synced BPM. In
+// master mode the app broadcasts its own clock: the badge then shows
+// the master state, and the tempo controls stay active (the user is
+// the tempo's master).
+const syncBadge = document.querySelector('#sync-badge');
+const bpmUpBtn = document.querySelector('#bpm-up');
+const bpmDownBtn = document.querySelector('#bpm-down');
+const bpmControls = [bpmMinus10, bpmMinus5, bpmPlus5, bpmPlus10, bpmUpBtn, bpmDownBtn];
+
+let metronomeSynced = false;
+let metronomeMaster = false;
+
+function setMetronomeSynced(synced, bpm) {
+    metronomeSynced = synced;
+    if (synced && Number.isFinite(bpm)) {
+        bpmInput.value = clampBpm(bpm);
+    }
+    bpmInput.disabled = synced;
+    bpmControls.forEach(btn => { btn.disabled = synced; });
+    refreshClockBadge();
+}
+
+// The badge reflects the current clock state: "Sync DAW" (tempo
+// controls locked) or "Clock master" (broadcasting to the outputs).
+// The data-i18n-title follows so the contextual help matches the state.
+function refreshClockBadge() {
+    const master = metronomeMaster && !metronomeSynced;
+    syncBadge.classList.toggle('master', master);
+    syncBadge.classList.toggle('hidden', !(metronomeSynced || metronomeMaster));
+    syncBadge.textContent = t(master ? 'metronome.masterBadge' : 'metronome.syncBadge');
+    syncBadge.title = t(master ? 'metronome.masterBadge' : 'metronome.syncBadge');
+    syncBadge.dataset.i18nTitle = master ? 'metronome.masterBadge' : 'metronome.syncBadge';
+}
+
+listen('metronome-sync', (event) => {
+    const { synced, bpm, master } = event.payload;
+    if (master !== undefined) metronomeMaster = Boolean(master);
+    setMetronomeSynced(Boolean(synced), Number(bpm));
+});
+
+// ---------- Clock source (master / slave) ----------
+const clockModeSelect = document.querySelector('#clock-mode-select');
+const clockSourceSelect = document.querySelector('#clock-source-select');
+
+const CLOCK_MODES = ['off', 'auto', 'input', 'master'];
+// Persisted source applied once the port list is populated (both arrive
+// asynchronously); null = nothing pending.
+let pendingClockSource = null;
+let clockPortsLoaded = false;
+
+function updateClockSourceVisibility() {
+    clockSourceSelect.classList.toggle('hidden', clockModeSelect.value !== 'input');
+}
+
+// Applies the config's clock mode/source to the selects once both are
+// known: the mode select directly, the source once the port list has
+// arrived (the stored port may have disappeared since).
+function hydrateClockMode(mode, source) {
+    clockModeSelect.value = CLOCK_MODES.includes(mode) ? mode : 'auto';
+    if (source) {
+        pendingClockSource = source;
+        applyPendingClockSource();
+    }
+    updateClockSourceVisibility();
+}
+
+function applyPendingClockSource() {
+    if (pendingClockSource === null || !clockPortsLoaded) return;
+    const name = pendingClockSource;
+    pendingClockSource = null;
+    const option = clockSourceSelect.querySelector(`option[value="${CSS.escape(name)}"]`);
+    if (option) {
+        clockSourceSelect.value = name;
+    } else {
+        // The saved input port no longer exists (device unplugged, or no
+        // input port at all): revert to Auto on both sides, the backend
+        // included (the change persists, like any mode change)
+        clockModeSelect.value = 'auto';
+        updateClockSourceVisibility();
+        invoke('set_clock_mode', { mode: 'auto', source: null })
+            .catch(err => console.error('Error in set_clock_mode:', err));
+    }
+}
+
+// Input ports offered as the sync source, populated once at startup
+// (the backend opens every input port for the app's lifetime). The
+// app's own virtual port is the route a DAW's MIDI clock takes.
+invoke('list_midi_input_ports').then(ports => {
+    clockSourceSelect.innerHTML = ports.map(p =>
+        `<option value="${p.name}">${p.isVirtual ? t('metronome.virtualSource') : p.name}</option>`
+    ).join('');
+    // Without any input port the "Source…" mode is meaningless
+    clockModeSelect.querySelector('option[value="input"]').disabled = ports.length === 0;
+    clockPortsLoaded = true;
+    applyPendingClockSource();
+}).catch(err => console.error('Error in list_midi_input_ports:', err));
+
+function applyClockMode() {
+    const mode = clockModeSelect.value;
+    updateClockSourceVisibility();
+    // Guard: "Source…" needs a selected port (an empty list disables the
+    // option, but stay safe against a stale select)
+    if (mode === 'input' && !clockSourceSelect.value) {
+        clockModeSelect.value = 'auto';
+        return;
+    }
+    invoke('set_clock_mode', {
+        mode,
+        source: mode === 'input' ? clockSourceSelect.value : null,
+    }).catch(err => console.error('Error in set_clock_mode:', err));
+}
+
+clockModeSelect.addEventListener('change', applyClockMode);
+clockSourceSelect.addEventListener('change', applyClockMode);
 
 // Programs learned from the MIDI input (Program Change / Bank Select
 // turned on the instruments): update the map and every synth concerned.
@@ -3534,20 +3659,29 @@ function createSynthElement(id, cfg = null) {
     });
 
     // MIDI output port: one connection per port is opened lazily by the
-    // backend, so several synths can drive different MIDI interfaces.
+    // backend, so several synths can drive different MIDI interfaces. The
+    // app's own virtual port (shown first, for routing into a DAW) is
+    // labeled through i18n; physical ports keep their system name.
     const midiPortSelect = el.querySelector('.synth-midi-port');
     invoke('list_midi_ports').then(ports => {
-        midiPortSelect.innerHTML = ports.length > 0
-            ? ports.map(p => `<option value="${p.index}">${p.name}</option>`).join('')
-            : `<option value="0">${t('synth.noMidiPort')}</option>`;
-        // Reflect the template's port; if it no longer exists (interface
-        // unplugged), fall back to port 0 on both sides.
-        if (cfg && ports.some(p => p.index === cfg.midi_port)) {
-            midiPortSelect.value = String(cfg.midi_port);
-        } else if (cfg && cfg.midi_port > 0) {
-            midiPortSelect.value = '0';
-            invoke('set_synth_midi_port', { id, port: 0 })
-                .catch(err => console.error('Error in set_synth_midi_port:', err));
+        if (ports.length === 0) {
+            midiPortSelect.innerHTML = `<option value="0">${t('synth.noMidiPort')}</option>`;
+        } else {
+            midiPortSelect.innerHTML = ports.map(p =>
+                `<option value="${p.index}">${p.isVirtual ? t('synth.virtualPort') : p.name}</option>`
+            ).join('');
+            // Reflect the template's port; if it no longer exists
+            // (interface unplugged), fall back to the virtual port when
+            // available, otherwise to the first physical port — on both
+            // sides of the UI/backend boundary.
+            if (cfg && !ports.some(p => p.index === cfg.midi_port)) {
+                const fallback = ports.find(p => p.isVirtual) || ports[0];
+                midiPortSelect.value = String(fallback.index);
+                invoke('set_synth_midi_port', { id, port: fallback.index })
+                    .catch(err => console.error('Error in set_synth_midi_port:', err));
+            } else if (cfg) {
+                midiPortSelect.value = String(cfg.midi_port);
+            }
         }
         // The program display depends on the port: refresh it now that
         // the select has its final value.
@@ -4039,8 +4173,6 @@ async function startSynthPlayback(id, el) {
     await ensureMetronomeStarted();
     await invoke('start_synth', { id });
     setSynthPlaying(id, true);
-    // Hide the highlight during playback
-    hideHighlightForPlay(id, el);
     // Lock this synth's controls while it is playing
     setSynthControlsLocked(el, true);
     updateImageControlsLockState();
@@ -4049,8 +4181,6 @@ async function startSynthPlayback(id, el) {
 async function stopSynthPlayback(id, el) {
     await invoke('stop_synth', { id });
     setSynthPlaying(id, false);
-    // Show the highlight again if the eye button is active
-    restoreHighlightAfterStop(id, el);
     await stopMetronomeIfIdle();
     // Unlock this synth's controls
     setSynthControlsLocked(el, false);
@@ -4064,32 +4194,6 @@ function syncEyeButton(el, visible) {
     if (btn) btn.classList.toggle('active', visible);
 }
 
-function hideHighlightForPlay(id, el) {
-    const hi = synthHighlights.get(id);
-    if (!hi) return;
-    // Don't hide the zones of a synth whose picking mode is armed: the
-    // user is editing its zone selection and needs to see it
-    if (zonePickState && zonePickState.id === id) return;
-    hi._wasVisible = hi.visible; // remember the state
-    if (hi.visible) {
-        hi.visible = false;
-        syncEyeButton(el, false);
-        redrawAllHighlights();
-    }
-}
-
-function restoreHighlightAfterStop(id, el) {
-    const hi = synthHighlights.get(id);
-    if (!hi) return;
-    if (hi._wasVisible) {
-        hi.visible = true;
-        hi._wasVisible = false;
-        syncEyeButton(el, true);
-        redrawAllHighlights();
-    }
-    // Clear this synth's cursor from the cursor layer
-    eraseSynthCursor(id);
-}
 
 // ---------- Tab drag & drop (stack reordering) ----------
 // Reorders the synths by dragging a tab's handle. The tabs move live
@@ -4370,7 +4474,6 @@ window.__TAURI__.event.listen('synth-stopped', async (event) => {
     if (!el) return;
     setSynthPlaying(id, false);
     eraseSynthCursor(id);
-    restoreHighlightAfterStop(id, el);
     syncPlayAllButton();
     await stopMetronomeIfIdle();
     // Unlock this synth's controls

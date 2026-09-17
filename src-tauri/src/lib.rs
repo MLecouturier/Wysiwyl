@@ -7,10 +7,10 @@ pub mod session;
 pub mod state;
 pub mod synth;
 
-use tauri::Manager;
 use config::ConfigState;
 use metronome::MetronomeState;
-use state::{ImageState, SynthState, MidiState};
+use state::{ImageState, MidiState, SynthState};
+use tauri::Manager;
 
 pub fn run() {
     tauri::Builder::default()
@@ -27,6 +27,10 @@ pub fn run() {
             let midi_state = app.state::<MidiState>();
             midi::auto_connect(&midi_state);
             midi::start_midi_input_listeners(app.handle(), &midi_state);
+            // The app's own virtual MIDI input port, for a DAW to send its
+            // MIDI clock straight to Wysiwyl (Unix only)
+            #[cfg(unix)]
+            midi::start_virtual_input_listener(app.handle());
 
             // Load the persisted configuration and apply it
             let loaded = config::load_config(app.handle());
@@ -34,9 +38,11 @@ pub fn run() {
                 let config_state = app.state::<ConfigState>();
                 *config_state.config.lock().unwrap() = loaded.clone();
             }
-            app.state::<MetronomeState>()
+            let metronome_state = app.state::<MetronomeState>();
+            metronome_state
                 .bpm
                 .store(loaded.default_bpm, std::sync::atomic::Ordering::Relaxed);
+            metronome_state.apply_clock_mode(loaded.clock_mode, loaded.clock_source.clone());
 
             Ok(())
         })
@@ -53,6 +59,7 @@ pub fn run() {
             image_processing::apply_image_transform,
             image_processing::apply_image_adjustments,
             midi::list_midi_ports,
+            midi::list_midi_input_ports,
             midi::get_known_programs,
             synth::set_synth_program,
             session::save_session,
@@ -60,6 +67,7 @@ pub fn run() {
             metronome::start_metronome,
             metronome::stop_metronome,
             metronome::set_metronome_bpm,
+            metronome::set_clock_mode,
             metronome::is_metronome_running,
             metronome::step_synth,
             synth::add_synth,

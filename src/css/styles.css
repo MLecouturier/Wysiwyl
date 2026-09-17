@@ -438,6 +438,10 @@ button.toggle-btn.active:hover {
   -webkit-appearance: none;
   margin: 0;
 }
+.metronome-controls .metronome-bpm .bpm-input-group .bpm-input-wrapper .bpm-input:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 .metronome-controls .metronome-bpm .bpm-input-group .bpm-input-wrapper .bpm-spinner {
   position: absolute;
   top: 1px;
@@ -468,6 +472,10 @@ button.toggle-btn.active:hover {
 .metronome-controls .metronome-bpm .bpm-input-group .bpm-input-wrapper .bpm-spinner .bpm-spinner-btn:active {
   color: #3a7bd5;
 }
+.metronome-controls .metronome-bpm .bpm-input-group .bpm-input-wrapper .bpm-spinner .bpm-spinner-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 .metronome-controls .metronome-bpm .bpm-input-group .bpm-step {
   padding: 0.125rem 6px;
   font-size: 0.85em;
@@ -482,6 +490,22 @@ button.toggle-btn.active:hover {
   background-color: #555;
   color: #e0e0e0;
 }
+.metronome-controls .metronome-bpm .bpm-input-group .bpm-step:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.metronome-controls .metronome-bpm .sync-badge {
+  align-self: flex-start;
+  padding: 0.125rem 0.5rem;
+  font-size: 0.8em;
+  border-radius: 0.25rem;
+  background-color: #3a7bd5;
+  color: #1e1e1e;
+  cursor: help;
+}
+.metronome-controls .metronome-bpm .sync-badge.master {
+  background-color: #219a52;
+}
 .metronome-controls .led {
   width: 1.5rem;
   height: 1.5rem;
@@ -493,6 +517,22 @@ button.toggle-btn.active:hover {
 .metronome-controls .led.active {
   background-color: #219a52;
   box-shadow: 0 0 0.5rem #219a52;
+}
+
+.metronome-clock {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+.metronome-clock select {
+  max-width: 12rem;
+  padding: 0.125rem 0.375rem;
+  font-size: 0.85em;
+  flex: 1 1 0;
+}
+.metronome-clock select#clock-mode-select {
+  flex: 0 0 auto;
 }
 
 .synth-list {
@@ -2044,4 +2084,6 @@ button.toggle-btn.active:hover {
 
 .pointer-events-auto {
   pointer-events: auto;
-}/*# sourceMappingURL=styles.css.map */
+}
+
+/*# sourceMappingURL=styles.css.map */

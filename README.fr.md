@@ -51,6 +51,16 @@ Vous pouvez créer autant de synthétiseurs indépendants que vous le souhaitez,
 - Connexion automatique au premier port de sortie MIDI disponible au démarrage ; chaque synthétiseur peut être routé vers son propre port, les connexions étant ouvertes paresseusement à la première utilisation.
 - Messages Note On / Note Off en temps réel : chaque pixel est joué comme une note possédant sa propre durée, avec extinction propre des notes à l'arrêt d'un synthétiseur ou lors d'un changement de mode. Le moteur bat au quart de temps afin que croches et doubles croches restent précises.
 
+### Utiliser Wysiwyl avec un DAW
+
+Wysiwyl expose tout ce dont un DAW a besoin, sans matériel requis (macOS et Linux) :
+
+- **Port MIDI virtuel** — l'application crée au démarrage son propre port de sortie virtuel, « Wysiwyl », affiché en tête du menu des ports de chaque synthétiseur. Il apparaît dans votre DAW comme une entrée MIDI : sélectionnez-le comme source d'une piste instrument, et Wysiwyl pilote l'instrument logiciel de cette piste. Un utilisateur sans synthé physique peut donc composer avec Wysiwyl et entendre le résultat via le DAW.
+- **Synchro de tempo (MIDI clock)** — l'application crée également un port d'*entrée* virtuel, lui aussi nommé « Wysiwyl ». Dirigez-y la sortie MIDI clock de votre DAW (Ableton Live : Préférences → Link/Tempo/MIDI → sortie de synchro MIDI ; Bitwig, Reaper, Logic : destination MIDI clock/sync) et le métronome suit automatiquement le tempo du projet : un badge « Synchro DAW » apparaît, les contrôles de tempo sont désactivés tant que l'horloge coule, et les pas de lecture s'alignent sur la grille de doubles croches du projet. Le tempo est appris depuis l'horloge à 24 ppqn et lissé ; un message Start/Continue réaligne la grille sur les temps du projet. Quand le DAW cesse d'envoyer l'horloge, le métronome continue au dernier tempo synchronisé et les contrôles sont relibérés.
+- **Ableton Live sur macOS** — Live ne liste pas les ports MIDI créés par d'autres applications, dans aucun sens. Pour travailler avec Live, activez le bus IAC (Configuration Audio MIDI → double-clic sur « Pilote IAC » → « L'appareil est en ligne ») : le bus IAC apparaît dans Wysiwyl comme un port de sortie ordinaire pour les notes, et le DAW route son MIDI clock vers ce même bus pour la synchro de tempo.
+- **Windows** — le backend WinMM n'a pas de ports virtuels : utilisez un bus loopMIDI, à la fois pour les notes (créez un bus, il apparaît comme port de sortie dans Wysiwyl et comme entrée MIDI dans le DAW) et pour l'horloge (routez le MIDI clock du DAW vers ce bus ; Wysiwyl écoute tous les ports d'entrée).
+- Démarrer et arrêter la lecture des synthétiseurs se fait toujours depuis Wysiwyl : le DAW est le maître du tempo, pas celui du transport.
+
 ### Sessions de travail
 
 - **Sauvegarde de l'état complet** dans un unique fichier `.wysiwyl` autoportant (boîte de dialogue d'enregistrement native) : l'image originale (embarquée en base64 PNG), les réglages de traitement d'image, le tempo du métronome, et chaque synthétiseur avec sa configuration complète (nom, couleur, zones, tempo, mode, longueurs de note, plages MIDI, seuils, vélocité, canal et port MIDI, sens de lecture, lecture triée, boucle/aller-retour).

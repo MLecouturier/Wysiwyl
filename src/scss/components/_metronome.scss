@@ -50,6 +50,13 @@ $metronome-led-transition: 0.05s ease;
                         -webkit-appearance: none;
                         margin: 0;
                     }
+
+                    // Disabled while the metronome follows a DAW's MIDI
+                    // clock (the sync badge then carries the state)
+                    &:disabled {
+                        opacity: .45;
+                        cursor: not-allowed;
+                    }
                 }
 
                 // Custom ±1 spinners replacing the native (uncolorable) ones
@@ -78,6 +85,10 @@ $metronome-led-transition: 0.05s ease;
 
                         &:hover { color: $color-text-primary; }
                         &:active { color: $color-accent; }
+                        &:disabled {
+                            opacity: .45;
+                            cursor: not-allowed;
+                        }
                     }
                 }
             }
@@ -96,9 +107,29 @@ $metronome-led-transition: 0.05s ease;
                     background-color: $color-bg-neutral-hover;
                     color: $color-text-primary;
                 }
+
+                // Disabled while the metronome follows a DAW's MIDI clock
+                // (the sync badge below then carries the state)
+                &:disabled {
+                    opacity: .45;
+                    cursor: not-allowed;
+                }
             }
+        }
 
+        // "Synced to DAW" badge, shown while an external MIDI clock
+        // drives the tempo (blue: the sync mode is currently active);
+        // green in master mode, while the app broadcasts its own clock
+        .sync-badge {
+            align-self: flex-start;
+            padding: .125rem .5rem;
+            font-size: .8em;
+            border-radius: $border-radius-base;
+            background-color: $color-accent;
+            color: $color-bg-dark;
+            cursor: help;
 
+            &.master { background-color: $color-accent-alt; }
         }
     }
 
@@ -114,5 +145,25 @@ $metronome-led-transition: 0.05s ease;
             background-color: $metronome-led-on;
             box-shadow: 0 0 .5rem $metronome-led-on;
         }
+    }
+}
+
+// Clock source row: the metronome's timing master (internal, auto sync,
+// one input port, or master broadcast) and, in "Source…" mode, the input
+// port whose clock is followed
+.metronome-clock {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    margin-top: .5rem;
+
+    select {
+        max-width: 12rem;
+        padding: .125rem .375rem;
+        font-size: .85em;
+        flex: 1 1 0;
+
+        // The mode select only carries a fixed set of short labels
+        &#clock-mode-select { flex: 0 0 auto; }
     }
 }

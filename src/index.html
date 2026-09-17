@@ -154,7 +154,10 @@
                                 </button>
                             </div>
                             <div class="header-area" id="metronome">
-                                <h2 data-i18n="metronome.title"></h2>
+                                <h2 data-i18n="metronome.title">
+                                    <span id="sync-badge" class="sync-badge hidden" data-i18n="metronome.syncBadge" data-i18n-title="metronome.syncBadge"></span>
+                                </h2>
+                                
                                 <div class="metronome-controls">
                                     <div class="metronome-bpm">
                                         <!-- <label for="bpm-input" data-i18n="metronome.tempo"></label> -->
@@ -178,6 +181,16 @@
                                     </div>
 
                                     <div id="metronome-led" class="led"></div>
+                                </div>
+
+                                <div class="metronome-clock">
+                                    <select id="clock-mode-select" data-i18n-title="metronome.clockMode">
+                                        <option value="off" data-i18n="metronome.clockOff"></option>
+                                        <option value="auto" data-i18n="metronome.clockAuto" selected></option>
+                                        <option value="input" data-i18n="metronome.clockInput"></option>
+                                        <option value="master" data-i18n="metronome.clockMaster"></option>
+                                    </select>
+                                    <select id="clock-source-select" data-i18n-title="metronome.clockSource" class="hidden"></select>
                                 </div>
                             </div>
 

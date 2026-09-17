@@ -51,6 +51,18 @@ You can create any number of independent synthesizers, each reading the pixel gr
 - Automatic connection to the first available MIDI output port on startup; every synthesizer can be routed to its own port, with connections opened lazily on first use.
 - Real-time Note On / Note Off messages: each pixel is played as a note with its own duration, with clean note-offs when stopping a synthesizer or switching modes. The engine ticks at a quarter-beat resolution so eighth and sixteenth note lengths stay accurate.
 
+### Using Wysiwyl with a DAW
+
+Wysiwyl exposes everything a DAW needs, with no hardware device required (macOS and Linux):
+
+- **Virtual MIDI port** — the app's own virtual output port, "Wysiwyl", is created at startup and listed first in every synthesizer's port menu. It shows up in your DAW as a MIDI input: select it as the source of an instrument track, and Wysiwyl drives the track's software instrument. A user with no physical synth can therefore compose with Wysiwyl and hear it through the DAW.
+- **Tempo sync (MIDI clock)** — the app also creates a virtual *input* port, likewise named "Wysiwyl". Point your DAW's MIDI clock output at it (Ableton Live: Preferences → Link/Tempo/MIDI → MIDI Sync Output; Bitwig, Reaper, Logic: MIDI clock/sync destination) and the metronome automatically follows the DAW's project tempo: a "Sync DAW" badge appears, the tempo controls are disabled while the clock streams, and playback steps align with the project's sixteenth-note grid. The tempo is learned from the 24 ppqn clock and smoothed; a Start/Continue message realigns the grid with the project's beats, a Stop message releases the sync immediately. When the DAW stops sending clock, the metronome keeps running at the last synced tempo and the controls are released.
+- **Clock source** — the metronome block offers a clock source setting, persisted in the configuration file, with four modes: *Internal* (the tempo set in Wysiwyl is the only master, incoming clocks are ignored), *Auto sync* (the default, historical behavior described above: any incoming clock is followed), *Source…* (only the MIDI clock received on the chosen input port is followed — other devices streaming a clock are ignored), and *Master* (see below).
+- **Master clock** — in *Master* mode Wysiwyl becomes the tempo master: it broadcasts its own MIDI clock (24 ppqn) to every MIDI output port — including the virtual "Wysiwyl" port and physical interfaces — while at least one synthesizer plays, so external hardware sequencers, arpeggiators and DAWs that follow an external clock play at the tempo set in Wysiwyl. A Start message is sent when playback begins and a Stop when it ends; the tempo controls stay active and drive every follower live. The clock streams only while a synth plays, following Wysiwyl's own playback lifecycle. The timing engine is sleep-based: the resulting jitter (about a millisecond) is fine for instruments and typical workflows, but a sample-accurate DAW sync would require a dedicated audio-clock.
+- **Ableton Live on macOS** — Live does not list MIDI ports created by other applications, in either direction. To work with Live, enable the IAC bus (Audio MIDI Setup → double-click "IAC Driver" → "Device is online"): the IAC bus appears in Wysiwyl as an ordinary output port for the notes, and the DAW routes its MIDI clock to the IAC bus for the tempo sync. In master mode, Live and the hardware instruments can conversely follow Wysiwyl's clock through the same IAC bus.
+- **Windows** — the WinMM backend has no virtual ports: use a loopMIDI bus instead, both for the notes (create a bus, it appears as an output port in Wysiwyl and a MIDI input in the DAW) and for the clock (route the DAW's MIDI clock to the same loopMIDI bus; Wysiwyl listens to every input port).
+- Stopping and starting playback of the Wysiwyl synthesizers remains done from Wysiwyl: whatever the clock mode, the transport of Wysiwyl's own synthesizers is never driven by an external device — the clock only carries the tempo (and, in master mode, Wysiwyl's playback state for external followers).
+
 ### Work Sessions
 
 - **Save the whole state** into a single self-contained `.wysiwyl` file (native save dialog): the original image (embedded as base64 PNG), the image processing settings, the metronome tempo, and every synthesizer with its full configuration (name, color, zones, tempo, mode, note lengths, note ranges, thresholds, velocity, MIDI channel and port, reading direction, sorted reading, loop/back-and-forth).
@@ -62,6 +74,8 @@ A JSON configuration file (opened with a gear button in the application settings
 
 - **`max_image_size`** — longest side allowed for imported images; larger originals are downscaled on import (0 = unlimited).
 - **`default_bpm`** — metronome tempo used at startup.
+- **`clock_mode`** — the metronome's clock source: `auto` (follow any incoming MIDI clock, the default), `off` (internal tempo only), `input` (follow the clock of `clock_source`) or `master` (broadcast a MIDI clock to every output port while playing). Set from the metronome block in the UI, which persists it here.
+- **`clock_source`** — input port name the clock sync follows when `clock_mode` is `input`.
 - **`default_synth`** — template applied to every newly created synthesizer; any existing synth can be saved as the template with its bookmark button ("Use this synth as the default template").
 
 ## Tech Stack

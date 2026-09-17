@@ -44,7 +44,16 @@
   },
   "metronome": {
     "title": "Tempo (BPM)",
-    "tempo": "Tempo (BPM)"
+    "tempo": "Tempo (BPM)",
+    "syncBadge": "Sync DAW",
+    "masterBadge": "Clock master",
+    "clockMode": "Clock source",
+    "clockOff": "Internal",
+    "clockAuto": "Auto sync",
+    "clockInput": "Source…",
+    "clockMaster": "Master",
+    "clockSource": "Sync source: the MIDI input port whose clock is followed",
+    "virtualSource": "Wysiwyl (virtual — DAW)"
   },
   "synthList": {
     "title": "Synth·s",
@@ -91,6 +100,7 @@
     "channelLabel": "MIDI channel",
     "channelOption": "CH {number}",
     "midiPort": "MIDI output port",
+    "virtualPort": "Wysiwyl (virtual — DAW)",
     "noMidiPort": "No MIDI port",
     "modeLabel": "Mode",
     "modeMonophonic": "Monophonic",
@@ -177,7 +187,11 @@
     "synthList.add": "Adds a new synthesizer. Each synth owns its zones on the image and plays in parallel with the others.",
     "synthList.playAllStart": "Starts every synth playing at once, or stops everything if at least one is already running.",
     "synthList.panic": "Immediately cuts all sounding MIDI notes. Useful if an external synthesizer is stuck on a note.",
-    "synth.midiPort": "MIDI output port used by this synth: pick here the hardware or software instrument to drive.",
+    "synth.midiPort": "MIDI output port used by this synth: pick here the hardware or software instrument to drive. The \"Wysiwyl (virtual — DAW)\" port shows up as a MIDI input in your DAW (Ableton Live on macOS can't see virtual ports: use the IAC bus instead, see the README): select it as the MIDI source of an instrument track to drive a software instrument of the project.",
+    "metronome.syncBadge": "The metronome follows the MIDI clock of a DAW or external device: the displayed tempo is the project's, and the tempo controls are disabled while the sync lasts. When the clock stops, the metronome keeps running at the last synced tempo and the controls are released.",
+    "metronome.clockMode": "Source of the metronome's timing. Internal: the tempo set here is the only master. Auto sync: any incoming MIDI clock (a DAW's, an instrument's) takes over the tempo as long as it streams — this is the historical default behavior. Source…: only the MIDI clock received on the chosen input port is followed, other devices are ignored. Master: the app broadcasts its own MIDI clock (24 pulses per quarter note) to every MIDI output while a synth plays, with a Start on playback begin and a Stop on end, so external sequencers and arpeggiators follow this tempo.",
+    "metronome.clockSource": "The MIDI input port whose MIDI clock the metronome follows in “Source…” mode. The “Wysiwyl (virtual — DAW)” entry is the app's own port, the one a DAW sends its sync to; the other entries are physical inputs, typically an instrument or interface clock.",
+    "metronome.masterBadge": "The metronome broadcasts its own MIDI clock to every MIDI output: external devices and DAWs following it play at the tempo set here. The clock streams while at least one synth plays, with a Start message when playback begins and a Stop when it ends. The tempo controls stay active: they drive every follower live.",
     "synth.renameHint": "Double-click the synth's name to rename it.",
     "synth.dragHandle": "Drag to move this synth in the stack; the whole stack is renumbered accordingly.",
     "synth.saveAsTemplate": "Makes this synth the default template: every new synth will inherit its settings (mode, note range, note lengths, thresholds…).",
