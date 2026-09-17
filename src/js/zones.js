@@ -15,12 +15,10 @@ export function nextZoneOrder() {
 }
 
 // Seeds the counter past every order already in use.
-export function seedZoneOrder(zonesLists) {
+export function seedZoneOrder(zones) {
     let max = 0;
-    for (const zones of zonesLists) {
-        for (const z of zones) {
-            if (Number.isFinite(z?.order) && z.order > max) max = z.order;
-        }
+    for (const z of zones) {
+        if (Number.isFinite(z?.order) && z.order > max) max = z.order;
     }
     orderCounter = max + 1;
 }

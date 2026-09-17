@@ -542,49 +542,6 @@ pub(crate) fn remapped_cursor(
     new_seq.iter().position(|&p| p == pixel).unwrap_or(0)
 }
 
-/// Remaps the playhead across a grid-size change (`set_grid_width`):
-/// unlike `remapped_cursor`, the sequences live on different grids, so
-/// the pixel under the playhead is first decoded on the old grid, then
-/// repositioned proportionally onto the new one, and finally located in
-/// the new sequence. When that exact pixel is no longer selected (it
-/// fell outside the remapped zones), the playhead keeps its relative
-/// position in the sequence instead of restarting at 0, so the reading
-/// continues where it was.
-pub(crate) fn remapped_cursor_for_grid(
-    synth: &Synth,
-    old_zones: &[Zone],
-    new_zones: &[Zone],
-    old_w: usize,
-    old_h: usize,
-    new_w: usize,
-    new_h: usize,
-    direction: ReadingDirection,
-    sorted: bool,
-) -> usize {
-    let old_seq = build_pixel_sequence(old_zones, old_w, old_h, direction, sorted);
-    if old_seq.is_empty() {
-        return 0;
-    }
-    let old_pos = synth.cursor % old_seq.len();
-    let pixel = old_seq[old_pos];
-
-    let new_seq = build_pixel_sequence(new_zones, new_w, new_h, direction, sorted);
-    if new_seq.is_empty() {
-        return 0;
-    }
-
-    // Same pixel, proportionally repositioned on the new grid
-    let x = pixel % old_w;
-    let y = pixel / old_w;
-    let nx = ((x as f64) * (new_w as f64) / (old_w as f64)).round() as usize;
-    let ny = ((y as f64) * (new_h as f64) / (old_h as f64)).round() as usize;
-    let target = ny.min(new_h - 1) * new_w + nx.min(new_w - 1);
-    new_seq
-        .iter()
-        .position(|&p| p == target)
-        .unwrap_or(old_pos * new_seq.len() / old_seq.len())
-}
-
 /// Plays the pixel at the synth's current playhead position, then advances
 /// the playhead by one pixel in its zone sequence (MIDI notes + UI payload),
 /// exactly like a metronome tick would. Used both by the metronome thread
@@ -1564,62 +1521,6 @@ mod tests {
     use super::*;
 
     const BOUNDS: [(u8, u8); 3] = [(21, 47), (48, 71), (72, 108)];
-
-    #[test]
-    fn remapped_cursor_for_grid_follows_the_same_pixel() {
-        // Full-image selection, LeftToRight: the playhead is on pixel
-        // (x=4, y=2) of a 10x5 grid; on a 20x10 grid the same spot is
-        // (x=8, y=4), i.e. sequence index 4*20+8 = 88
-        let mut synth = Synth::new(1);
-        synth.cursor = 2 * 10 + 4; // pixel (x=4, y=2) on the 10-wide grid
-        let zone = Zone::from_rect(0, 0, 0, 10, 5);
-        let cursor = remapped_cursor_for_grid(
-            &synth, &[zone.clone()], &[zone], 10, 5, 20, 10,
-            ReadingDirection::LeftToRight, false,
-        );
-        // Same spot on the new grid: (x=8, y=4); the returned value is
-        // an index into the new sequence, where that pixel sits at row
-        // 4, column 8 of the zone (10 cells per row)
-        assert_eq!(cursor, 4 * 10 + 8);
-    }
-
-    #[test]
-    fn remapped_cursor_for_grid_keeps_relative_position_on_lost_pixel() {
-        // The played pixel falls outside the new zones: the playhead
-        // keeps its relative position in the sequence (here halfway)
-        let mut synth = Synth::new(1);
-        let full = Zone::from_rect(0, 0, 0, 10, 2);
-        let half = Zone::from_rect(0, 0, 0, 5, 2);
-        // LeftToRight over 20 pixels; cursor 10 = start of row 2
-        synth.cursor = 10;
-        let cursor = remapped_cursor_for_grid(
-            &synth, &[full], &[half], 10, 2, 10, 2,
-            ReadingDirection::LeftToRight, false,
-        );
-        assert_eq!(cursor, 5); // 10 * 10 / 20
-    }
-
-    #[test]
-    fn remapped_cursor_for_grid_returns_zero_on_empty_sides() {
-        let synth = Synth::new(1);
-        let zone = Zone::from_rect(0, 0, 0, 4, 4);
-        // Old sequence empty → 0
-        assert_eq!(
-            remapped_cursor_for_grid(
-                &synth, &[], &[zone.clone()], 4, 4, 8, 8,
-                ReadingDirection::LeftToRight, false,
-            ),
-            0
-        );
-        // New sequence empty → 0
-        assert_eq!(
-            remapped_cursor_for_grid(
-                &synth, &[zone], &[], 4, 4, 8, 8,
-                ReadingDirection::LeftToRight, false,
-            ),
-            0
-        );
-    }
 
     #[test]
     fn relative_mapping_rescales_saturation_onto_the_bounds() {

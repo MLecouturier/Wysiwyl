@@ -1,5 +1,5 @@
 import { initI18n, t, translateError, getLocale, setLocale, AVAILABLE_LOCALES, applyTranslations } from './i18n.js';
-import { computeLayout, cellSetFromZones, drawZones, drawCursorCell } from './viewer-render.js';
+import { computeLayout, cellSetFromZones, drawZones, drawCursorCell, MUTE_GLYPH } from './viewer-render.js';
 import {
     seedZoneOrder, rectZone, zoneCellSet, zoneContains,
     zoneIntersectsRect, zonesPixelCount, rebuildZones,
@@ -360,11 +360,11 @@ const dimensionsInfo  = document.querySelector('#dimensions-info');
 // (the "Show original" button is intentionally excluded, and the value
 // sliders contrast/brightness/vibrance/posterize/texture/clarity/simplify —
 // plus the auto-levels toggle — stay editable: they only change pixel
-// values, which the playback step re-reads fresh. The grid width slider
-// is also unlocked: the column-count change goes through the atomic
-// set_grid_width command — whether synths play or not — which
-// repositions the zones and the playheads without stopping anything)
-const imageLockControls = [loadBtn, resetBtn, rotateBtn, cropBtn, transformBtn];
+// values, which the playback step re-reads fresh. The grid width is
+// locked: resizing the grid while synths play would move their zones
+// and playheads mid-flight; at rest the zones simply stay where they
+// are — clipped to the new grid, erased when fully outside)
+const imageLockControls = [loadBtn, resetBtn, rotateBtn, cropBtn, transformBtn, gridSlider];
 
 // True while at least one synthesizer is playing
 function anySynthPlaying() {
@@ -1339,6 +1339,14 @@ new ResizeObserver(() => {
         drawCropOverlay();
     }
     else if (transformActive) redrawTransformOverlay();
+    else {
+        // Resizing the canvases wiped their content: the persistent
+        // highlights must be repainted — without this, any layout
+        // change (window resize, synth list growing past the fold — a
+        // session load reflows the page) erases the zones until the
+        // next edit. Active playheads come back on the next tick.
+        redrawAllHighlights();
+    }
 }).observe(pixelOverlay);
 
 // ---------- State ----------
@@ -1627,100 +1635,6 @@ let debounceId = null;
 function scheduleRefresh(delay = 60) {
   clearTimeout(debounceId);
   debounceId = setTimeout(refresh, delay);
-}
-
-// ---------- Column-count change (the single path, playing or not) ----------
-// set_grid_width re-renders the image, repositions every synth's zones
-// (relative position kept, size fixed, overlapping zones fused) and
-// remaps the playheads atomically on the backend — the same behavior
-// whether synths are playing or not. The response packs the rendered
-// pixels for the viewer and the effective zones as JSON:
-// [8-byte w/h header][RGBA bytes][4-byte JSON length][JSON].
-function decodeGridChangeResponse(buf) {
-    const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
-    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    const width = view.getUint32(0, true);
-    const height = view.getUint32(4, true);
-    const rgbaLen = width * height * 4;
-    const rgba = new Uint8ClampedArray(bytes.buffer, bytes.byteOffset + 8, rgbaLen);
-    const jsonLen = view.getUint32(8 + rgbaLen, true);
-    const jsonStart = 8 + rgbaLen + 4;
-    const decoder = new TextDecoder();
-    const meta = JSON.parse(decoder.decode(bytes.subarray(jsonStart, jsonStart + jsonLen)));
-    return {
-        pixels: { width, height, rgba },
-        width: meta.width,
-        height: meta.height,
-        synths: meta.synths, // [{ id, zones, muteZones }] — camelCase from the backend
-    };
-}
-
-let gridChangePending = false;
-let gridChangeQueued = false;
-async function setGridWidthLive() {
-    if (!hasImage) return;
-    // A change is in flight: remember that a newer state was requested
-    // and re-apply it once the response lands — the latest column count
-    // and values the user chose are never dropped
-    if (gridChangePending) {
-        gridChangeQueued = true;
-        return;
-    }
-    gridChangePending = true;
-    try {
-        let buf = await invoke('set_grid_width', { params: buildParams() });
-        applyGridChangeResult(decodeGridChangeResponse(buf));
-        while (gridChangeQueued) {
-            gridChangeQueued = false;
-            buf = await invoke('set_grid_width', { params: buildParams() });
-            applyGridChangeResult(decodeGridChangeResponse(buf));
-        }
-    } catch (err) {
-        console.error('Error while changing the grid width:', err);
-        dimensionsInfo.textContent = translateError(err);
-    } finally {
-        gridChangeQueued = false;
-        gridChangePending = false;
-    }
-}
-
-// Applies a live grid change to the frontend state: the zones come from
-// the backend's response — they were already repositioned there, so
-// nothing is re-sent (which would remap the cursors a second time and
-// reset the deferred one-shot stops).
-function applyGridChangeResult(decoded) {
-    processedPixels = decoded.pixels;
-    gridW = decoded.width;
-    gridH = decoded.height;
-    totalPixels = gridW * gridH;
-    updatePreviewSrc();
-
-    clearOverlay();
-    cancelZonePicking();
-
-    for (const s of decoded.synths) {
-        const hi = synthHighlights.get(s.id);
-        if (!hi) continue;
-        hi.zones = s.zones;
-        hi.muteZones = s.muteZones;
-        updateZonesLabel(s.id);
-    }
-    // The remap fused and split components: re-seed the order counter
-    // past every order the backend produced
-    seedZoneOrder([
-        ...decoded.synths.flatMap(s => s.zones || []),
-        ...decoded.synths.flatMap(s => s.muteZones || []),
-    ]);
-    redrawAllHighlights();
-    pushMirrorImage();
-    pushMirrorZones();
-
-    lastDimensionsInfo = {
-        origWidth, origHeight,
-        width: gridW, height: gridH,
-        cellCount: totalPixels,
-    };
-    dimensionsInfo.textContent = t('controls.dimensionsInfo', lastDimensionsInfo);
 }
 
 // ---------- Loading ----------
@@ -2344,10 +2258,7 @@ resetBtn.addEventListener('click', () => {
   autoLevelsBtn.classList.remove('active');
 
   syncLabels();
-  // The reset moves the column count back to the maximum: the grid
-  // change goes through the live-change flow (which also applies the
-  // reset value parameters — it re-renders with all current settings)
-  setGridWidthLive();
+  refresh();
 });
 
 // ---------- Session save / load ----------
@@ -2430,16 +2341,11 @@ loadSessionBtn.addEventListener('click', async () => {
     showOriginalBtn.classList.remove('active');
     viewerEmpty.classList.add('hidden');
     syncLabels();
-    // Session restore takes the plain refresh, NOT the live grid-change
-    // flow: the backend's `processed` image is the full-size original
-    // at this point, and the synths restored by load_session already
-    // hold their zones in the session's own grid coordinates. set_grid_width
-    // would remap those zones as if they lived on the full-size image
-    // (corrupting them towards the top-left corner) and wreck the
-    // restored playhead cursors. refresh() only re-renders the grid;
-    // updateAllSynthZones inside it is a no-op (the UI synth list is
-    // still empty here), and the session's zones are already installed
-    // on the backend's side.
+    // The plain refresh re-renders the processed grid at the session's
+    // column count. updateAllSynthZones inside it is a no-op (the UI
+    // synth list is still empty here): the synths restored by
+    // load_session already hold their zones, in the session's own grid
+    // coordinates, on the backend's side.
     await refresh();
 
     // Restore the tempo and the synths
@@ -2468,10 +2374,8 @@ loadSessionBtn.addEventListener('click', async () => {
             updateZonesLabel(s.id);
         }
         // New zones must never collide with the restored creation orders
-        seedZoneOrder([
-            ...Array.from(synthHighlights.values()).flatMap(hi => hi.zones),
-            ...Array.from(synthHighlights.values()).flatMap(hi => hi.muteZones),
-        ]);
+        seedZoneOrder(Array.from(synthHighlights.values())
+            .flatMap(hi => hi.zones.concat(hi.muteZones)));
         redrawAllHighlights();
         // Normalize the ids of legacy session files (possible gaps after
         // deletions): the ids must match the display order again
@@ -2480,34 +2384,16 @@ loadSessionBtn.addEventListener('click', async () => {
 });
 
 // ---------- Listeners ----------
-// A grid-width drag is in progress: value sliders wait for its release
-// (the grid change applies every current value anyway), and no
-// intermediate refresh may run — each intermediate column count would
-// reposition the zones, and overlapping ones would fuse permanently at
-// a size the user never settles on.
-let gridDragging = false;
-
-[contrast, brightness, vibrance, posterize, texture, clarity, simplify].forEach(el => {
+// The column-count change only ever happens while nothing plays (the
+// slider is locked during playback): the debounced refresh re-renders
+// continuously during the drag, and the zones simply stay at their
+// place — updateAllSynthZones clips them to the new grid and drops
+// the ones that no longer intersect it.
+[gridSlider, contrast, brightness, vibrance, posterize, texture, clarity, simplify].forEach(el => {
   el.addEventListener('input', () => {
     syncLabels();
-    if (gridDragging) return; // applied with the grid change on release
     scheduleRefresh();
   });
-});
-
-// The grid width slider: the label follows the drag live, the change is
-// applied atomically on release — one re-render + one zone/cursor remap
-// per gesture instead of one per notch, whether synths are playing or
-// not. The remap is the same in both cases (zones keep their size and
-// relative position, overlapping ones fuse, the playhead stays on its
-// pixel).
-gridSlider.addEventListener('pointerdown', () => { gridDragging = true; });
-gridSlider.addEventListener('input', () => {
-    syncLabels();
-});
-gridSlider.addEventListener('change', () => {
-    gridDragging = false;
-    setGridWidthLive();
 });
 
 // Double-click a slider to reset it to its default value (0 for the
@@ -2527,10 +2413,7 @@ sliderDefaults.forEach((def, el) => {
     if (el.value == def) return;
     el.value = def;
     syncLabels();
-    // The grid slider always goes through the atomic live-change flow;
-    // the value sliders through the debounced refresh
-    if (el === gridSlider) setGridWidthLive();
-    else scheduleRefresh();
+    scheduleRefresh();
   });
 });
 
@@ -2543,11 +2426,10 @@ autoLevelsBtn.addEventListener('click', () => {
 // The column count normally follows the logarithmic slider; a
 // double-click on the displayed count opens an inline input to type an
 // exact number instead. Values outside 2..origWidth are refused (the
-// input closes without changing anything). The entry stays possible
-// while synths are playing: it goes through the atomic live-change
-// command like the slider's release.
+// input closes without changing anything), as is any entry while the
+// controls are locked during playback.
 gridValue.addEventListener('dblclick', () => {
-  if (!hasImage || document.querySelector('#grid-width-input')) return;
+  if (!hasImage || gridSlider.disabled || document.querySelector('#grid-width-input')) return;
 
   const input = document.createElement('input');
   input.type = 'number';
@@ -2576,7 +2458,7 @@ gridValue.addEventListener('dblclick', () => {
     if (Number.isFinite(cells) && cells >= MIN_CELLS && cells <= origWidth) {
       gridSlider.value = cellsToSlider(cells, origWidth);
       syncLabels();
-      setGridWidthLive();
+      scheduleRefresh();
     }
     close();
   };
@@ -2947,6 +2829,19 @@ updateMirrorZonesButton(); // reflect the initial mode on the button
 
 // ---------- Init ----------
 syncLabels();
+
+// The mute rest glyph is only ever drawn on a canvas; canvas fillText
+// does NOT trigger a lazy @font-face download (the Noto Music font is
+// fetched only when one of its unicode-range characters appears in the
+// DOM — the note-length buttons of a synth card, which don't exist
+// before the first synth is created). Without this, mute marks drawn
+// right after a session load would show the font's fallback (an empty
+// box) until something repaints them later. Force the download at
+// startup and repaint whatever was drawn with the fallback font.
+document.fonts.load('16px "Noto Music"', MUTE_GLYPH)
+    .then(() => redrawAllHighlights())
+    .catch(err => console.error('Error while loading the Noto Music font:', err));
+document.fonts.ready.then(() => redrawAllHighlights());
 
 // ---------- Metronome ----------
 const bpmInput = document.querySelector('#bpm-input');

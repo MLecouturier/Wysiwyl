@@ -59,7 +59,6 @@ pub fn run() {
             image_processing::preview_image_transform,
             image_processing::apply_image_transform,
             image_processing::apply_image_adjustments,
-            image_processing::set_grid_width,
             midi::list_midi_ports,
             midi::list_midi_input_ports,
             midi::get_known_programs,
