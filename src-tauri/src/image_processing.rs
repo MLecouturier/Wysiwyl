@@ -1,6 +1,9 @@
 use crate::config::ConfigState;
 use crate::error::{err, AppError};
-use crate::state::ImageState;
+use crate::metronome::remapped_cursor_for_grid;
+use crate::state::{
+    clip_zones_to_selection, merge_overlapping_zones, ImageState, PixelZone, SynthState,
+};
 use base64::{engine::general_purpose, Engine as _};
 use image::{DynamicImage, GenericImageView, ImageFormat};
 use serde::{Deserialize, Serialize};
@@ -416,16 +419,14 @@ pub fn rotate_image(state: State<'_, ImageState>) -> Result<LoadedImageInfo, App
     })
 }
 
-#[tauri::command]
-pub fn apply_image_adjustments(
-    state: State<'_, ImageState>,
-    params: AdjustmentParams,
-) -> Result<tauri::ipc::Response, AppError> {
-    let original_guard = state.original.lock().unwrap();
-    let original = original_guard
-        .as_ref()
-        .ok_or_else(|| err("no_image_loaded"))?;
-
+/// Renders the grid image from the original: downsampling to the
+/// requested column count (grid_width) followed by the pixel-value
+/// adjustments, all at grid scale. Pure: reads the original, returns the
+/// result, touches no state.
+pub(crate) fn render_processed(
+    original: &DynamicImage,
+    params: &AdjustmentParams,
+) -> DynamicImage {
     let (orig_w, orig_h) = original.dimensions();
 
     // --- Actual downsampling: grid_width becomes the number of columns/notes ---
@@ -479,12 +480,157 @@ pub fn apply_image_adjustments(
         }
     }
 
+    img
+}
+
+#[tauri::command]
+pub fn apply_image_adjustments(
+    state: State<'_, ImageState>,
+    params: AdjustmentParams,
+) -> Result<tauri::ipc::Response, AppError> {
+    let original_guard = state.original.lock().unwrap();
+    let original = original_guard
+        .as_ref()
+        .ok_or_else(|| err("no_image_loaded"))?;
+
+    let img = render_processed(original, &params);
+
     let response = rgba_ipc_response(&img);
 
     drop(original_guard);
     *state.processed.lock().unwrap() = Some(img);
 
     Ok(response)
+}
+
+/// One synth's effective zones after a live grid change, for the
+/// frontend to mirror without re-sending them to the backend.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GridChangeSynth {
+    pub id: u32,
+    pub zones: Vec<PixelZone>,
+    pub mute_zones: Vec<PixelZone>,
+}
+
+/// Changes the number of grid columns while synthesizers are playing,
+/// atomically: the image is re-rendered from the original, every
+/// synth's zones are repositioned (relative position kept, size fixed,
+/// clamped inside; overlapping zones fused) and its playhead remapped
+/// onto the same pixel, all under the same locks the metronome thread
+/// takes — no tick ever sees a half-transition, so no synth stops
+/// itself and the playhead never jumps arbitrarily.
+///
+/// The response carries the rendered pixels for the viewer plus the
+/// effective zones, packed as: [8-byte w/h header][RGBA bytes]
+/// [4-byte little-endian JSON length][JSON metadata].
+#[tauri::command]
+pub fn set_grid_width(
+    state: State<'_, ImageState>,
+    synth_state: State<'_, SynthState>,
+    params: AdjustmentParams,
+) -> Result<tauri::ipc::Response, AppError> {
+    // Re-render outside every lock the metronome takes (only `original`
+    // is held, which the tick loop never locks)
+    let img = {
+        let original_guard = state.original.lock().unwrap();
+        let original = original_guard
+            .as_ref()
+            .ok_or_else(|| err("no_image_loaded"))?;
+        render_processed(original, &params)
+    };
+    let (new_w, new_h) = img.dimensions();
+
+    // Lock in the metronome's order (image, then synths) so no tick can
+    // interleave: zones, cursor and image swap as one
+    let mut processed_guard = state.processed.lock().unwrap();
+    let old_dims = processed_guard.as_ref().map(|i| i.dimensions());
+    let mut synths = synth_state.synths.lock().unwrap();
+
+    let mut snapshots = Vec::with_capacity(synths.len());
+    for synth in synths.values_mut() {
+        if let Some((old_w, old_h)) = old_dims {
+            let old_zones = std::mem::take(&mut synth.zones);
+            let old_mutes = std::mem::take(&mut synth.mute_zones);
+
+            // Reposition (size kept, clamped inside), then fuse the zones
+            // that overlap after the move
+            let zones = merge_overlapping_zones(
+                old_zones
+                    .iter()
+                    .map(|&z| z.remap_to_grid(old_w, old_h, new_w, new_h))
+                    .filter(|z| z.w > 0 && z.h > 0)
+                    .collect(),
+            );
+            // Silences follow the same repositioning, then stay clipped
+            // to the selection they live in
+            let mutes = merge_overlapping_zones(clip_zones_to_selection(
+                &old_mutes
+                    .iter()
+                    .map(|&z| z.remap_to_grid(old_w, old_h, new_w, new_h))
+                    .filter(|z| z.w > 0 && z.h > 0)
+                    .collect::<Vec<_>>(),
+                &zones,
+            ));
+
+            // Keep the playhead on the same pixel of the image; the
+            // remap uses the zones as they were before the change to
+            // decode the current pixel
+            let cursor = remapped_cursor_for_grid(
+                synth,
+                &old_zones,
+                &zones,
+                old_w as usize,
+                old_h as usize,
+                new_w as usize,
+                new_h as usize,
+                synth.reading_direction,
+                synth.sorted_reading,
+            );
+
+            // end_pending is preserved: a one-shot synth on its final
+            // pixel keeps its deferred stop instead of re-triggering
+            // the last note
+            synth.zones = zones.clone();
+            synth.mute_zones = mutes.clone();
+            synth.cursor = cursor;
+            snapshots.push(GridChangeSynth {
+                id: synth.id,
+                zones,
+                mute_zones: mutes,
+            });
+        } else {
+            snapshots.push(GridChangeSynth {
+                id: synth.id,
+                zones: synth.zones.clone(),
+                mute_zones: synth.mute_zones.clone(),
+            });
+        }
+    }
+
+    // Response: the rendered pixels for the viewer, then the effective
+    // zones as JSON so the frontend syncs its mirrors in one round trip
+    let rgba = img.to_rgba8();
+    let mut bytes = Vec::with_capacity(8 + rgba.as_raw().len());
+    bytes.extend_from_slice(&new_w.to_le_bytes());
+    bytes.extend_from_slice(&new_h.to_le_bytes());
+    bytes.extend_from_slice(rgba.as_raw());
+
+    *processed_guard = Some(img);
+    drop(synths);
+    drop(processed_guard);
+
+    let meta = serde_json::json!({
+        "width": new_w,
+        "height": new_h,
+        "synths": snapshots,
+    });
+    let meta_bytes = serde_json::to_vec(&meta)
+        .map_err(|e| err("grid_change_serialization").with_param("details", e))?;
+    bytes.extend_from_slice(&(meta_bytes.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(&meta_bytes);
+
+    Ok(tauri::ipc::Response::new(bytes))
 }
 
 /// Adjusts color vibrance. Like saturation, but softer: `factor` is a

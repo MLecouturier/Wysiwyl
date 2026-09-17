@@ -22,6 +22,99 @@ pub struct PixelZone {
     pub h: u32,
 }
 
+/// True when two zones share at least one cell.
+fn zones_overlap(a: &PixelZone, b: &PixelZone) -> bool {
+    a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
+}
+
+/// Bounding box of two zones.
+fn zones_union(a: &PixelZone, b: &PixelZone) -> PixelZone {
+    let x = a.x.min(b.x);
+    let y = a.y.min(b.y);
+    PixelZone {
+        x,
+        y,
+        w: (a.x + a.w).max(b.x + b.w) - x,
+        h: (a.y + a.h).max(b.y + b.h) - y,
+    }
+}
+
+impl PixelZone {
+    /// Repositions a zone onto a resized grid, for a live column-count
+    /// change: the top-left corner keeps its relative position in the
+    /// image (x' = round(x * new_w / old_w)), while the zone keeps its
+    /// size. A zone larger than the new grid is capped to the grid, and
+    /// a corner that would stick out is clamped so the zone stays fully
+    /// inside (it slides against the edge instead of being amputated).
+    pub fn remap_to_grid(self, old_w: u32, old_h: u32, new_w: u32, new_h: u32) -> PixelZone {
+        let scale = |v: u32, from: u32, to: u32| -> u32 {
+            if from == 0 || to == 0 {
+                return 0;
+            }
+            ((v as f64) * (to as f64) / (from as f64)).round() as u32
+        };
+        let w = self.w.min(new_w);
+        let h = self.h.min(new_h);
+        PixelZone {
+            x: scale(self.x, old_w, new_w).min(new_w.saturating_sub(w)),
+            y: scale(self.y, old_h, new_h).min(new_h.saturating_sub(h)),
+            w,
+            h,
+        }
+    }
+}
+
+/// Merges the zones that overlap after a remap: since a merged zone
+/// covers at least the union of its parts, the bounding box is exact for
+/// rectangles (a pixel set cannot be represented as anything smaller).
+/// Fusion is permanent — growing the grid back repositions the merged
+/// zone as a whole. Fusions are chained (A overlaps B overlaps C) by
+/// iterating to a fixed point.
+pub fn merge_overlapping_zones(mut zones: Vec<PixelZone>) -> Vec<PixelZone> {
+    loop {
+        let mut merged = Vec::with_capacity(zones.len());
+        let mut changed = false;
+        while let Some(mut zone) = zones.pop() {
+            let mut i = 0;
+            while i < merged.len() {
+                if zones_overlap(&zone, &merged[i]) {
+                    zone = zones_union(&zone, &merged[i]);
+                    merged.swap_remove(i);
+                    changed = true;
+                } else {
+                    i += 1;
+                }
+            }
+            merged.push(zone);
+        }
+        merged.sort_by_key(|z| (z.y, z.x));
+        zones = merged;
+        if !changed {
+            return zones;
+        }
+    }
+}
+
+/// Clips zones to a selection (union of rectangles): the intersection
+/// of a rectangle with a union of rectangles is the union of pairwise
+/// intersections, all rectangles. Used to keep the manual silences
+/// inside the remapped selection.
+pub fn clip_zones_to_selection(zones: &[PixelZone], selection: &[PixelZone]) -> Vec<PixelZone> {
+    let mut out = Vec::new();
+    for zone in zones {
+        for sel in selection {
+            let x0 = zone.x.max(sel.x);
+            let y0 = zone.y.max(sel.y);
+            let x1 = (zone.x + zone.w).min(sel.x + sel.w);
+            let y1 = (zone.y + zone.h).min(sel.y + sel.h);
+            if x0 < x1 && y0 < y1 {
+                out.push(PixelZone { x: x0, y: y0, w: x1 - x0, h: y1 - y0 });
+            }
+        }
+    }
+    out
+}
+
 /// Musical note length a pixel can be played as, in the synth's own beats:
 /// Whole = 4 beats, Half = 2, Quarter = 1, Eighth = 0.5, Sixteenth = 0.25.
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug)]
@@ -298,5 +391,103 @@ impl Default for MidiState {
             input_connections: Mutex::new(Vec::new()),
             broadcast_ports: Mutex::new(None),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn zone(x: u32, y: u32, w: u32, h: u32) -> PixelZone {
+        PixelZone { x, y, w, h }
+    }
+
+    #[test]
+    fn remap_keeps_relative_position_and_size() {
+        // 100x50 grid down to 50x25: a zone at 40%,40% keeps its spot
+        let z = zone(40, 20, 10, 5).remap_to_grid(100, 50, 50, 25);
+        assert_eq!(z, zone(20, 10, 10, 5));
+    }
+
+    #[test]
+    fn remap_scales_position_rounding() {
+        // Odd ratios round to the nearest cell; a zone capped to the
+        // full grid width slides back to the left edge
+        let z = zone(10, 3, 4, 4).remap_to_grid(10, 10, 3, 3);
+        assert_eq!(z, zone(0, 0, 3, 3)); // w capped to 3 → spans the grid, x clamps to 0
+    }
+
+    #[test]
+    fn remap_clamps_overflowing_zone_inside() {
+        // Zone at the right edge of a shrinking grid slides against it
+        let z = zone(90, 0, 10, 10).remap_to_grid(100, 10, 50, 5);
+        // x' = 45, w = 10 → sticks out: x' clamped to 50-10 = 40
+        assert_eq!(z, zone(40, 0, 10, 5));
+    }
+
+    #[test]
+    fn remap_caps_zone_wider_than_grid() {
+        // A zone larger than the whole new grid spans it entirely
+        let z = zone(10, 10, 40, 40).remap_to_grid(100, 100, 20, 20);
+        assert_eq!(z, zone(0, 0, 20, 20)); // capped to the grid size → covers it fully
+    }
+
+    #[test]
+    fn remap_is_identity_on_same_grid() {
+        let z = zone(7, 13, 4, 9).remap_to_grid(64, 32, 64, 32);
+        assert_eq!(z, zone(7, 13, 4, 9));
+    }
+
+    #[test]
+    fn merge_fuses_overlapping_zones() {
+        let merged = merge_overlapping_zones(vec![zone(0, 0, 10, 10), zone(5, 5, 10, 10)]);
+        assert_eq!(merged, vec![zone(0, 0, 15, 15)]);
+    }
+
+    #[test]
+    fn merge_chains_fusions() {
+        // A overlaps B, B overlaps C, but A and C do not overlap
+        let merged = merge_overlapping_zones(vec![
+            zone(0, 0, 10, 5),
+            zone(5, 0, 10, 5),
+            zone(12, 0, 10, 5),
+        ]);
+        assert_eq!(merged, vec![zone(0, 0, 22, 5)]);
+    }
+
+    #[test]
+    fn merge_keeps_disjoint_zones_apart() {
+        let merged = merge_overlapping_zones(vec![zone(0, 0, 5, 5), zone(10, 10, 5, 5)]);
+        assert_eq!(merged, vec![zone(0, 0, 5, 5), zone(10, 10, 5, 5)]);
+    }
+
+    #[test]
+    fn merge_treats_touching_edges_as_disjoint() {
+        // Zones sharing only an edge do not overlap: the cells stay distinct
+        let merged = merge_overlapping_zones(vec![zone(0, 0, 5, 5), zone(5, 0, 5, 5)]);
+        assert_eq!(merged.len(), 2);
+    }
+
+    #[test]
+    fn clip_keeps_only_cells_inside_the_selection() {
+        let kept = clip_zones_to_selection(
+            &[zone(0, 0, 10, 10)],
+            &[zone(5, 5, 10, 10), zone(20, 20, 5, 5)],
+        );
+        assert_eq!(kept, vec![zone(5, 5, 5, 5)]);
+    }
+
+    #[test]
+    fn clip_splits_a_zone_across_selection_rects() {
+        let kept = clip_zones_to_selection(
+            &[zone(0, 0, 10, 2)],
+            &[zone(0, 0, 4, 2), zone(6, 0, 4, 2)],
+        );
+        assert_eq!(kept, vec![zone(0, 0, 4, 2), zone(6, 0, 4, 2)]);
+    }
+
+    #[test]
+    fn clip_drops_a_zone_outside_the_selection() {
+        assert!(clip_zones_to_selection(&[zone(50, 50, 5, 5)], &[zone(0, 0, 10, 10)]).is_empty());
     }
 }

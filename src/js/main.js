@@ -356,12 +356,20 @@ const dimensionsInfo  = document.querySelector('#dimensions-info');
 // (the "Show original" button is intentionally excluded, and the value
 // sliders contrast/brightness/vibrance/posterize/texture/clarity/simplify —
 // plus the auto-levels toggle — stay editable: they only change pixel
-// values, which the playback step re-reads fresh)
-const imageLockControls = [loadBtn, resetBtn, rotateBtn, cropBtn, transformBtn, gridSlider];
+// values, which the playback step re-reads fresh. The grid width slider
+// is also unlocked: the column-count change goes through the atomic
+// set_grid_width command — whether synths play or not — which
+// repositions the zones and the playheads without stopping anything)
+const imageLockControls = [loadBtn, resetBtn, rotateBtn, cropBtn, transformBtn];
+
+// True while at least one synthesizer is playing
+function anySynthPlaying() {
+    return synthListBody.querySelectorAll('.synth-play.active').length > 0;
+}
 
 // Locks/unlocks image controls depending on whether a synth is playing
 function updateImageControlsLockState() {
-    const anyPlaying = synthListBody.querySelectorAll('.synth-play.active').length > 0;
+    const anyPlaying = anySynthPlaying();
     if (anyPlaying) {
         exitCropMode();
         closeTransformPanel();
@@ -377,6 +385,12 @@ let gridH = 1; // current grid height in pixels
 // Tracks the current cursor per synth for drawing: Map<id, cursor>
 const synthCursors = new Map();
 
+// Grid dimensions each cursor was recorded on: Map<id, {w, h}>. The
+// column count can change while synths are playing, so a recorded
+// cursor can only be decoded (and erased) against the grid it was
+// computed on.
+const synthCursorGrid = new Map();
+
 // Last tick's muted flag per synth: a muted pixel keeps its recorded
 // position and stays drawn, at half opacity (main viewer and mirror
 // alike)
@@ -389,7 +403,11 @@ function resizeOverlay() {
     cursorOverlay.height = cursorOverlay.offsetHeight;
 }
 
-function drawSynthPixel(synthId, cursor, muted) {
+// Draws the playhead of a synth. `w`/`h` are the grid dimensions the
+// cursor's absolute pixel index was computed on (from the tick payload);
+// they match the globals except during a live grid change, where ticks
+// emitted after the backend swap can precede the change's response.
+function drawSynthPixel(synthId, cursor, muted, w = gridW, h = gridH) {
     if (!hasImage) return;
     const color = synthColors.get(synthId);
     if (!color) return;
@@ -399,7 +417,7 @@ function drawSynthPixel(synthId, cursor, muted) {
     // Rendered dimensions of the image in the viewer (object-fit: contain)
     const vw = cursorOverlay.width;
     const vh = cursorOverlay.height;
-    const imgRatio = gridW / gridH;
+    const imgRatio = w / h;
     const viewRatio = vw / vh;
 
     let renderW, renderH, offsetX, offsetY;
@@ -413,18 +431,18 @@ function drawSynthPixel(synthId, cursor, muted) {
     offsetX = (vw - renderW) / 2;
     offsetY = (vh - renderH) / 2;
 
-    const cellW = renderW / gridW;
-    const cellH = renderH / gridH;
-    const col = cursor % gridW;
-    const row = Math.floor(cursor / gridW);
-    const x = offsetX + col * cellW;
-    const y = offsetY + row * cellH;
+    const cellW = renderW / w;
+    const cellH = renderH / h;
 
-    // Only clear the previous pixel of this synth
+    // Only clear the previous pixel of this synth — decoded against the
+    // grid it was recorded on. When that grid is the one that just
+    // changed (dims differ), the precise erase is skipped: the change's
+    // response wipes the whole cursor layer anyway
     const prev = synthCursors.get(synthId);
-    if (prev !== undefined) {
-        const pc = prev % gridW;
-        const pr = Math.floor(prev / gridW);
+    const pg = synthCursorGrid.get(synthId);
+    if (prev !== undefined && pg && pg.w === w && pg.h === h) {
+        const pc = prev % w;
+        const pr = Math.floor(prev / w);
         ctx.clearRect(
             offsetX + pc * cellW - 1,
             offsetY + pr * cellH - 1,
@@ -432,36 +450,39 @@ function drawSynthPixel(synthId, cursor, muted) {
         );
         // Redraw other synths that occupy this pixel
         synthCursors.forEach((c, sid) => {
-            if (sid !== synthId && c === prev) drawPixelAt(ctx, sid, c, offsetX, offsetY, cellW, cellH, synthCursorMuted.get(sid));
+            if (sid !== synthId && c === prev) drawPixelAt(ctx, sid, c, offsetX, offsetY, cellW, cellH, synthCursorMuted.get(sid), w);
         });
     }
 
     synthCursors.set(synthId, cursor);
     synthCursorMuted.set(synthId, !!muted);
-    drawPixelAt(ctx, synthId, cursor, offsetX, offsetY, cellW, cellH, muted);
+    synthCursorGrid.set(synthId, { w, h });
+    drawPixelAt(ctx, synthId, cursor, offsetX, offsetY, cellW, cellH, muted, w);
     pushMirrorCursors();
 }
 
-function drawPixelAt(ctx, synthId, cursor, offsetX, offsetY, cellW, cellH, muted) {
+function drawPixelAt(ctx, synthId, cursor, offsetX, offsetY, cellW, cellH, muted, w = gridW) {
     const color = synthColors.get(synthId);
     if (!color) return;
-    drawCursorCell(ctx, { offsetX, offsetY, cellW, cellH, gridW }, { color, cursor, muted });
+    drawCursorCell(ctx, { offsetX, offsetY, cellW, cellH, gridW: w }, { color, cursor, muted });
 }
 
 // Removes one synth's cursor from the cursor layer: erases its cell and
 // repaints the cursors of any other synth sitting on that same cell
 function eraseSynthCursor(synthId) {
     const prev = synthCursors.get(synthId);
+    const pg = synthCursorGrid.get(synthId);
     synthCursors.delete(synthId);
     synthCursorMuted.delete(synthId);
+    synthCursorGrid.delete(synthId);
     pushMirrorCursors();
-    if (prev === undefined || !hasImage || !gridW || !gridH) return;
+    if (prev === undefined || !hasImage || !pg || !pg.w || !pg.h) return;
     const layout = getImageLayout();
     if (!layout) return;
     const { offsetX, offsetY, cellW, cellH } = layout;
     const ctx = cursorOverlay.getContext('2d');
-    const pc = prev % gridW;
-    const pr = Math.floor(prev / gridW);
+    const pc = prev % pg.w;
+    const pr = Math.floor(prev / pg.w);
     ctx.clearRect(
         offsetX + pc * cellW - 1,
         offsetY + pr * cellH - 1,
@@ -479,6 +500,7 @@ function clearOverlay() {
     cursorCtx.clearRect(0, 0, cursorOverlay.width, cursorOverlay.height);
     synthCursors.clear();
     synthCursorMuted.clear();
+    synthCursorGrid.clear();
     pushMirrorCursors();
 }
 
@@ -570,13 +592,14 @@ function zoneDragRect() {
     };
 }
 
-// The zone of this synth containing the played pixel, if any
-function zoneAtPixel(id, pixel) {
+// The zone of this synth containing the played pixel, if any. `w` is
+// the grid width the pixel index was computed on (the tick payload).
+function zoneAtPixel(id, pixel, w = gridW) {
     if (pixel == null) return null;
     const hi = synthHighlights.get(id);
     if (!hi) return null;
-    const col = pixel % gridW;
-    const row = Math.floor(pixel / gridW);
+    const col = pixel % w;
+    const row = Math.floor(pixel / w);
     return hi.zones.find(z =>
         col >= z.x && col < z.x + z.w &&
         row >= z.y && row < z.y + z.h
@@ -587,14 +610,14 @@ function zoneAtPixel(id, pixel) {
 // erasure: an erasing drag that touches it is cancelled, so the pixels
 // being played are never removed under the cursor. Returns true when the
 // drag has just been cancelled.
-function cancelEraseDragOnLockedZone(id, playheadPixel) {
+function cancelEraseDragOnLockedZone(id, playheadPixel, gridWidth = gridW) {
     if (!zoneDrag || zoneDrag.id !== id) return false;
     // A silence drag never removes pixels from the sequence: the locked
     // zone is safe, the playhead keeps travelling over the silent pixels
     if (zoneDrag.alt) return false;
     const rect = zoneDragRect();
     if (!rect || !rectOverlapsZones(id, rect)) return false;
-    const locked = zoneAtPixel(id, playheadPixel);
+    const locked = zoneAtPixel(id, playheadPixel, gridWidth);
     if (locked && rectsOverlap(rect, locked)) {
         zoneDrag = null;
         redrawAllHighlights();
@@ -725,7 +748,7 @@ pixelOverlay.addEventListener('mousemove', (e) => {
     zoneDrag.cur = cell;
     // Cancel an erasing drag as soon as it grows over the zone under the
     // playhead (checked again on every playback tick)
-    if (cancelEraseDragOnLockedZone(zoneDrag.id, synthCursors.get(zoneDrag.id))) return;
+    if (cancelEraseDragOnLockedZone(zoneDrag.id, synthCursors.get(zoneDrag.id), synthCursorGrid.get(zoneDrag.id)?.w)) return;
     redrawAllHighlights();
     drawZonePreview();
 });
@@ -759,7 +782,7 @@ window.addEventListener('mouseup', (e) => {
     const rect = zoneDragRect();
     // Cancel an erasing drag touching the locked zone (the one under the
     // playhead) instead of committing it — a no-op in silence mode
-    const cancelled = cancelEraseDragOnLockedZone(id, synthCursors.get(id));
+    const cancelled = cancelEraseDragOnLockedZone(id, synthCursors.get(id), synthCursorGrid.get(id)?.w);
     zoneDrag = null;
     if (!cancelled && rect) {
         // A rectangle overlapping an existing zone (even partially) only
@@ -1587,8 +1610,11 @@ function paintPreviewCanvas(pixels) {
 // Shows the right surface: the <img> for the original ("Show original"
 // toggle), the canvas for everything that comes as raw pixels (processed
 // image, transform live preview — the latter taking precedence).
+// The original is routed by the toggle: in the main viewer while the
+// projection mirror is closed, in the mirror only while it is open (the
+// main viewer then falls back to the grid render and stays interactive).
 function updatePreviewSrc() {
-    const showOrig = showOriginalBtn.classList.contains('active');
+    const showOrig = showOriginalBtn.classList.contains('active') && !mirrorOpen();
     const pixels = transformPreviewPixels ?? (showOrig ? null : processedPixels);
 
     if (pixels) {
@@ -1667,6 +1693,94 @@ function scheduleRefresh(delay = 60) {
   debounceId = setTimeout(refresh, delay);
 }
 
+// ---------- Column-count change (the single path, playing or not) ----------
+// set_grid_width re-renders the image, repositions every synth's zones
+// (relative position kept, size fixed, overlapping zones fused) and
+// remaps the playheads atomically on the backend — the same behavior
+// whether synths are playing or not. The response packs the rendered
+// pixels for the viewer and the effective zones as JSON:
+// [8-byte w/h header][RGBA bytes][4-byte JSON length][JSON].
+function decodeGridChangeResponse(buf) {
+    const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const width = view.getUint32(0, true);
+    const height = view.getUint32(4, true);
+    const rgbaLen = width * height * 4;
+    const rgba = new Uint8ClampedArray(bytes.buffer, bytes.byteOffset + 8, rgbaLen);
+    const jsonLen = view.getUint32(8 + rgbaLen, true);
+    const jsonStart = 8 + rgbaLen + 4;
+    const decoder = new TextDecoder();
+    const meta = JSON.parse(decoder.decode(bytes.subarray(jsonStart, jsonStart + jsonLen)));
+    return {
+        pixels: { width, height, rgba },
+        width: meta.width,
+        height: meta.height,
+        synths: meta.synths, // [{ id, zones, muteZones }] — camelCase from the backend
+    };
+}
+
+let gridChangePending = false;
+let gridChangeQueued = false;
+async function setGridWidthLive() {
+    if (!hasImage) return;
+    // A change is in flight: remember that a newer state was requested
+    // and re-apply it once the response lands — the latest column count
+    // and values the user chose are never dropped
+    if (gridChangePending) {
+        gridChangeQueued = true;
+        return;
+    }
+    gridChangePending = true;
+    try {
+        let buf = await invoke('set_grid_width', { params: buildParams() });
+        applyGridChangeResult(decodeGridChangeResponse(buf));
+        while (gridChangeQueued) {
+            gridChangeQueued = false;
+            buf = await invoke('set_grid_width', { params: buildParams() });
+            applyGridChangeResult(decodeGridChangeResponse(buf));
+        }
+    } catch (err) {
+        console.error('Error while changing the grid width:', err);
+        dimensionsInfo.textContent = translateError(err);
+    } finally {
+        gridChangeQueued = false;
+        gridChangePending = false;
+    }
+}
+
+// Applies a live grid change to the frontend state: the zones come from
+// the backend's response — they were already repositioned there, so
+// nothing is re-sent (which would remap the cursors a second time and
+// reset the deferred one-shot stops).
+function applyGridChangeResult(decoded) {
+    processedPixels = decoded.pixels;
+    gridW = decoded.width;
+    gridH = decoded.height;
+    totalPixels = gridW * gridH;
+    updatePreviewSrc();
+
+    clearOverlay();
+    cancelZonePicking();
+
+    for (const s of decoded.synths) {
+        const hi = synthHighlights.get(s.id);
+        if (!hi) continue;
+        hi.zones = s.zones;
+        hi.muteZones = s.muteZones;
+        updateZonesLabel(s.id);
+    }
+    redrawAllHighlights();
+    pushMirrorImage();
+    pushMirrorZones();
+
+    lastDimensionsInfo = {
+        origWidth, origHeight,
+        width: gridW, height: gridH,
+        cellCount: totalPixels,
+    };
+    dimensionsInfo.textContent = t('controls.dimensionsInfo', lastDimensionsInfo);
+}
+
 // ---------- Loading ----------
 loadBtn.addEventListener('click', async () => {
   try {
@@ -1687,7 +1801,10 @@ loadBtn.addEventListener('click', async () => {
     viewerEmpty.classList.add('hidden');
 
     syncLabels();
-    await refresh();
+    // The grid change goes through the live-change flow: the zones of
+    // the previous image are repositioned onto the new one (proportional
+    // position, fused when overlapping) instead of being clipped away
+    await setGridWidthLive();
   } catch (err) {
     console.error('Error while loading the image:', err);
     dimensionsInfo.textContent = translateError(err);
@@ -2281,7 +2398,10 @@ resetBtn.addEventListener('click', () => {
   autoLevelsBtn.classList.remove('active');
 
   syncLabels();
-  refresh();
+  // The reset moves the column count back to the maximum: the grid
+  // change goes through the live-change flow (which also applies the
+  // reset value parameters — it re-renders with all current settings)
+  setGridWidthLive();
 });
 
 // ---------- Session save / load ----------
@@ -2364,7 +2484,10 @@ loadSessionBtn.addEventListener('click', async () => {
     showOriginalBtn.classList.remove('active');
     viewerEmpty.classList.add('hidden');
     syncLabels();
-    await refresh();
+    // Same flow as a live column change: the synths are all removed at
+    // this point, so the backend remap runs over an empty registry and
+    // the session's zones are pushed afterwards in their own coordinates
+    await setGridWidthLive();
 
     // Restore the tempo and the synths
     bpmInput.value = clampBpm(session.bpm);
@@ -2404,11 +2527,34 @@ loadSessionBtn.addEventListener('click', async () => {
 });
 
 // ---------- Listeners ----------
-[gridSlider, contrast, brightness, vibrance, posterize, texture, clarity, simplify].forEach(el => {
+// A grid-width drag is in progress: value sliders wait for its release
+// (the grid change applies every current value anyway), and no
+// intermediate refresh may run — each intermediate column count would
+// reposition the zones, and overlapping ones would fuse permanently at
+// a size the user never settles on.
+let gridDragging = false;
+
+[contrast, brightness, vibrance, posterize, texture, clarity, simplify].forEach(el => {
   el.addEventListener('input', () => {
     syncLabels();
+    if (gridDragging) return; // applied with the grid change on release
     scheduleRefresh();
   });
+});
+
+// The grid width slider: the label follows the drag live, the change is
+// applied atomically on release — one re-render + one zone/cursor remap
+// per gesture instead of one per notch, whether synths are playing or
+// not. The remap is the same in both cases (zones keep their size and
+// relative position, overlapping ones fuse, the playhead stays on its
+// pixel).
+gridSlider.addEventListener('pointerdown', () => { gridDragging = true; });
+gridSlider.addEventListener('input', () => {
+    syncLabels();
+});
+gridSlider.addEventListener('change', () => {
+    gridDragging = false;
+    setGridWidthLive();
 });
 
 // Double-click a slider to reset it to its default value (0 for the
@@ -2428,7 +2574,10 @@ sliderDefaults.forEach((def, el) => {
     if (el.value == def) return;
     el.value = def;
     syncLabels();
-    scheduleRefresh();
+    // The grid slider always goes through the atomic live-change flow;
+    // the value sliders through the debounced refresh
+    if (el === gridSlider) setGridWidthLive();
+    else scheduleRefresh();
   });
 });
 
@@ -2441,10 +2590,11 @@ autoLevelsBtn.addEventListener('click', () => {
 // The column count normally follows the logarithmic slider; a
 // double-click on the displayed count opens an inline input to type an
 // exact number instead. Values outside 2..origWidth are refused (the
-// input closes without changing anything), as is any entry while the
-// controls are locked during playback.
+// input closes without changing anything). The entry stays possible
+// while synths are playing: it goes through the atomic live-change
+// command like the slider's release.
 gridValue.addEventListener('dblclick', () => {
-  if (!hasImage || gridSlider.disabled || document.querySelector('#grid-width-input')) return;
+  if (!hasImage || document.querySelector('#grid-width-input')) return;
 
   const input = document.createElement('input');
   input.type = 'number';
@@ -2473,7 +2623,7 @@ gridValue.addEventListener('dblclick', () => {
     if (Number.isFinite(cells) && cells >= MIN_CELLS && cells <= origWidth) {
       gridSlider.value = cellsToSlider(cells, origWidth);
       syncLabels();
-      scheduleRefresh();
+      setGridWidthLive();
     }
     close();
   };
@@ -2488,6 +2638,10 @@ gridValue.addEventListener('dblclick', () => {
   input.addEventListener('blur', commit);
 });
 
+// "Show original" routes the original image by the mirror's state:
+// main viewer while the mirror is closed, mirror only while it is open
+// (see updatePreviewSrc). Closing the mirror while the original is
+// shown there resets the toggle.
 showOriginalBtn.addEventListener('click', () => {
     showOriginalBtn.classList.toggle('active');
     updatePreviewSrc();
@@ -2543,7 +2697,6 @@ async function updateMirrorButtonStates() {
     }
     fullscreenBtn.disabled  = !hasSecondScreen && !mirrorOpen();
     fullscreenBtn.classList.toggle('active', mirrorOpen());
-    mirrorZonesBtn.disabled = !mirrorOpen();
 }
 
 // Opens the mirror on the first monitor other than the one hosting the
@@ -2640,7 +2793,16 @@ function pushMirrorCursors() {
     synthCursors.forEach((cursor, sid) => {
         const color = synthColors.get(sid);
         if (!color) return;
-        cursors.push({ cursor, color, muted: !!synthCursorMuted.get(sid) });
+        // The grid dims the cursor was recorded on travel with it: the
+        // mirror decodes the absolute index against the right grid even
+        // when the column count changes while synths are playing
+        const g = synthCursorGrid.get(sid);
+        cursors.push({
+            cursor, color,
+            muted: !!synthCursorMuted.get(sid),
+            w: g ? g.w : gridW,
+            h: g ? g.h : gridH,
+        });
     });
     emit('mirror:cursors', { cursors });
 }
@@ -2648,13 +2810,26 @@ function pushMirrorCursors() {
 // The mirror announces itself when loaded, and reports its own closing
 // (its close-requested handler runs before the window goes away).
 listen('mirror:ready', () => {
-    pushMirrorImage();
+    // Opening the mirror reroutes the original image to it (when the
+    // toggle is on): the main viewer falls back to the grid render.
+    // updatePreviewSrc also pushes the mirror image snapshot, covering
+    // the initial push in the same repaint.
+    updatePreviewSrc();
+    // A freshly opened mirror must receive the current snapshots even
+    // when they are identical to the last session's (the dedup would
+    // otherwise skip the push to a window that never got them)
+    lastMirrorZonesJson = null;
     pushMirrorZones();
     pushMirrorCursors();
 });
 
 listen('mirror:closed', () => {
     mirrorWindowRef = null;
+    // The original image was rerouted to the (now gone) mirror: the
+    // main viewer already shows the grid render, and the toggle goes
+    // back to inactive so its state keeps meaning "the original is
+    // visible somewhere" (one click shows it in the main viewer again)
+    showOriginalBtn.classList.remove('active');
     updateMirrorButtonStates();
 });
 
@@ -2815,7 +2990,7 @@ function pushMirrorZones() {
 }
 
 updateMirrorButtonStates();
-updateMirrorZonesButton(); // reflect the initial mode on the (disabled) button
+updateMirrorZonesButton(); // reflect the initial mode on the button
 
 // ---------- Init ----------
 syncLabels();
@@ -3981,6 +4156,19 @@ function createSynthElement(id, cfg = null) {
     return el;
 }
 
+// Deep equality of two zone lists (order-sensitive: the clip preserves
+// the zones' order). Used to skip the backend round trip of a refresh
+// that didn't change anything: an unconditional set_synth_zones remaps
+// the playhead and resets the deferred one-shot stop (end_pending),
+// which would re-trigger the final note of a finishing synth on every
+// value-slider refresh.
+function zonesEqual(a, b) {
+    if (a.length !== b.length) return false;
+    return a.every((z, i) =>
+        z.x === b[i].x && z.y === b[i].y && z.w === b[i].w && z.h === b[i].h
+    );
+}
+
 function updateAllSynthZones() {
     synthListBody.querySelectorAll('.synth-block').forEach(el => {
         const synthId = Number(el.dataset.synthId);
@@ -3989,7 +4177,7 @@ function updateAllSynthZones() {
 
         // Clip the zones to the new grid and drop the ones
         // that no longer intersect the image
-        hi.zones = hi.zones
+        const clipped = hi.zones
             .map(z => ({
                 x: z.x,
                 y: z.y,
@@ -3998,7 +4186,12 @@ function updateAllSynthZones() {
             }))
             .filter(z => z.w > 0 && z.h > 0);
 
-        sendSynthZones(synthId);
+        // Only push when the clip actually changed something: a value
+        // refresh (same grid) sends nothing at all
+        if (!zonesEqual(clipped, hi.zones)) {
+            hi.zones = clipped;
+            sendSynthZones(synthId);
+        }
         // Silences outside the new selection (or the new grid) disappear
         clipMuteZonesToSelection(synthId);
         updateZonesLabel(synthId);
@@ -4500,9 +4693,21 @@ window.__TAURI__.event.listen('synth-stopped', async (event) => {
 
 // Receiving pixel ticks, one per synth
 window.__TAURI__.event.listen('synth-pixel-tick', (event) => {
-    const { id, cursor, r, g, b, velocity, muted, mode, note, voices } = event.payload;
+    const { id, cursor, w, h, r, g, b, velocity, muted, mode, note, voices } = event.payload;
     const el = synthElementById(id);
     if (!el) return;
+
+    // The tick carries the grid its cursor was computed on: during a
+    // live column-count change, ticks emitted after the backend swap can
+    // arrive before the change's response — adopt the new dimensions
+    // right away so the playhead is drawn at the right cell (the painted
+    // image catches up when the response lands)
+    const tickW = Number.isFinite(w) ? w : gridW;
+    const tickH = Number.isFinite(h) ? h : gridH;
+    if (tickW !== gridW || tickH !== gridH) {
+        gridW = tickW;
+        gridH = tickH;
+    }
 
     const rgbStr = `rgb(${r ?? '-'}, ${g ?? '-'}, ${b ?? '-'})`;
     const tslStr = rgbToTslStr(r, g, b);
@@ -4527,8 +4732,8 @@ window.__TAURI__.event.listen('synth-pixel-tick', (event) => {
     pixelInfoEl.dataset.hasTick = '1';
     // Abort an erasing drag when the playhead has entered the zone being
     // edited: let the cursor play, the locked zone stays untouched
-    cancelEraseDragOnLockedZone(id, cursor);
-    drawSynthPixel(id, cursor, muted);
+    cancelEraseDragOnLockedZone(id, cursor, tickW);
+    drawSynthPixel(id, cursor, muted, tickW, tickH);
 });
 
 // Converts RGB (0–255) to HSL: hue in degrees 0–360, saturation and

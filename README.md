@@ -13,10 +13,12 @@ Wysiwyl is a Tauri desktop application that turns an image into music. Load an i
 - Loading an image via a native file dialog.
 - Preview of the original image and the processed image, with a toggle to switch between the two.
 - Resizing into a pixel grid, where each cell becomes one step in the sequence.
-- Adjusting the number of columns with a logarithmic-scale slider (the height is deduced automatically to preserve the aspect ratio).
+- Adjusting the number of columns with a logarithmic-scale slider (the height is deduced automatically to preserve the aspect ratio). The change applies when the slider is released: every synth's zones keep their size and relative position (overlapping zones are fused, definitively; a zone that would stick out is clamped inside the grid), and each playhead stays on the same pixel — the behavior is identical whether synths are playing or not.
 - Saturation, contrast, brightness, and posterization (color/brightness level reduction) adjustments.
 - Resetting all processing parameters to their default values.
-- While any synthesizer is playing, the structural image controls (loading, rotation, crop, transform, grid size) are automatically locked to keep the pixel grid stable. The value adjustments (saturation, contrast, brightness, posterization) stay editable: their effect is applied live to the playback, at the next metronome step ("Show original" also stays available).
+- While any synthesizer is playing, the structural image controls (loading, rotation, crop, transform) are automatically locked to keep the pixel grid stable. The value adjustments (saturation, contrast, brightness, posterization) stay editable: their effect is applied live to the playback, at the next metronome step ("Show original" also stays available).
+- The "Show original" toggle routes the original image by the projection mirror's state: while the mirror is closed, the original replaces the grid render in the main viewer; while the mirror is open, the original is shown in the mirror only and the main viewer falls back to the grid render (zones and playheads stay overlaid on both surfaces). Closing the mirror while it shows the original resets the toggle.
+- While any synthesizer is playing, the column-count slider stays usable: the change is applied atomically when the slider is released (the label follows the drag live), with the same zone repositioning and playhead remapping as above — no synth stops, nothing jumps.
 
 ### Synthesizers
 

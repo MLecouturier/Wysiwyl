@@ -33,14 +33,16 @@ function drawZonesOverlay() {
 }
 
 // Playhead cursors live on their own layer, above the zones — same
-// stacking as the main viewer.
+// stacking as the main viewer. Each cursor carries the grid dimensions
+// it was computed on, so a column-count change mid-playback never
+// misplaces a cursor while the image snapshot catches up.
 function drawCursorsOverlay() {
     const ctx = cursorOverlay.getContext('2d');
     ctx.clearRect(0, 0, cursorOverlay.width, cursorOverlay.height);
     if (!cursorData) return;
-    const layout = computeLayout(cursorOverlay.width, cursorOverlay.height, gridW, gridH);
-    if (!layout) return;
     for (const c of cursorData) {
+        const layout = computeLayout(cursorOverlay.width, cursorOverlay.height, c.w || gridW, c.h || gridH);
+        if (!layout) continue;
         drawCursorCell(ctx, layout, c);
     }
 }
