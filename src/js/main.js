@@ -2484,10 +2484,17 @@ loadSessionBtn.addEventListener('click', async () => {
     showOriginalBtn.classList.remove('active');
     viewerEmpty.classList.add('hidden');
     syncLabels();
-    // Same flow as a live column change: the synths are all removed at
-    // this point, so the backend remap runs over an empty registry and
-    // the session's zones are pushed afterwards in their own coordinates
-    await setGridWidthLive();
+    // Session restore takes the plain refresh, NOT the live grid-change
+    // flow: the backend's `processed` image is the full-size original
+    // at this point, and the synths restored by load_session already
+    // hold their zones in the session's own grid coordinates. set_grid_width
+    // would remap those zones as if they lived on the full-size image
+    // (corrupting them towards the top-left corner) and wreck the
+    // restored playhead cursors. refresh() only re-renders the grid;
+    // updateAllSynthZones inside it is a no-op (the UI synth list is
+    // still empty here), and the session's zones are already installed
+    // on the backend's side.
+    await refresh();
 
     // Restore the tempo and the synths
     bpmInput.value = clampBpm(session.bpm);
