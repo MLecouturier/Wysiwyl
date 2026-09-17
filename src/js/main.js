@@ -2302,7 +2302,7 @@ saveSessionBtn.addEventListener('click', async () => {
         clarity: Number(clarity.value),
         simplify: Number(simplify.value),
         auto_levels: autoLevelsBtn.classList.contains('active'),
-        mirror_show_zones: mirrorShowZones,
+        mirror_zones_mode: mirrorZonesMode,
         synth_colors: Array.from(synthListBody.querySelectorAll('.synth-block')).map(el => ({
             id: Number(el.dataset.synthId),
             color: synthColors.get(Number(el.dataset.synthId)),
@@ -2359,8 +2359,8 @@ loadSessionBtn.addEventListener('click', async () => {
     clarity.value = session.image_settings.clarity ?? 0;
     simplify.value = session.image_settings.simplify ?? 0;
     autoLevelsBtn.classList.toggle('active', session.image_settings.auto_levels ?? false);
-    mirrorShowZones = session.image_settings.mirror_show_zones ?? false;
-    mirrorZonesBtn.classList.toggle('active', mirrorShowZones);
+    mirrorZonesMode = session.image_settings.mirror_zones_mode;
+    updateMirrorZonesButton();
     showOriginalBtn.classList.remove('active');
     viewerEmpty.classList.add('hidden');
     syncLabels();
@@ -2504,9 +2504,20 @@ const fullscreenBtn  = document.querySelector('#fullscreen-btn');
 const mirrorZonesBtn = document.querySelector('#mirror-zones-btn');
 
 const MIRROR_LABEL = 'mirror';
-let mirrorShowZones = false; // zones visible in the mirror, independent of the per-synth eye buttons
+// Zone display in the mirror, cycled by the zones button: 'all' (every
+// synth's zones), 'active' (only the synths whose eye button is on in
+// the main window) or 'none' (nothing). The mirror's display is fully
+// independent of the main viewer, except in 'active' mode which follows
+// the eye buttons.
+const MIRROR_ZONES_MODES = ['all', 'active', 'none'];
+let mirrorZonesMode = 'all';
 let mirrorCreating   = false; // window creation in flight (guards double clicks)
 let mirrorWindowRef  = null;  // live WebviewWindow while the mirror is open
+
+function updateMirrorZonesButton() {
+    mirrorZonesBtn.classList.toggle('active', mirrorZonesMode !== 'none');
+    mirrorZonesBtn.classList.toggle('selective', mirrorZonesMode === 'active');
+}
 
 function mirrorOpen() {
     return mirrorWindowRef !== null;
@@ -2613,8 +2624,9 @@ async function toggleMirrorWindow() {
 fullscreenBtn.addEventListener('click', toggleMirrorWindow);
 
 mirrorZonesBtn.addEventListener('click', () => {
-    mirrorShowZones = !mirrorShowZones;
-    mirrorZonesBtn.classList.toggle('active', mirrorShowZones);
+    const idx = MIRROR_ZONES_MODES.indexOf(mirrorZonesMode);
+    mirrorZonesMode = MIRROR_ZONES_MODES[(idx + 1) % MIRROR_ZONES_MODES.length];
+    updateMirrorZonesButton();
     pushMirrorZones();
 });
 
@@ -2782,8 +2794,10 @@ function pushMirrorZones() {
     mirrorZonesLast = now;
 
     const synths = [];
-    if (mirrorShowZones) {
+    if (mirrorZonesMode !== 'none') {
         synthHighlights.forEach((hi, sid) => {
+            // 'active' mode: the mirror follows the main window's eye buttons
+            if (mirrorZonesMode === 'active' && !hi.visible) return;
             const color = synthColors.get(sid);
             if (!color) return;
             synths.push({
@@ -2793,7 +2807,7 @@ function pushMirrorZones() {
             });
         });
     }
-    const payload = { showZones: mirrorShowZones, synths };
+    const payload = { showZones: mirrorZonesMode !== 'none', synths };
     const json = JSON.stringify(payload);
     if (json === lastMirrorZonesJson) return;
     lastMirrorZonesJson = json;
@@ -2801,6 +2815,7 @@ function pushMirrorZones() {
 }
 
 updateMirrorButtonStates();
+updateMirrorZonesButton(); // reflect the initial mode on the (disabled) button
 
 // ---------- Init ----------
 syncLabels();
@@ -3896,6 +3911,8 @@ function createSynthElement(id, cfg = null) {
         hi._wasVisible = hi.visible;
         if (hi.visible) drawRangeHighlight(id);
         else            clearRangeHighlight(id);
+        // The mirror's 'active' mode follows the eye buttons
+        pushMirrorZones();
     });
 
     // Zone drawing: arm/cancel the rectangle-drawing mode on the image.

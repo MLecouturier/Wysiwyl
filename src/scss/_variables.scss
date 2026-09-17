@@ -26,8 +26,12 @@ $color-disactivated: #555;
 // - $color-stop (red): playback in progress (stop affordance),
 //   and destructive action awaiting confirmation (synth removal)
 // - $color-accent-alt (green): transient confirmation (template saved, LED)
+// - $color-selective (orange): in-between state of a three-state toggle —
+//   the mirror zones button following the main window's eye buttons
 $color-stop: #c0392b;
 $color-stop-hover: #a5281b;
+$color-selective: #e67e22;
+$color-selective-hover: #d35400;
 
 // Neutral filled background for small transport controls (bpm steps)
 $color-bg-neutral: #444;

@@ -313,6 +313,13 @@ button.toggle-btn.active {
 button.toggle-btn.active:hover {
   background-color: #2d5fa8;
 }
+button.toggle-btn.active.selective {
+  background-color: #e67e22;
+  border-color: #e67e22;
+}
+button.toggle-btn.active.selective:hover {
+  background-color: #d35400;
+}
 
 .controls {
   position: relative;

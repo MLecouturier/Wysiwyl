@@ -26,10 +26,15 @@ pub struct SessionUi {
     pub simplify: f32,
     #[serde(default)]
     pub auto_levels: bool,
-    /// Zones visible in the projection mirror window. Absent in sessions
-    /// saved before the feature: the mirror starts with zones hidden.
-    #[serde(default)]
-    pub mirror_show_zones: bool,
+    /// Zone display mode of the projection mirror (see
+    /// `deserialize_mirror_zones_mode`). Absent when the frontend state
+    /// predates the three-mode toggle.
+    #[serde(
+        alias = "mirror_show_zones",
+        default = "default_mirror_zones_mode",
+        deserialize_with = "deserialize_mirror_zones_mode"
+    )]
+    pub mirror_zones_mode: String,
     pub synth_colors: Vec<SynthUiEntry>,
 }
 
@@ -37,6 +42,46 @@ pub struct SessionUi {
 pub struct SynthUiEntry {
     pub id: u32,
     pub color: String,
+}
+
+/// Zone display mode of the projection mirror when the session (or the
+/// frontend state) predates the three-mode toggle: zones hidden, the
+/// historical default.
+fn default_mirror_zones_mode() -> String {
+    "none".into()
+}
+
+/// Deserializes the mirror's zone display mode: "all" (every synth's
+/// zones), "active" (only the synths whose eye button is on in the main
+/// window) or "none". Sessions saved with the older two-state toggle
+/// store a boolean instead: `true` loads as "all", `false` as "none".
+fn deserialize_mirror_zones_mode<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct MirrorZonesModeVisitor;
+
+    impl<'de> serde::de::Visitor<'de> for MirrorZonesModeVisitor {
+        type Value = String;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str(r#"a mirror zones mode ("all", "active", "none") or a legacy boolean"#)
+        }
+
+        fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<Self::Value, E> {
+            match value {
+                "all" | "active" | "none" => Ok(value.into()),
+                _ => Err(E::custom(format!("unknown mirror zones mode: {value}"))),
+            }
+        }
+
+        // Legacy two-state toggle: zones shown or hidden
+        fn visit_bool<E: serde::de::Error>(self, value: bool) -> Result<Self::Value, E> {
+            Ok(if value { "all".into() } else { "none".into() })
+        }
+    }
+
+    deserializer.deserialize_any(MirrorZonesModeVisitor)
 }
 
 /// Image processing settings, saved as raw slider values so the restore
@@ -59,9 +104,13 @@ pub struct SessionImageSettings {
     pub simplify: f32,
     #[serde(default)]
     pub auto_levels: bool,
-    /// Zones visible in the projection mirror window (see SessionUi).
-    #[serde(default)]
-    pub mirror_show_zones: bool,
+    /// Zone display mode of the projection mirror (see SessionUi).
+    #[serde(
+        alias = "mirror_show_zones",
+        default = "default_mirror_zones_mode",
+        deserialize_with = "deserialize_mirror_zones_mode"
+    )]
+    pub mirror_zones_mode: String,
 }
 
 /// A synthesizer as stored in a session file: its identity, display color,
@@ -196,7 +245,7 @@ pub async fn save_session(
             clarity: ui.clarity,
             simplify: ui.simplify,
             auto_levels: ui.auto_levels,
-            mirror_show_zones: ui.mirror_show_zones,
+            mirror_zones_mode: ui.mirror_zones_mode,
         },
         synths,
     };
@@ -396,10 +445,12 @@ mod tests {
         assert_eq!(s.grid_slider, 800);
     }
 
-    /// The mirror zones toggle is optional: sessions saved before the
-    /// feature load with zones hidden, newer ones round-trip the value.
+    /// The mirror zones mode is optional and accepts the legacy boolean:
+    /// sessions saved before the feature load with zones hidden, ones
+    /// saved with the two-state toggle map true → "all" / false → "none",
+    /// and the three modes round-trip.
     #[test]
-    fn image_settings_mirror_show_zones_defaults_and_round_trip() {
+    fn image_settings_mirror_zones_mode_compat_and_round_trip() {
         // Session saved before the feature: the key is absent
         let legacy = r##"{
             "grid_slider": 800,
@@ -408,9 +459,30 @@ mod tests {
             "posterize_levels": 4
         }"##;
         let s: SessionImageSettings = serde_json::from_str(legacy).unwrap();
-        assert!(!s.mirror_show_zones);
+        assert_eq!(s.mirror_zones_mode, "none");
 
-        // Newer session: the value survives a save → file → load cycle
+        // Two-state toggle era: the boolean maps onto the modes
+        let shown = r##"{
+            "grid_slider": 800,
+            "contrast": 10.0,
+            "brightness": 5,
+            "posterize_levels": 4,
+            "mirror_show_zones": true
+        }"##;
+        let s: SessionImageSettings = serde_json::from_str(shown).unwrap();
+        assert_eq!(s.mirror_zones_mode, "all");
+
+        let hidden = r##"{
+            "grid_slider": 800,
+            "contrast": 10.0,
+            "brightness": 5,
+            "posterize_levels": 4,
+            "mirror_show_zones": false
+        }"##;
+        let s: SessionImageSettings = serde_json::from_str(hidden).unwrap();
+        assert_eq!(s.mirror_zones_mode, "none");
+
+        // Newer session: the mode survives a save → file → load cycle
         let json = serde_json::to_string(&SessionImageSettings {
             grid_slider: 800,
             contrast: 10.0,
@@ -421,11 +493,21 @@ mod tests {
             clarity: 0.0,
             simplify: 0.0,
             auto_levels: true,
-            mirror_show_zones: true,
+            mirror_zones_mode: "active".into(),
         })
         .unwrap();
         let restored: SessionImageSettings = serde_json::from_str(&json).unwrap();
-        assert!(restored.mirror_show_zones);
+        assert_eq!(restored.mirror_zones_mode, "active");
+
+        // An unknown mode is a parse error rather than a silent fallback
+        let invalid = r##"{
+            "grid_slider": 800,
+            "contrast": 10.0,
+            "brightness": 5,
+            "posterize_levels": 4,
+            "mirror_zones_mode": "sometimes"
+        }"##;
+        assert!(serde_json::from_str::<SessionImageSettings>(invalid).is_err());
     }
 
     /// Round-trip check: a synth's full parameter set survives a

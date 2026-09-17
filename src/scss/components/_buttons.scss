@@ -6,9 +6,10 @@
 // - .secondary:  cancel / reset
 // - .icon-btn:   every icon-only button, one size everywhere
 // - .toggle-btn: text on/off toggle
-// The `.active` state is always the accent color, with two documented
-// exceptions: the play button (red = stop affordance, see .synth-play) and
-// the template-save button (green = transient confirmation).
+// The `.active` state is always the accent color, with three documented
+// exceptions: the play button (red = stop affordance, see .synth-play),
+// the template-save button (green = transient confirmation), and the
+// mirror zones toggle (amber = selective state, see .selective).
 // Likewise, the synth-remove button turns red on hover/armed state
 // (destructive action pending confirmation, see .synth-remove).
 @use '../variables' as *;
@@ -87,5 +88,14 @@ button.toggle-btn {
         color: white;
 
         &:hover { background-color: $color-accent-hover; }
+    }
+
+    // Selective state of the mirror zones toggle: only the synths visible
+    // in the main window are projected — orange marks the in-between state
+    &.active.selective {
+        background-color: $color-selective;
+        border-color: $color-selective;
+
+        &:hover { background-color: $color-selective-hover; }
     }
 }

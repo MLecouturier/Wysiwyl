@@ -17,9 +17,10 @@ let gridH = 0;
 let zoneData   = null; // last { showZones, synths } snapshot
 let cursorData = null; // last { cursors } snapshot
 
-// Draws every synth's zones on the overlay when the mirror toggle is on.
-// Unlike the main window, there is no per-synth visibility filter: the
-// projection shows all zones, playing synths included.
+// Draws the zones received from the main window on the overlay when the
+// mirror toggle is on. The filtering (every synth, only those whose eye
+// button is active, or nothing) happens on the main window's side: the
+// mirror renders exactly what it receives.
 function drawZonesOverlay() {
     const ctx = overlay.getContext('2d');
     ctx.clearRect(0, 0, overlay.width, overlay.height);
