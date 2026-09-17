@@ -509,7 +509,7 @@ function clearOverlay() {
 }
 
 // ---------- Mouse-based zone selection ----------
-// Only one synth can be in zone-drawing mode at a time. Two modes:
+// Only one synth can be in zone-drawing mode at a time. Three modes:
 // - rect:  each rectangle dragged on the image either adds a zone (when
 //          it overlaps no existing zone) or removes pixels from the
 //          existing zones (when it overlaps one, even partially).
@@ -519,12 +519,17 @@ function clearOverlay() {
 //          under the playhead, which never lose their selection while
 //          the synth is playing. Releasing the button closes the shape
 //          with a straight line back to the start point.
-// Holding Alt (Option) while using either tool edits the manual silences
-// instead of the selection: the same positional (rect) / XOR (lasso)
-// semantics apply to the silent pixels among the selected ones. A silent
-// pixel is still travelled by the playhead, it just sounds nothing —
-// a rest. Silences always live within the selection: deselecting a pixel
-// removes its silence.
+// - wand:  magic-wand click. Every pixel 4-connected to the clicked one
+//          whose color stays within the tolerance (largest per-channel
+//          difference, 1–255 on the per-channel 0–255 scale)
+//          toggles with the same XOR semantics as the lasso. Committed
+//          on the click itself: no drag.
+// Holding Alt (Option) while using any of the three tools edits the
+// manual silences instead of the selection: the same positional (rect) /
+// XOR (lasso, wand) semantics apply to the silent pixels among the
+// selected ones. A silent pixel is still travelled by the playhead, it
+// just sounds nothing — a rest. Silences always live within the
+// selection: deselecting a pixel removes its silence.
 let zonePickState = null; // { id, btn, mode } while the drawing mode is armed
 let zoneDrag = null;      // { id, start, cur, alt } while dragging a rectangle
 let lassoDrag = null;    // { id, points: [{x, y} image coords], start: {col, row}, alt } while drawing a lasso
@@ -637,6 +642,9 @@ function startZonePicking(id, btn, mode = 'rect') {
     }
     zonePickState = { id, btn, mode };
     btn.classList.add('active');
+    // The tolerance input only shows while the magic-wand mode is armed
+    // on this card
+    if (mode === 'wand') btn.closest('.synth-block')?.classList.add('wand-armed');
     pixelOverlay.classList.add('picking');
     syncAltPickingUi(); // reflect the Alt key if it is already held
     // Editing blind is confusing: arming the picking mode reveals this
@@ -654,6 +662,7 @@ function startZonePicking(id, btn, mode = 'rect') {
 function cancelZonePicking() {
     if (!zonePickState) return;
     zonePickState.btn.classList.remove('active');
+    zonePickState.btn.closest('.synth-block')?.classList.remove('wand-armed');
     pixelOverlay.classList.remove('picking');
     pixelOverlay.classList.remove('picking-silence');
     zonePickState = null;
@@ -702,6 +711,18 @@ pixelOverlay.addEventListener('mousedown', (e) => {
     if (zonePickState.mode === 'lasso') {
         const pt = imagePointFromClient(e.clientX, e.clientY);
         lassoDrag = { id: zonePickState.id, points: [pt], start: cell, alt: e.altKey || altHeld };
+    } else if (zonePickState.mode === 'wand') {
+        // The wand commits on the click itself — no drag state, so the
+        // mousemove/mouseup listeners stay no-ops. The tolerance is read
+        // from the armed card's input at click time.
+        const card = zonePickState.btn.closest('.synth-block');
+        const raw = parseInt(card?.querySelector('.magic-wand-tolerance')?.value, 10);
+        const tolerance = Math.max(1, Math.min(255, Number.isFinite(raw) ? raw : 32));
+        const toggled = (e.altKey || altHeld)
+            ? wandToggleMutePixels(zonePickState.id, cell, tolerance)
+            : wandTogglePixels(zonePickState.id, cell, tolerance);
+        if (toggled) redrawAllHighlights();
+        return;
     } else {
         zoneDrag = { id: zonePickState.id, start: cell, cur: cell, alt: e.altKey || altHeld };
     }
@@ -956,6 +977,38 @@ function lassoEnclosedCells(points, start) {
     return enclosed;
 }
 
+// Flood fill for the magic wand: every cell 4-connected to the clicked
+// one whose color stays within `tolerance` of the clicked cell's color
+// (edge adjacency like everywhere else — a corner touch is NOT
+// contiguous). The color distance is the largest per-channel difference
+// (Chebyshev) on the 0–255 scale, the tolerance input (1–255) being that
+// difference directly. Returned as "col,row" keys.
+function wandFloodCells(startCell, tolerance) {
+    const { rgba } = processedPixels;
+    const seedIdx = (startCell.row * gridW + startCell.col) * 4;
+    const sr = rgba[seedIdx], sg = rgba[seedIdx + 1], sb = rgba[seedIdx + 2];
+    const limit = tolerance;
+    const flooded = new Set([`${startCell.col},${startCell.row}`]);
+    const queue = [startCell];
+    while (queue.length > 0) {
+        const { col, row } = queue.pop();
+        for (const [nx, ny] of [[col + 1, row], [col - 1, row], [col, row + 1], [col, row - 1]]) {
+            if (nx < 0 || ny < 0 || nx >= gridW || ny >= gridH) continue;
+            const key = `${nx},${ny}`;
+            if (flooded.has(key)) continue;
+            const i = (ny * gridW + nx) * 4;
+            if (Math.max(
+                Math.abs(rgba[i] - sr),
+                Math.abs(rgba[i + 1] - sg),
+                Math.abs(rgba[i + 2] - sb),
+            ) > limit) continue;
+            flooded.add(key);
+            queue.push({ col: nx, row: ny });
+        }
+    }
+    return flooded;
+}
+
 // Lasso on the selection: every pixel enclosed by the traced polygon
 // (boundary included, closure line from the release point back to the
 // start) toggles — unselected becomes selected, selected becomes
@@ -1020,6 +1073,83 @@ function lassoToggleMutePixels(id, points, start) {
 
     let changed = false;
     for (const key of enclosed) {
+        if (!selected.has(key)) continue; // silences live in the selection
+        if (muted.has(key)) {
+            muted.delete(key);
+            changed = true;
+        } else {
+            muted.add(key);
+            changed = true;
+        }
+    }
+    if (!changed) return false;
+
+    hi.muteZones = rebuildZones(hi.muteZones, muted);
+    sendSynthMuteZones(id);
+    return true;
+}
+
+// Magic wand on the selection: every pixel 4-connected to the clicked
+// one whose color stays within the tolerance toggles — unselected
+// becomes selected, selected becomes deselected (XOR, like the lasso).
+// Pixels of the zone under the playhead (while the synth plays) are
+// exempt from deselection. Returns true when the selection changed.
+function wandTogglePixels(id, startCell, tolerance) {
+    const hi = synthHighlights.get(id);
+    if (!hi) return false;
+
+    const flooded = wandFloodCells(startCell, tolerance);
+
+    // Zone under the playhead: its pixels never lose their selection
+    const locked = zoneAtPixel(id, synthCursors.get(id));
+
+    // Current selection as a cell set
+    const selected = cellSetFromZones(hi.zones);
+
+    // Toggle each flooded pixel (XOR), skipping locked pixels that
+    // would be deselected
+    let changed = false;
+    for (const key of flooded) {
+        const isSelected = selected.has(key);
+        if (isSelected) {
+            const [col, row] = key.split(',').map(Number);
+            if (locked && zoneContains(locked, col, row)) {
+                continue; // exempt from deselection
+            }
+            selected.delete(key);
+            changed = true;
+        } else {
+            selected.add(key);
+            changed = true;
+        }
+    }
+    if (!changed) return false;
+
+    // Rebuild the selection as connected components with inherited
+    // creation orders
+    hi.zones = rebuildZones(hi.zones, selected);
+    sendSynthZones(id);
+    // Deselected pixels lose their silence
+    clipMuteZonesToSelection(id);
+    updateZonesLabel(id);
+    return true;
+}
+
+// Magic wand on the manual silences (Alt held): every flooded selected
+// pixel toggles — played becomes silent, silent becomes played. Pixels
+// that are not selected are ignored (a silence always lives inside the
+// selection). Returns true when the silences changed.
+function wandToggleMutePixels(id, startCell, tolerance) {
+    const hi = synthHighlights.get(id);
+    if (!hi) return false;
+
+    const flooded = wandFloodCells(startCell, tolerance);
+
+    const selected = cellSetFromZones(hi.zones);
+    const muted = muteCellSet(hi);
+
+    let changed = false;
+    for (const key of flooded) {
         if (!selected.has(key)) continue; // silences live in the selection
         if (muted.has(key)) {
             muted.delete(key);
@@ -3356,6 +3486,10 @@ function createSynthElement(id, cfg = null) {
                     <button class="synth-lasso-add-zone-btn icon-btn" data-i18n-title="synth.addZoneLasso">
                         <span class="material-symbols-outlined" aria-hidden="true">lasso_select</span>
                     </button>
+                    <button class="synth-magic-wand-add-zone-btn icon-btn" data-i18n-title="synth.addZoneMagicWand">
+                        <span class="material-symbols-outlined" aria-hidden="true">wand_shine</span>
+                    </button>
+                    <input type="number" class="magic-wand-tolerance" value="32" min="1" max="255" step="1" data-i18n-title="synth.magicWandTolerance" />
                     <button class="synth-select-all-btn icon-btn" data-i18n-title="synth.selectAllZones">
                         <span class="material-symbols-outlined" aria-hidden="true">select_all</span>
                     </button>
@@ -3957,6 +4091,18 @@ function createSynthElement(id, cfg = null) {
             cancelZonePicking();
         } else {
             startZonePicking(id, btn, 'lasso');
+        }
+    });
+
+    // Magic wand: arm/cancel the similar-color selection mode on the
+    // image. The tolerance input shows up in the zones header while the
+    // mode is armed on this card.
+    el.querySelector('.synth-magic-wand-add-zone-btn').addEventListener('click', (e) => {
+        const btn = e.currentTarget;
+        if (zonePickState && zonePickState.id === id && zonePickState.mode === 'wand') {
+            cancelZonePicking();
+        } else {
+            startZonePicking(id, btn, 'wand');
         }
     });
 
