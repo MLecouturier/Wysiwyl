@@ -1801,10 +1801,14 @@ loadBtn.addEventListener('click', async () => {
     viewerEmpty.classList.add('hidden');
 
     syncLabels();
-    // The grid change goes through the live-change flow: the zones of
-    // the previous image are repositioned onto the new one (proportional
-    // position, fused when overlapping) instead of being clipped away
-    await setGridWidthLive();
+    // A new image invalidates every zone: they are grid coordinates of
+    // the previous image and carry no meaning here (same policy as the
+    // reshape operations). resetAllSynthZones clears them on the UI and
+    // backend sides alike (silences too — they live within the
+    // selection), then the plain refresh re-renders the grid: the
+    // zone re-push inside it is a no-op (everything is already empty).
+    resetAllSynthZones();
+    await refresh();
   } catch (err) {
     console.error('Error while loading the image:', err);
     dimensionsInfo.textContent = translateError(err);
