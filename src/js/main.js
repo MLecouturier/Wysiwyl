@@ -1,5 +1,9 @@
 import { initI18n, t, translateError, getLocale, setLocale, AVAILABLE_LOCALES, applyTranslations } from './i18n.js';
 import { computeLayout, cellSetFromZones, drawZones, drawCursorCell } from './viewer-render.js';
+import {
+    seedZoneOrder, rectZone, zoneCellSet, zoneContains,
+    zoneIntersectsRect, zonesPixelCount, rebuildZones,
+} from './zones.js';
 
 const { invoke } = window.__TAURI__.core;
 const { emit, listen } = window.__TAURI__.event;
@@ -564,20 +568,12 @@ window.addEventListener('blur', () => {
     syncAltPickingUi();
 });
 
-// Do two grid rectangles overlap (even partially)?
-function rectsOverlap(a, b) {
-    return a.x < b.x + b.w &&
-           a.y < b.y + b.h &&
-           a.x + a.w > b.x &&
-           a.y + a.h > b.y;
-}
-
 // Does the rectangle overlap (even partially) one of the synth's zones?
 // Such a drag removes pixels instead of creating an overlapping zone.
 function rectOverlapsZones(id, rect) {
     const hi = synthHighlights.get(id);
     if (!hi) return false;
-    return hi.zones.some(z => rectsOverlap(rect, z));
+    return hi.zones.some(z => zoneIntersectsRect(z, rect));
 }
 
 // Normalized grid rect of the zone drag in progress, or null
@@ -600,10 +596,7 @@ function zoneAtPixel(id, pixel, w = gridW) {
     if (!hi) return null;
     const col = pixel % w;
     const row = Math.floor(pixel / w);
-    return hi.zones.find(z =>
-        col >= z.x && col < z.x + z.w &&
-        row >= z.y && row < z.y + z.h
-    ) || null;
+    return hi.zones.find(z => zoneContains(z, col, row)) || null;
 }
 
 // While a synth is playing, the zone under its playhead is locked against
@@ -618,7 +611,7 @@ function cancelEraseDragOnLockedZone(id, playheadPixel, gridWidth = gridW) {
     const rect = zoneDragRect();
     if (!rect || !rectOverlapsZones(id, rect)) return false;
     const locked = zoneAtPixel(id, playheadPixel, gridWidth);
-    if (locked && rectsOverlap(rect, locked)) {
+    if (locked && zoneIntersectsRect(locked, rect)) {
         zoneDrag = null;
         redrawAllHighlights();
         return true;
@@ -989,10 +982,9 @@ function lassoTogglePixels(id, points, start) {
         const isSelected = selected.has(key);
         if (isSelected) {
             const [col, row] = key.split(',').map(Number);
-            const inLocked = locked &&
-                col >= locked.x && col < locked.x + locked.w &&
-                row >= locked.y && row < locked.y + locked.h;
-            if (inLocked) continue; // exempt from deselection
+            if (locked && zoneContains(locked, col, row)) {
+                continue; // exempt from deselection
+            }
             selected.delete(key);
             changed = true;
         } else {
@@ -1002,8 +994,9 @@ function lassoTogglePixels(id, points, start) {
     }
     if (!changed) return false;
 
-    // Rebuild the selection as merged rectangles
-    hi.zones = lassoCellsToZones(selected);
+    // Rebuild the selection as connected components with inherited
+    // creation orders
+    hi.zones = rebuildZones(hi.zones, selected);
     sendSynthZones(id);
     // Deselected pixels lose their silence
     clipMuteZonesToSelection(id);
@@ -1038,93 +1031,47 @@ function lassoToggleMutePixels(id, points, start) {
     }
     if (!changed) return false;
 
-    hi.muteZones = lassoCellsToZones(muted);
+    hi.muteZones = rebuildZones(hi.muteZones, muted);
     sendSynthMuteZones(id);
     return true;
 }
 
-// Converts a cell set into grid rectangles: contiguous horizontal runs
-// are merged into one rect each, then runs aligned vertically (same x,
-// same width, adjacent rows) merge further. Keeps the zone list compact
-// while the backend only understands rectangles.
-function lassoCellsToZones(cells) {
-    // Row → sorted columns
-    const rows = new Map();
-    for (const key of cells) {
-        const [col, row] = key.split(',').map(Number);
-        if (!rows.has(row)) rows.set(row, []);
-        rows.get(row).push(col);
-    }
-    // Horizontal runs
-    const runs = [];
-    for (const [row, cols] of rows) {
-        cols.sort((a, b) => a - b);
-        let start = cols[0];
-        let prev = cols[0];
-        for (let i = 1; i <= cols.length; i++) {
-            if (cols[i] !== prev + 1) {
-                runs.push({ x: start, y: row, w: prev - start + 1, h: 1 });
-                start = cols[i];
-            }
-            prev = cols[i];
-        }
-    }
-    // Vertical merge: same x and width, consecutive rows
-    runs.sort((a, b) => a.x - b.x || a.w - b.w || a.y - b.y);
-    const zones = [];
-    for (const run of runs) {
-        const top = zones[zones.length - 1];
-        if (top &&
-            top.x === run.x && top.w === run.w && top.y + top.h === run.y) {
-            top.h += run.h;
-        } else {
-            zones.push({ ...run });
-        }
-    }
-    return zones;
-}
-
-// Adds a zone rectangle (or single cell) to a synth's selection
-function addSynthZone(id, zone) {
+// Adds a rectangle (or single cell) to a synth's selection: the exact
+// cell union is rebuilt as connected components — a rectangle touching
+// an existing zone fuses with it (contiguity is one zone), a disjoint
+// one becomes a fresh zone with a new creation order.
+function addSynthZone(id, rect) {
     const hi = synthHighlights.get(id);
     if (!hi) return;
-    hi.zones.push(zone);
+    const cells = zoneCellSet(hi.zones);
+    for (let row = rect.y; row < rect.y + rect.h; row++) {
+        for (let col = rect.x; col < rect.x + rect.w; col++) {
+            cells.add(`${col},${row}`);
+        }
+    }
+    hi.zones = rebuildZones(hi.zones, cells);
     sendSynthZones(id);
     updateZonesLabel(id);
 }
 
-// Subtracts a rectangle from the synth's zones. Sub-zones that end up empty
-// are dropped; a zone split by the rectangle is cut into up to 4 bands.
+// Subtracts a rectangle from the synth's zones: the exact difference is
+// rebuilt as connected components, so a zone cut in the middle splits
+// into two fragments that both keep its creation order. Deselected
+// pixels lose their silence.
 function removeSynthZoneRect(id, rect) {
     const hi = synthHighlights.get(id);
     if (!hi) return;
-    const next = [];
-    for (const z of hi.zones) {
-        for (const r of subtractRect(z, rect)) next.push(r);
+    const cells = zoneCellSet(hi.zones);
+    for (let row = rect.y; row < rect.y + rect.h; row++) {
+        for (let col = rect.x; col < rect.x + rect.w; col++) {
+            cells.delete(`${col},${row}`);
+        }
     }
-    hi.zones = next;
+    hi.zones = rebuildZones(hi.zones, cells);
     sendSynthZones(id);
     // Deselected pixels lose their silence
     clipMuteZonesToSelection(id);
     updateZonesLabel(id);
-}
-
-// Computes zone `z` minus rectangle `r`: returns the 0–4 remaining
-// rectangles (top band, bottom band, left band, right band).
-function subtractRect(z, r) {
-    // Intersection bounds; no overlap → the zone is kept intact
-    const x1 = Math.max(z.x, r.x);
-    const y1 = Math.max(z.y, r.y);
-    const x2 = Math.min(z.x + z.w, r.x + r.w);
-    const y2 = Math.min(z.y + z.h, r.y + r.h);
-    if (x1 >= x2 || y1 >= y2) return [z];
-
-    const result = [];
-    if (z.y < y1) result.push({ x: z.x, y: z.y, w: z.w, h: y1 - z.y });
-    if (y2 < z.y + z.h) result.push({ x: z.x, y: y2, w: z.w, h: (z.y + z.h) - y2 });
-    if (z.x < x1) result.push({ x: z.x, y: y1, w: x1 - z.x, h: y2 - y1 });
-    if (x2 < z.x + z.w) result.push({ x: x2, y: y1, w: (z.x + z.w) - x2, h: y2 - y1 });
-    return result;
 }
 
 function sendSynthZones(id) {
@@ -1137,21 +1084,13 @@ function sendSynthZones(id) {
 // ---------- Manual silences (Alt + square/lasso) ----------
 // Silent pixels chosen by hand among the selected ones: the playhead
 // still travels over them, but no note is sounded (a rest). They are
-// stored as zone rectangles, like the selection, and always clipped to
-// it: deselecting a pixel removes its silence.
+// stored as connected components, like the selection, and always
+// clipped to it: deselecting a pixel removes its silence.
 
 // Builds the set of manually silenced cells of a synth from its mute
-// zone rectangles.
+// zones.
 function muteCellSet(hi) {
-    const cells = new Set();
-    for (const z of hi.muteZones) {
-        for (let row = z.y; row < z.y + z.h; row++) {
-            for (let col = z.x; col < z.x + z.w; col++) {
-                cells.add(`${col},${row}`);
-            }
-        }
-    }
-    return cells;
+    return cellSetFromZones(hi.muteZones);
 }
 
 // Does the rectangle overlap (even partially) one of the synth's mute
@@ -1159,37 +1098,39 @@ function muteCellSet(hi) {
 function rectOverlapsMuteZones(id, rect) {
     const hi = synthHighlights.get(id);
     if (!hi) return false;
-    return hi.muteZones.some(z => rectsOverlap(rect, z));
+    return hi.muteZones.some(z => zoneIntersectsRect(z, rect));
 }
 
 // Adds a silence rectangle (Alt + square over free space): the dragged
-// rectangle silences the pixels it covers, restricted to the selection.
+// rectangle silences the selected pixels it covers; touching silence
+// components fuse, like the selection.
 function addSynthMuteRect(id, rect) {
     const hi = synthHighlights.get(id);
     if (!hi) return;
     const selected = cellSetFromZones(hi.zones);
-    const cells = new Set();
+    const cells = muteCellSet(hi);
     for (let row = rect.y; row < rect.y + rect.h; row++) {
         for (let col = rect.x; col < rect.x + rect.w; col++) {
             const key = `${col},${row}`;
             if (selected.has(key)) cells.add(key);
         }
     }
-    if (cells.size === 0) return;
-    hi.muteZones.push(...lassoCellsToZones(cells));
+    hi.muteZones = rebuildZones(hi.muteZones, cells);
     sendSynthMuteZones(id);
 }
 
 // Subtracts a silence rectangle (Alt + square over an existing silence):
-// same band-cutting as the zone erasure.
+// exact difference, components recomposed.
 function removeSynthMuteRect(id, rect) {
     const hi = synthHighlights.get(id);
     if (!hi) return;
-    const next = [];
-    for (const z of hi.muteZones) {
-        for (const r of subtractRect(z, rect)) next.push(r);
+    const cells = muteCellSet(hi);
+    for (let row = rect.y; row < rect.y + rect.h; row++) {
+        for (let col = rect.x; col < rect.x + rect.w; col++) {
+            cells.delete(`${col},${row}`);
+        }
     }
-    hi.muteZones = next;
+    hi.muteZones = rebuildZones(hi.muteZones, cells);
     sendSynthMuteZones(id);
 }
 
@@ -1203,7 +1144,7 @@ function clipMuteZonesToSelection(id) {
     const muted = muteCellSet(hi);
     const kept = new Set([...muted].filter(k => selected.has(k)));
     if (kept.size === muted.size) return; // nothing deselected
-    hi.muteZones = lassoCellsToZones(kept);
+    hi.muteZones = rebuildZones(hi.muteZones, kept);
     sendSynthMuteZones(id);
 }
 
@@ -1235,19 +1176,14 @@ function sendSynthNoteLengths(id, el) {
         .catch(err => console.error('Error in set_synth_note_lengths:', err));
 }
 
-// Number of pixels a synth will play: the sum of its zone areas (clipped
-// to the grid), 0 when no zone is selected. Overlapping zones are counted
-// twice, mirroring the backend's playback sequence.
+// Number of pixels a synth will play: the exact count of its zones'
+// cells, 0 when no zone is selected. With the exact component model the
+// count matches the backend's sequence length (the historical rectangle
+// model double-counted overlaps).
 function synthSequenceLength(id) {
     const hi = synthHighlights.get(id);
     if (!hi) return 0;
-    let total = 0;
-    for (const z of hi.zones) {
-        const w = Math.min(z.w, gridW - z.x);
-        const h = Math.min(z.h, gridH - z.y);
-        if (w > 0 && h > 0) total += w * h;
-    }
-    return total;
+    return zonesPixelCount(hi.zones);
 }
 
 // "zones-val" shows the number of selected pixels for the synth.
@@ -1299,14 +1235,14 @@ function computeMuteCells(synthId, hi) {
     if (bounds && processedPixels && (bounds.min > 0 || bounds.max < 127)) {
         const { width: pw, rgba } = processedPixels;
         for (const z of hi.zones) {
-            for (let row = z.y; row < z.y + z.h; row++) {
-                for (let col = z.x; col < z.x + z.w; col++) {
-                    const i = (row * pw + col) * 4;
+            for (const r of z.runs) {
+                for (let col = r.x0; col <= r.x1; col++) {
+                    const i = (r.y * pw + col) * 4;
                     if (i + 2 >= rgba.length) continue; // torn zone edge
                     const luma = 0.299 * rgba[i] + 0.587 * rgba[i + 1] + 0.114 * rgba[i + 2];
                     const level = Math.round(luma / 255 * 127);
                     if (level >= bounds.min && level <= bounds.max) continue;
-                    muteCells.add(`${col},${row}`);
+                    muteCells.add(`${col},${r.y}`);
                 }
             }
         }
@@ -1769,6 +1705,12 @@ function applyGridChangeResult(decoded) {
         hi.muteZones = s.muteZones;
         updateZonesLabel(s.id);
     }
+    // The remap fused and split components: re-seed the order counter
+    // past every order the backend produced
+    seedZoneOrder([
+        ...decoded.synths.flatMap(s => s.zones || []),
+        ...decoded.synths.flatMap(s => s.muteZones || []),
+    ]);
     redrawAllHighlights();
     pushMirrorImage();
     pushMirrorZones();
@@ -2518,18 +2460,18 @@ loadSessionBtn.addEventListener('click', async () => {
             synthDevices.appendChild(createSynthElement(s.id, s));
             const hi = synthHighlights.get(s.id);
             if (hi) {
+                // Zones come as run-encoded components; the backend
+                // already holds them (load_session restored its side)
                 hi.zones = s.zones || [];
                 hi.muteZones = s.mute_zones || [];
-                // Version 1 sessions: an empty zone list implicitly meant
-                // "whole image". Materialize it explicitly to keep the old
-                // behavior (since version 2, empty = nothing selected).
-                if ((session.version ?? 1) < 2 && hi.zones.length === 0) {
-                    hi.zones = [{ x: 0, y: 0, w: gridW, h: gridH }];
-                    sendSynthZones(s.id);
-                }
             }
             updateZonesLabel(s.id);
         }
+        // New zones must never collide with the restored creation orders
+        seedZoneOrder([
+            ...Array.from(synthHighlights.values()).flatMap(hi => hi.zones),
+            ...Array.from(synthHighlights.values()).flatMap(hi => hi.muteZones),
+        ]);
         redrawAllHighlights();
         // Normalize the ids of legacy session files (possible gaps after
         // deletions): the ids must match the display order again
@@ -4123,13 +4065,15 @@ function createSynthElement(id, cfg = null) {
         }
     });
 
-    // Select all: the whole image as a single explicit zone
+    // Select all: the whole image as a single zone (one run per row,
+    // no cell enumeration — a large grid must not materialize every
+    // cell as a key)
     el.querySelector('.synth-select-all-btn').addEventListener('click', () => {
         if (!hasImage) return;
         const hi = synthHighlights.get(id);
         if (!hi) return;
         if (zonePickState && zonePickState.id === id) cancelZonePicking();
-        hi.zones = [{ x: 0, y: 0, w: gridW, h: gridH }];
+        hi.zones = [rectZone(0, 0, gridW, gridH)];
         sendSynthZones(id);
         updateZonesLabel(id);
         redrawAllHighlights();
@@ -4167,18 +4111,11 @@ function createSynthElement(id, cfg = null) {
     return el;
 }
 
-// Deep equality of two zone lists (order-sensitive: the clip preserves
-// the zones' order). Used to skip the backend round trip of a refresh
-// that didn't change anything: an unconditional set_synth_zones remaps
-// the playhead and resets the deferred one-shot stop (end_pending),
-// which would re-trigger the final note of a finishing synth on every
-// value-slider refresh.
-function zonesEqual(a, b) {
-    if (a.length !== b.length) return false;
-    return a.every((z, i) =>
-        z.x === b[i].x && z.y === b[i].y && z.w === b[i].w && z.h === b[i].h
-    );
-}
+// Clip-then-push with a change guard: an unconditional set_synth_zones
+// remaps the playhead and resets the deferred one-shot stop
+// (end_pending), which would re-trigger the final note of a finishing
+// synth on every value-slider refresh. The clip only removes cells, so
+// equal sizes mean nothing changed.
 
 function updateAllSynthZones() {
     synthListBody.querySelectorAll('.synth-block').forEach(el => {
@@ -4186,21 +4123,18 @@ function updateAllSynthZones() {
         const hi = synthHighlights.get(synthId);
         if (!hi) return;
 
-        // Clip the zones to the new grid and drop the ones
-        // that no longer intersect the image
-        const clipped = hi.zones
-            .map(z => ({
-                x: z.x,
-                y: z.y,
-                w: Math.min(z.w, gridW - z.x),
-                h: Math.min(z.h, gridH - z.y),
-            }))
-            .filter(z => z.w > 0 && z.h > 0);
+        // Clip the zones to the new grid: cells outside disappear,
+        // then the components are recomposed (a clip can split one)
+        const cells = zoneCellSet(hi.zones);
+        const kept = new Set([...cells].filter(k => {
+            const [col, row] = k.split(',').map(Number);
+            return col < gridW && row < gridH;
+        }));
 
         // Only push when the clip actually changed something: a value
         // refresh (same grid) sends nothing at all
-        if (!zonesEqual(clipped, hi.zones)) {
-            hi.zones = clipped;
+        if (kept.size !== cells.size) {
+            hi.zones = rebuildZones(hi.zones, kept);
             sendSynthZones(synthId);
         }
         // Silences outside the new selection (or the new grid) disappear

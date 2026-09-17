@@ -27,14 +27,14 @@ export function computeLayout(viewW, viewH, gridW, gridH) {
     };
 }
 
-// Builds the set of selected cells from zone rectangles (or mute zone
-// rectangles): "col,row" keys, one per covered cell.
+// Builds the set of selected cells from zones (connected components
+// stored as runs): "col,row" keys, one per covered cell.
 export function cellSetFromZones(zones) {
     const cells = new Set();
     for (const z of zones) {
-        for (let row = z.y; row < z.y + z.h; row++) {
-            for (let col = z.x; col < z.x + z.w; col++) {
-                cells.add(`${col},${row}`);
+        for (const r of z.runs) {
+            for (let col = r.x0; col <= r.x1; col++) {
+                cells.add(`${col},${r.y}`);
             }
         }
     }
@@ -86,16 +86,18 @@ export function drawZones(ctx, layout, { color, zones, muteCells }) {
 
     ctx.save();
 
-    // Light fill of every zone rect: the image stays readable underneath
+    // Light fill of every zone run: the image stays readable underneath
     ctx.globalAlpha = 0.3;
     ctx.fillStyle = color;
     for (const z of zones) {
-        ctx.fillRect(
-            offsetX + z.x * cellW,
-            offsetY + z.y * cellH,
-            z.w * cellW,
-            z.h * cellH
-        );
+        for (const r of z.runs) {
+            ctx.fillRect(
+                offsetX + r.x0 * cellW,
+                offsetY + r.y * cellH,
+                (r.x1 - r.x0 + 1) * cellW,
+                cellH
+            );
+        }
     }
 
     // Single outline of the selection's union: one closed contour per

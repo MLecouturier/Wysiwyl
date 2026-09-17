@@ -1,9 +1,8 @@
 use crate::config::ConfigState;
 use crate::error::{err, AppError};
 use crate::metronome::remapped_cursor_for_grid;
-use crate::state::{
-    clip_zones_to_selection, merge_overlapping_zones, ImageState, PixelZone, SynthState,
-};
+use crate::state::{ImageState, SynthState, Zone};
+use crate::zone::{intersect_zone_selection, remap_zone_fixed_runs, union_zones};
 use base64::{engine::general_purpose, Engine as _};
 use image::{DynamicImage, GenericImageView, ImageFormat};
 use serde::{Deserialize, Serialize};
@@ -509,15 +508,16 @@ pub fn apply_image_adjustments(
 #[serde(rename_all = "camelCase")]
 pub struct GridChangeSynth {
     pub id: u32,
-    pub zones: Vec<PixelZone>,
-    pub mute_zones: Vec<PixelZone>,
+    pub zones: Vec<Zone>,
+    pub mute_zones: Vec<Zone>,
 }
 
 /// Changes the number of grid columns while synthesizers are playing,
 /// atomically: the image is re-rendered from the original, every
-/// synth's zones are repositioned (relative position kept, size fixed,
-/// clamped inside; overlapping zones fused) and its playhead remapped
-/// onto the same pixel, all under the same locks the metronome thread
+/// synth's zones are remapped run by run (fixed run length, relative
+/// position, clamped inside; zones that touch after the move fuse
+/// permanently through the exact union) and its playhead remapped onto
+/// the same pixel, all under the same locks the metronome thread
 /// takes — no tick ever sees a half-transition, so no synth stops
 /// itself and the playhead never jumps arbitrarily.
 ///
@@ -553,25 +553,31 @@ pub fn set_grid_width(
             let old_zones = std::mem::take(&mut synth.zones);
             let old_mutes = std::mem::take(&mut synth.mute_zones);
 
-            // Reposition (size kept, clamped inside), then fuse the zones
-            // that overlap after the move
-            let zones = merge_overlapping_zones(
-                old_zones
-                    .iter()
-                    .map(|&z| z.remap_to_grid(old_w, old_h, new_w, new_h))
-                    .filter(|z| z.w > 0 && z.h > 0)
-                    .collect(),
-            );
-            // Silences follow the same repositioning, then stay clipped
-            // to the selection they live in
-            let mutes = merge_overlapping_zones(clip_zones_to_selection(
-                &old_mutes
-                    .iter()
-                    .map(|&z| z.remap_to_grid(old_w, old_h, new_w, new_h))
-                    .filter(|z| z.w > 0 && z.h > 0)
-                    .collect::<Vec<_>>(),
-                &zones,
-            ));
+            // Remap every zone run by run (fixed run length, relative
+            // position, clamped inside), then recompose: zones that touch
+            // after the move fuse permanently (exact union, never a
+            // bounding box), fragments keep the eldest creation order
+            let remapped: Vec<Zone> = old_zones
+                .iter()
+                .flat_map(|z| remap_zone_fixed_runs(z, old_w, old_h, new_w, new_h))
+                .collect();
+            let zones = union_zones(&remapped);
+
+            // Silences follow the same run remap, then stay clipped to
+            // the exact cells of the selection they live in. Like the
+            // selection, all the silences of a synth form disjoint
+            // connected components: recompose through the exact union,
+            // fusing the ones that touch after the move (eldest order)
+            let mut mute_fragments: Vec<Zone> = Vec::new();
+            for m in &old_mutes {
+                for rm in remap_zone_fixed_runs(m, old_w, old_h, new_w, new_h) {
+                    let runs = intersect_zone_selection(&rm, &zones);
+                    if !runs.is_empty() {
+                        mute_fragments.extend(crate::zone::sorted_components(m.order, &runs));
+                    }
+                }
+            }
+            let mutes = union_zones(&mute_fragments);
 
             // Keep the playhead on the same pixel of the image; the
             // remap uses the zones as they were before the change to

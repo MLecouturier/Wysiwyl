@@ -6,6 +6,7 @@ pub mod midi;
 pub mod session;
 pub mod state;
 pub mod synth;
+pub mod zone;
 
 use config::ConfigState;
 use metronome::MetronomeState;

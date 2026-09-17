@@ -8,7 +8,7 @@ use tauri::{AppHandle, State};
 use crate::config::SynthTemplate;
 use crate::error::{err, AppError};
 use crate::image_processing::encode_to_base64_png;
-use crate::state::{ImageState, MidiState, PixelZone, ProgramState, SynthState};
+use crate::state::{ImageState, MidiState, ProgramState, SynthState, Zone};
 
 /// Frontend-owned state passed on save: metronome tempo, image processing
 /// sliders, and the synths' display colors (in list order).
@@ -114,10 +114,10 @@ pub struct SessionImageSettings {
 }
 
 /// A synthesizer as stored in a session file: its identity, display color,
-/// pixel zones (empty = nothing selected since version 2; in version 1 it
-/// implicitly meant the whole image), settings (flattened SynthTemplate),
-/// and the channel's program at save time so loading the session can
-/// reconfigure the instruments to the same sounds.
+/// pixel zones as exact connected components (empty = nothing selected),
+/// settings (flattened SynthTemplate), and the channel's program at save
+/// time so loading the session can reconfigure the instruments to the
+/// same sounds.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SessionSynth {
     pub id: u32,
@@ -128,11 +128,11 @@ pub struct SessionSynth {
     pub display_number: Option<u32>,
     pub name: Option<String>,
     pub color: String,
-    pub zones: Vec<PixelZone>,
+    pub zones: Vec<Zone>,
     /// Manually silenced pixels (rests) among the selected zones. Absent
     /// in sessions saved before the feature: nothing is muted.
     #[serde(default)]
-    pub mute_zones: Vec<PixelZone>,
+    pub mute_zones: Vec<Zone>,
     #[serde(default)]
     pub program: Option<ProgramState>,
     #[serde(flatten)]
@@ -141,7 +141,11 @@ pub struct SessionSynth {
 
 /// A self-contained work session: the original image (base64 PNG) plus
 /// everything needed to restore the exact same state. `version` allows
-/// future formats to stay backward-compatible.
+/// future formats to stay backward-compatible. Version 3 switched the
+/// zones from rectangles to exact run-length-encoded components; older
+/// files are refused at load with `session_version_unsupported`.
+pub const SESSION_VERSION: u32 = 3;
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SessionFile {
     pub version: u32,
@@ -232,7 +236,7 @@ pub async fn save_session(
         .collect();
 
     let file = SessionFile {
-        version: 2,
+        version: SESSION_VERSION,
         bpm: ui.bpm,
         image,
         image_settings: SessionImageSettings {
@@ -285,7 +289,22 @@ pub async fn load_session(
 
     let content = fs::read_to_string(path)
         .map_err(|e| err("session_read_error").with_param("details", e))?;
-    let file: SessionFile = serde_json::from_str(&content)
+
+    // Version gate, before any struct parsing: a session of an older
+    // format (rectangular zones, versions 1-2) is refused with a clear
+    // error instead of an opaque deserialization failure. The file's
+    // structure cannot be trusted enough to migrate reliably.
+    let raw: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|e| err("session_parse_error").with_param("details", e))?;
+    let version = raw
+        .get("version")
+        .and_then(|v| v.as_u64())
+        .ok_or_else(|| err("session_version_unsupported").with_param("version", "missing"))?;
+    if version != SESSION_VERSION as u64 {
+        return Err(err("session_version_unsupported").with_param("version", version));
+    }
+
+    let file: SessionFile = serde_json::from_value(raw)
         .map_err(|e| err("session_parse_error").with_param("details", e))?;
 
     // Decode the original image
@@ -389,19 +408,22 @@ mod tests {
     use crate::state::{NoteLength, ReadingDirection, Scale, SynthMode};
 
     /// A session saved before velocity_max existed must load with the
-    /// default (127), not fail or fall back to 0.
+    /// default (127), not fail or fall back to 0. (The zone rides along
+    /// to check the v3 run format deserializes too.)
     #[test]
     fn session_without_velocity_max_loads_with_default() {
         let json = r##"{
             "id": 1,
             "name": null,
             "color": "#3498db",
-            "zones": [{"x": 0, "y": 0, "w": 2, "h": 2}],
+            "zones": [{"order": 0, "runs": [{"y": 0, "x0": 0, "x1": 1}, {"y": 1, "x0": 0, "x1": 1}]}],
             "velocity_min": 40
         }"##;
         let s: SessionSynth = serde_json::from_str(json).unwrap();
         assert_eq!(s.settings.velocity_min, 40);
         assert_eq!(s.settings.velocity_max, 127);
+        assert_eq!(s.zones.len(), 1);
+        assert_eq!(s.zones[0].pixel_count(), 4);
         // velocity_relative didn't exist either: defaults to the
         // historical relative mapping
         assert!(s.settings.velocity_relative);
@@ -545,8 +567,8 @@ mod tests {
             display_number: Some(7),
             name: Some("Lead".into()),
             color: "#3498db".into(),
-            zones: vec![PixelZone { x: 2, y: 3, w: 5, h: 4 }],
-            mute_zones: vec![PixelZone { x: 3, y: 4, w: 1, h: 2 }],
+            zones: vec![Zone::from_rect(0, 2, 3, 5, 4)],
+            mute_zones: vec![Zone::from_rect(0, 3, 4, 1, 2)],
             program: Some(ProgramState {
                 bank_msb: Some(1),
                 bank_lsb: Some(32),

@@ -3,7 +3,7 @@ use tauri::State;
 use crate::config::ConfigState;
 use crate::error::{err, AppError};
 use crate::metronome::remapped_cursor;
-use crate::state::{NoteLength, PixelZone, ProgramState, ReadingDirection, Scale, Synth, SynthMode, SynthState, ImageState, MidiState};
+use crate::state::{NoteLength, ProgramState, ReadingDirection, Scale, Synth, SynthMode, SynthState, ImageState, MidiState, Zone};
 
 // --- Existing SynthConfig / SynthEngine (pure pixel-processing logic) ---
 // (unchanged, assumed to remain above or below in this file)
@@ -649,7 +649,7 @@ pub fn set_synth_channel_enabled(
 #[tauri::command]
 pub fn set_synth_zones(
     id: u32,
-    zones: Vec<PixelZone>,
+    zones: Vec<Zone>,
     state: State<SynthState>,
     image_state: State<ImageState>,
 ) -> Result<(), AppError> {
@@ -698,7 +698,7 @@ pub fn set_synth_zones(
 #[tauri::command]
 pub fn set_synth_mute_zones(
     id: u32,
-    zones: Vec<PixelZone>,
+    zones: Vec<Zone>,
     state: State<SynthState>,
 ) -> Result<(), AppError> {
     let mut synths = state.synths.lock().unwrap();

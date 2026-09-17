@@ -1,5 +1,5 @@
 use image::{DynamicImage, GenericImageView};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -10,8 +10,8 @@ use crate::config::ConfigState;
 use crate::error::{err, AppError};
 use crate::midi;
 use crate::state::{
-    ImageState, MidiState, NoteLength, PixelZone, ReadingDirection, Scale, Synth, SynthMode,
-    SynthState,
+    ImageState, MidiState, NoteLength, ReadingDirection, RowRun, Scale, Synth, SynthMode,
+    SynthState, Zone,
 };
 
 /// Computes the perceived brightness of an RGBA pixel (Rec.601 formula), 0.0–255.0.
@@ -254,11 +254,28 @@ fn process_polyphonic(
 }
 
 /// True when the pixel at (x, y) is covered by one of the given zones
-/// (rectangles in grid cells, same convention as build_pixel_sequence).
-fn pixel_in_zones(zones: &[PixelZone], x: u32, y: u32) -> bool {
-    zones
+/// (connected components, same convention as build_pixel_sequence).
+fn pixel_in_zones(zones: &[Zone], x: u32, y: u32) -> bool {
+    zones.iter().any(|z| z.contains(x, y))
+}
+
+/// The runs of a zone clipped to the image bounds (defensive: zones are
+/// normally already inside the grid, the frontend clips on its side).
+fn clamped_runs(zone: &Zone, width: usize, height: usize) -> Vec<RowRun> {
+    if width == 0 || height == 0 {
+        return Vec::new();
+    }
+    zone.runs
         .iter()
-        .any(|z| x >= z.x && x < z.x + z.w && y >= z.y && y < z.y + z.h)
+        .filter_map(|r| {
+            let y = r.y as usize;
+            if y >= height || (r.x0 as usize) >= width {
+                return None;
+            }
+            let x1 = (r.x1 as usize).min(width - 1) as u32;
+            Some(RowRun { x1, ..*r })
+        })
+        .collect()
 }
 
 /// Pushes the pixels of a rectangle in a spiral order, from its
@@ -324,21 +341,22 @@ fn push_spiral_rect(
 }
 
 /// Builds the flat, ordered list of pixel indices covered by the synth's
-/// zones. By default each zone is read in full, one after the other in
-/// drawing order, following the reading direction: line by line for the
-/// horizontal directions, column by column for the vertical ones, and
-/// with a spiral from the zone's top-left corner toward its center for
-/// the two spiral directions. With `sorted` the pixels of all zones are
-/// merged and ordered by their absolute position in the image (in the
-/// reading direction) — one continuous sweep instead of per-zone blocks —
-/// except for the spiral directions, where the spiral is computed
-/// globally over the whole selection (bounding box spiral, filtered to
-/// the selected pixels, deduplicated): a scattered selection then reads
-/// in a seemingly random yet reproducible order. An empty zone list
-/// yields an empty sequence (nothing selected); zones are clipped to
-/// the image bounds.
+/// zones (connected components). By default each component is read in
+/// full, one after the other in creation order (ties broken by the
+/// top-left corner), following the reading direction: run by run for
+/// the horizontal directions, column by column for the vertical ones,
+/// and with a spiral over the component's bounding box (filtered to its
+/// exact cells) for the two spiral directions. With `sorted` the pixels
+/// of all zones are merged and ordered by their absolute position in
+/// the image (in the reading direction) — one continuous sweep instead
+/// of per-component blocks — except for the spiral directions, where
+/// the spiral is computed globally over the whole selection (bounding
+/// box spiral, filtered to the selected pixels, deduplicated): a
+/// scattered selection then reads in a seemingly random yet
+/// reproducible order. An empty zone list yields an empty sequence
+/// (nothing selected); zones are clipped to the image bounds.
 pub(crate) fn build_pixel_sequence(
-    zones: &[PixelZone],
+    zones: &[Zone],
     width: usize,
     height: usize,
     direction: ReadingDirection,
@@ -346,92 +364,130 @@ pub(crate) fn build_pixel_sequence(
 ) -> Vec<usize> {
     let mut sequence = Vec::new();
 
-    // Spiral directions: per-zone spiral when unsorted, global spiral
-    // over the whole selection when sorted
-    if matches!(
-        direction,
-        ReadingDirection::Spiral | ReadingDirection::SpiralReverse
-    ) {
-        let clockwise = direction == ReadingDirection::Spiral;
-        if sorted {
-            // Global spiral: sweep the bounding box of every zone, keeping
-            // only the selected pixels (deduplicated — a pixel covered by
-            // overlapping zones would otherwise break the spiral)
-            let selected: HashSet<usize> = zones
-                .iter()
-                .flat_map(|zone| {
-                    let x0 = (zone.x as usize).min(width);
-                    let y0 = (zone.y as usize).min(height);
-                    let x1 = (x0 + zone.w as usize).min(width);
-                    let y1 = (y0 + zone.h as usize).min(height);
-                    (y0..y1).flat_map(move |y| (x0..x1).map(move |x| y * width + x))
-                })
-                .collect();
-            if selected.is_empty() {
-                return sequence;
-            }
-            // Bounding box of the zones, clamped to the image bounds (the
-            // sweep may cover unselected pixels; membership filtering
-            // happens afterwards)
-            let left = zones.iter().map(|z| z.x).min().unwrap_or(0) as usize;
-            let right = (zones.iter().map(|z| z.x + z.w).max().unwrap_or(0) as usize).min(width);
-            let top = zones.iter().map(|z| z.y).min().unwrap_or(0) as usize;
-            let bottom = (zones.iter().map(|z| z.y + z.h).max().unwrap_or(0) as usize).min(height);
-            let mut spiral = Vec::with_capacity(selected.len());
-            push_spiral_rect(&mut spiral, left, top, right, bottom, width, clockwise);
-            sequence = spiral
-                .into_iter()
-                .filter(|p| selected.contains(p))
-                .collect();
-        } else {
-            for zone in zones {
-                let x0 = (zone.x as usize).min(width);
-                let y0 = (zone.y as usize).min(height);
-                let x1 = (x0 + zone.w as usize).min(width);
-                let y1 = (y0 + zone.h as usize).min(height);
-                push_spiral_rect(&mut sequence, x0, y0, x1, y1, width, clockwise);
-            }
-        }
-        return sequence;
+    // Canonical reading order of the components: creation order, then
+    // top-left corner
+    let mut ordered: Vec<&Zone> = zones.iter().collect();
+    ordered.sort_by_key(|z| (z.order, z.top_left()));
+
+    // The runs of every zone, clipped to the image (the defensive clamp
+    // of the historical rectangle iteration)
+    let per_zone: Vec<Vec<RowRun>> = ordered
+        .iter()
+        .map(|z| clamped_runs(z, width, height))
+        .collect();
+
+    // All the selected pixels of a run list, as absolute indices
+    fn runs_pixels(runs: &[RowRun], width: usize) -> impl Iterator<Item = usize> + '_ {
+        runs.iter().flat_map(move |r| {
+            ((r.x0 as usize)..=(r.x1 as usize)).map(move |x| r.y as usize * width + x)
+        })
     }
 
-    for zone in zones {
-        let x0 = (zone.x as usize).min(width);
-        let y0 = (zone.y as usize).min(height);
-        let x1 = (x0 + zone.w as usize).min(width);
-        let y1 = (y0 + zone.h as usize).min(height);
+    // Column-major view of a run list: per column (ascending), the rows
+    // covering it (ascending) — the transpose of the runs. Used by the
+    // vertical reading directions, like the historical column-by-column
+    // iteration over rectangles.
+    let column_runs = |runs: &[RowRun]| -> BTreeMap<usize, Vec<usize>> {
+        let mut by_col: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+        for r in runs {
+            for x in (r.x0 as usize)..=(r.x1 as usize) {
+                by_col.entry(x).or_default().push(r.y as usize);
+            }
+        }
+        by_col
+    };
 
-        match direction {
-            ReadingDirection::LeftToRight => {
-                for y in y0..y1 {
-                    for x in x0..x1 {
+    match direction {
+        ReadingDirection::Spiral | ReadingDirection::SpiralReverse => {
+            let clockwise = direction == ReadingDirection::Spiral;
+            if sorted {
+                // Global spiral: sweep the bounding box of every zone,
+                // keeping only the selected pixels (deduplicated — a pixel
+                // covered by overlapping zones would otherwise break the
+                // spiral)
+                let selected: HashSet<usize> =
+                    per_zone.iter().flat_map(|runs| runs_pixels(runs, width)).collect();
+                if selected.is_empty() {
+                    return sequence;
+                }
+                // Bounding box of the zones (the sweep may cover unselected
+                // pixels; membership filtering happens afterwards)
+                let left = per_zone
+                    .iter()
+                    .flat_map(|runs| runs.iter().map(|r| r.x0 as usize))
+                    .min()
+                    .unwrap_or(0);
+                let right = per_zone
+                    .iter()
+                    .flat_map(|runs| runs.iter().map(|r| r.x1 as usize + 1))
+                    .max()
+                    .unwrap_or(0);
+                let top = per_zone
+                    .iter()
+                    .flat_map(|runs| runs.iter().map(|r| r.y as usize))
+                    .min()
+                    .unwrap_or(0);
+                let bottom = per_zone
+                    .iter()
+                    .flat_map(|runs| runs.iter().map(|r| r.y as usize + 1))
+                    .max()
+                    .unwrap_or(0);
+                let mut spiral = Vec::with_capacity(selected.len());
+                push_spiral_rect(&mut spiral, left, top, right, bottom, width, clockwise);
+                sequence = spiral
+                    .into_iter()
+                    .filter(|p| selected.contains(p))
+                    .collect();
+            } else {
+                // Per-component spiral over the component's bounding box,
+                // filtered to its exact cells — the generalization of the
+                // historical per-rectangle spiral
+                for runs in &per_zone {
+                    if runs.is_empty() {
+                        continue;
+                    }
+                    let selected: HashSet<usize> = runs_pixels(runs, width).collect();
+                    let left = runs.iter().map(|r| r.x0 as usize).min().unwrap();
+                    let right = runs.iter().map(|r| r.x1 as usize + 1).max().unwrap();
+                    let top = runs.iter().map(|r| r.y as usize).min().unwrap();
+                    let bottom = runs.iter().map(|r| r.y as usize + 1).max().unwrap();
+                    let mut spiral = Vec::with_capacity(selected.len());
+                    push_spiral_rect(&mut spiral, left, top, right, bottom, width, clockwise);
+                    sequence.extend(spiral.into_iter().filter(|p| selected.contains(p)));
+                }
+            }
+            return sequence;
+        }
+        ReadingDirection::LeftToRight => {
+            for runs in &per_zone {
+                sequence.extend(runs_pixels(runs, width));
+            }
+        }
+        ReadingDirection::RightToLeft => {
+            for runs in &per_zone {
+                for r in runs {
+                    for x in ((r.x0 as usize)..=(r.x1 as usize)).rev() {
+                        sequence.push(r.y as usize * width + x);
+                    }
+                }
+            }
+        }
+        ReadingDirection::TopToBottom => {
+            for runs in &per_zone {
+                for (x, rows) in column_runs(runs) {
+                    for &y in &rows {
                         sequence.push(y * width + x);
                     }
                 }
             }
-            ReadingDirection::RightToLeft => {
-                for y in y0..y1 {
-                    for x in (x0..x1).rev() {
+        }
+        ReadingDirection::BottomToTop => {
+            for runs in &per_zone {
+                for (x, rows) in column_runs(runs) {
+                    for &y in rows.iter().rev() {
                         sequence.push(y * width + x);
                     }
                 }
-            }
-            ReadingDirection::TopToBottom => {
-                for x in x0..x1 {
-                    for y in y0..y1 {
-                        sequence.push(y * width + x);
-                    }
-                }
-            }
-            ReadingDirection::BottomToTop => {
-                for x in x0..x1 {
-                    for y in (y0..y1).rev() {
-                        sequence.push(y * width + x);
-                    }
-                }
-            }
-            ReadingDirection::Spiral | ReadingDirection::SpiralReverse => {
-                unreachable!("handled above")
             }
         }
     }
@@ -468,8 +524,8 @@ pub(crate) fn build_pixel_sequence(
 /// longer selected (or the old sequence was empty).
 pub(crate) fn remapped_cursor(
     synth: &Synth,
-    old_zones: &[PixelZone],
-    new_zones: &[PixelZone],
+    old_zones: &[Zone],
+    new_zones: &[Zone],
     old_sorted: bool,
     new_sorted: bool,
     old_direction: ReadingDirection,
@@ -496,8 +552,8 @@ pub(crate) fn remapped_cursor(
 /// continues where it was.
 pub(crate) fn remapped_cursor_for_grid(
     synth: &Synth,
-    old_zones: &[PixelZone],
-    new_zones: &[PixelZone],
+    old_zones: &[Zone],
+    new_zones: &[Zone],
     old_w: usize,
     old_h: usize,
     new_w: usize,
@@ -1516,9 +1572,9 @@ mod tests {
         // (x=8, y=4), i.e. sequence index 4*20+8 = 88
         let mut synth = Synth::new(1);
         synth.cursor = 2 * 10 + 4; // pixel (x=4, y=2) on the 10-wide grid
-        let zone = PixelZone { x: 0, y: 0, w: 10, h: 5 };
+        let zone = Zone::from_rect(0, 0, 0, 10, 5);
         let cursor = remapped_cursor_for_grid(
-            &synth, &[zone], &[zone], 10, 5, 20, 10,
+            &synth, &[zone.clone()], &[zone], 10, 5, 20, 10,
             ReadingDirection::LeftToRight, false,
         );
         // Same spot on the new grid: (x=8, y=4); the returned value is
@@ -1532,8 +1588,8 @@ mod tests {
         // The played pixel falls outside the new zones: the playhead
         // keeps its relative position in the sequence (here halfway)
         let mut synth = Synth::new(1);
-        let full = PixelZone { x: 0, y: 0, w: 10, h: 2 };
-        let half = PixelZone { x: 0, y: 0, w: 5, h: 2 };
+        let full = Zone::from_rect(0, 0, 0, 10, 2);
+        let half = Zone::from_rect(0, 0, 0, 5, 2);
         // LeftToRight over 20 pixels; cursor 10 = start of row 2
         synth.cursor = 10;
         let cursor = remapped_cursor_for_grid(
@@ -1546,11 +1602,11 @@ mod tests {
     #[test]
     fn remapped_cursor_for_grid_returns_zero_on_empty_sides() {
         let synth = Synth::new(1);
-        let zone = PixelZone { x: 0, y: 0, w: 4, h: 4 };
+        let zone = Zone::from_rect(0, 0, 0, 4, 4);
         // Old sequence empty → 0
         assert_eq!(
             remapped_cursor_for_grid(
-                &synth, &[], &[zone], 4, 4, 8, 8,
+                &synth, &[], &[zone.clone()], 4, 4, 8, 8,
                 ReadingDirection::LeftToRight, false,
             ),
             0
@@ -1739,18 +1795,8 @@ mod tests {
     fn sorted_reading_merges_zones_by_absolute_position() {
         // Zone B (bottom row) drawn first, zone A (top row) second
         let zones = [
-            PixelZone {
-                x: 1,
-                y: 1,
-                w: 3,
-                h: 1,
-            }, // row 1, cols 1–3
-            PixelZone {
-                x: 2,
-                y: 0,
-                w: 2,
-                h: 1,
-            }, // row 0, cols 2–3
+            Zone::from_rect(0, 1, 1, 3, 1), // row 1, cols 1–3
+            Zone::from_rect(1, 2, 0, 2, 1), // row 0, cols 2–3
         ];
         let (width, height) = (8usize, 2usize);
 
@@ -1779,12 +1825,7 @@ mod tests {
     fn build_pixel_sequence_spiral_per_zone() {
         // A 3×3 zone: clockwise spiral from the top-left, then the same
         // zone counterclockwise (first step downward)
-        let zones = [PixelZone {
-            x: 0,
-            y: 0,
-            w: 3,
-            h: 3,
-        }];
+        let zones = [Zone::from_rect(0, 0, 0, 3, 3)];
         let (width, height) = (3usize, 3usize);
 
         // Clockwise: top row →, right column ↓, bottom row ←, left column ↑, center
@@ -1803,12 +1844,7 @@ mod tests {
 
         // Degenerate rectangles: a single row and a single column walk
         // each pixel exactly once, no duplicates
-        let row = [PixelZone {
-            x: 1,
-            y: 1,
-            w: 5,
-            h: 1,
-        }];
+        let row = [Zone::from_rect(0, 1, 1, 5, 1)];
         assert_eq!(
             build_pixel_sequence(&row, 8, 4, ReadingDirection::Spiral, false),
             vec![9, 10, 11, 12, 13]
@@ -1817,12 +1853,7 @@ mod tests {
             build_pixel_sequence(&row, 8, 4, ReadingDirection::SpiralReverse, false),
             vec![9, 10, 11, 12, 13]
         );
-        let col = [PixelZone {
-            x: 2,
-            y: 0,
-            w: 1,
-            h: 4,
-        }];
+        let col = [Zone::from_rect(0, 2, 0, 1, 4)];
         assert_eq!(
             build_pixel_sequence(&col, 8, 4, ReadingDirection::Spiral, false),
             vec![2, 10, 18, 26]
@@ -1834,18 +1865,8 @@ mod tests {
 
         // Zone by zone: the first zone's spiral entirely, then the second's
         let zones = [
-            PixelZone {
-                x: 0,
-                y: 0,
-                w: 2,
-                h: 2,
-            },
-            PixelZone {
-                x: 3,
-                y: 0,
-                w: 2,
-                h: 2,
-            },
+            Zone::from_rect(0, 0, 0, 2, 2),
+            Zone::from_rect(1, 3, 0, 2, 2),
         ];
         let per_zone = build_pixel_sequence(&zones, 5, 2, ReadingDirection::Spiral, false);
         assert_eq!(per_zone, vec![0, 1, 6, 5, 3, 4, 9, 8]);
@@ -1856,18 +1877,8 @@ mod tests {
         // Two disjoint zones in the same bounding box: the sorted spiral
         // walks the box's spiral keeping only the selected pixels
         let zones = [
-            PixelZone {
-                x: 0,
-                y: 0,
-                w: 1,
-                h: 3,
-            }, // left column
-            PixelZone {
-                x: 2,
-                y: 0,
-                w: 1,
-                h: 3,
-            }, // right column
+            Zone::from_rect(0, 0, 0, 1, 3), // left column
+            Zone::from_rect(1, 2, 0, 1, 3), // right column
         ];
         let (width, height) = (3usize, 3usize);
 
@@ -1884,18 +1895,8 @@ mod tests {
         // Overlapping zones: each selected pixel appears exactly once
         // (deduplicated), unlike the linear directions which replay it
         let overlap = [
-            PixelZone {
-                x: 0,
-                y: 0,
-                w: 2,
-                h: 2,
-            },
-            PixelZone {
-                x: 1,
-                y: 0,
-                w: 1,
-                h: 2,
-            },
+            Zone::from_rect(0, 0, 0, 2, 2),
+            Zone::from_rect(1, 1, 0, 1, 2),
         ];
         let sorted_overlap =
             build_pixel_sequence(&overlap, width, height, ReadingDirection::Spiral, true);
@@ -1906,18 +1907,8 @@ mod tests {
     fn remapped_cursor_keeps_the_playhead_pixel_across_sort_toggle() {
         // Two zones, one pixel each; playing the first zone's pixel
         let zones = [
-            PixelZone {
-                x: 5,
-                y: 0,
-                w: 1,
-                h: 1,
-            },
-            PixelZone {
-                x: 1,
-                y: 0,
-                w: 1,
-                h: 1,
-            },
+            Zone::from_rect(0, 5, 0, 1, 1),
+            Zone::from_rect(1, 1, 0, 1, 1),
         ];
         let synth = Synth::new(1); // cursor 0
         let (width, height) = (8usize, 1usize);
@@ -1958,12 +1949,7 @@ mod tests {
     fn remapped_cursor_keeps_the_playhead_pixel_across_direction_change() {
         // One full row zone, sorted reading; the playhead is on the
         // sequence's last pixel in left→right order
-        let zones = [PixelZone {
-            x: 0,
-            y: 0,
-            w: 4,
-            h: 1,
-        }];
+        let zones = [Zone::from_rect(0, 0, 0, 4, 1)];
         let mut synth = Synth::new(1);
         synth.cursor = 3;
         let (width, height) = (4usize, 2usize);
@@ -1984,12 +1970,7 @@ mod tests {
 
         // And it is the last-but-one index when reading top→bottom of a
         // 2-row selection
-        let zones = [PixelZone {
-            x: 0,
-            y: 0,
-            w: 2,
-            h: 2,
-        }];
+        let zones = [Zone::from_rect(0, 0, 0, 2, 2)];
         let cursor = remapped_cursor(
             &synth,
             &zones,
@@ -2133,5 +2114,97 @@ mod tests {
         state.apply_clock_mode(ClockMode::Input, Some("in".to_string()));
         assert_eq!(state.clock_mode(), ClockMode::Input);
         assert_eq!(state.clock_source().as_deref(), Some("in"));
+    }
+
+    // --- Exact-zone-model sequence tests ---
+
+    #[test]
+    fn reading_order_follows_creation_order_not_geometry() {
+        // The first-created zone sits BELOW the second one: the
+        // per-zone reading follows the creation order, not the rows
+        let lower_first = Zone::from_rect(0, 0, 2, 2, 1); // row 2
+        let upper_second = Zone::from_rect(1, 0, 0, 2, 1); // row 0
+        let seq = build_pixel_sequence(
+            &[lower_first, upper_second],
+            4,
+            3,
+            ReadingDirection::LeftToRight,
+            false,
+        );
+        // lower_first entirely (row 2), then upper_second (row 0)
+        assert_eq!(seq, vec![8, 9, 0, 1]);
+    }
+
+    #[test]
+    fn vertical_directions_read_an_exact_shape_column_by_column() {
+        // An L-shape: rows 0-1 cols 0-1, plus row 1 col 2 — built as one
+        // connected zone from raw cells (the lasso pipeline's output)
+        let cells = [(0, 0), (1, 0), (0, 1), (1, 1), (2, 1)];
+        let lshape = Zone::from_cells(0, &cells);
+        assert_eq!(lshape.pixel_count(), 5);
+
+        let (width, height) = (4usize, 2usize);
+        // Top→bottom: column 0 (rows 0,1), column 1 (rows 0,1), column 2 (row 1)
+        let ttb = build_pixel_sequence(
+            &[lshape.clone()],
+            width,
+            height,
+            ReadingDirection::TopToBottom,
+            false,
+        );
+        assert_eq!(ttb, vec![0, 4, 1, 5, 6]);
+
+        // Bottom→top: same columns, rows descending
+        let btt = build_pixel_sequence(
+            &[lshape.clone()],
+            width,
+            height,
+            ReadingDirection::BottomToTop,
+            false,
+        );
+        assert_eq!(btt, vec![4, 0, 5, 1, 6]);
+
+        // Right→left: rows ascending, columns descending
+        let rtl = build_pixel_sequence(
+            &[lshape],
+            width,
+            height,
+            ReadingDirection::RightToLeft,
+            false,
+        );
+        assert_eq!(rtl, vec![1, 0, 6, 5, 4]);
+    }
+
+    #[test]
+    fn spiral_per_component_filters_to_the_exact_cells() {
+        // An L-shape in a 3x3 box: the spiral walks the component's
+        // bounding box but keeps only the selected cells
+        let cells = [(0, 0), (1, 0), (2, 0), (0, 1), (1, 1)];
+        let lshape = Zone::from_cells(0, &cells); // 2x2 block + (2,0)
+        let cw = build_pixel_sequence(
+            &[lshape],
+            3,
+            2,
+            ReadingDirection::Spiral,
+            false,
+        );
+        // Clockwise spiral over rows 0-1 x cols 0-2: 0,1,2 then col 2
+        // down (5 = (2,1), unselected → filtered) then bottom row back
+        // (4, 3). Selected cells only: 0,1,2,4,3
+        assert_eq!(cw, vec![0, 1, 2, 4, 3]);
+    }
+
+    #[test]
+    fn zones_clipped_outside_the_image_are_skipped() {
+        // Defensive clip: a zone entirely beyond the right edge
+        let out_of_bounds = Zone::from_rect(0, 10, 0, 4, 4); // cols 10-13 on a 8-wide grid
+        let seq = build_pixel_sequence(
+            &[out_of_bounds],
+            8,
+            4,
+            ReadingDirection::LeftToRight,
+            false,
+        );
+        assert!(seq.is_empty());
     }
 }

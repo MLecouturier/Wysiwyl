@@ -256,6 +256,7 @@
     "open_config_failed": "Unable to open the configuration file: {details}",
     "session_read_error": "Unable to read the session file: {details}",
     "session_parse_error": "Invalid session file: {details}",
-    "session_write_error": "Unable to write the session file: {details}"
+    "session_write_error": "Unable to write the session file: {details}",
+    "session_version_unsupported": "This session was saved by an older version of Wysiwyl (format {version}) and cannot be loaded anymore."
   }
 }
