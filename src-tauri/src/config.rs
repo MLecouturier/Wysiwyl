@@ -79,6 +79,13 @@ pub struct AppConfig {
     /// "no quantization" default, a synth can never lose access to it).
     /// The selects show the enabled scales in their canonical order.
     pub enabled_scales: Vec<Scale>,
+    /// Accumulated scroll deltas needed for one increment when a
+    /// continuous scroll device (trackpad, free-spin wheel) hovers a
+    /// value input (BPM, sliders, synth volume). Higher = less
+    /// sensitive. A discrete mouse-wheel notch always applies exactly
+    /// one increment, whatever this value. Hand-edited values are
+    /// clamped to 1–2000 on load.
+    pub wheel_trackpad_threshold: u32,
 }
 
 impl Default for AppConfig {
@@ -92,6 +99,7 @@ impl Default for AppConfig {
             note_range_bounds: DEFAULT_NOTE_RANGE_BOUNDS,
             synth_colors: default_synth_colors(),
             enabled_scales: default_enabled_scales(),
+            wheel_trackpad_threshold: 100,
         }
     }
 }
@@ -136,6 +144,8 @@ impl AppConfig {
             seen.insert(0, Scale::Chromatic);
         }
         self.enabled_scales = seen;
+        // Trackpad scroll feel: keep the threshold in a usable range
+        self.wheel_trackpad_threshold = self.wheel_trackpad_threshold.clamp(1, 2000);
     }
 }
 
@@ -534,5 +544,36 @@ mod tests {
         };
         config.sanitize();
         assert_eq!(config.clock_source, None);
+    }
+
+    #[test]
+    fn config_without_wheel_trackpad_threshold_defaults_to_100() {
+        // A file written before the field existed
+        let json = r##"{
+            "max_image_size": 2048,
+            "default_bpm": 120,
+            "default_synth": {},
+            "note_range_bounds": [[21, 47], [48, 71], [72, 108]],
+            "synth_colors": ["#3498db"]
+        }"##;
+        let config: AppConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.wheel_trackpad_threshold, 100);
+    }
+
+    #[test]
+    fn sanitize_clamps_wheel_trackpad_threshold() {
+        let mut config = AppConfig {
+            wheel_trackpad_threshold: 0,
+            ..AppConfig::default()
+        };
+        config.sanitize();
+        assert_eq!(config.wheel_trackpad_threshold, 1);
+
+        let mut config = AppConfig {
+            wheel_trackpad_threshold: 100_000,
+            ..AppConfig::default()
+        };
+        config.sanitize();
+        assert_eq!(config.wheel_trackpad_threshold, 2000);
     }
 }

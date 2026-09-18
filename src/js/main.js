@@ -188,6 +188,16 @@ function retranslateSynthElement(el) {
 // apply on the next application start).
 invoke('get_config').then(config => {
     bpmInput.value = config.default_bpm;
+    // Trackpad scroll feel of the wheel-driven steppers (BPM, sliders,
+    // synth volume): accumulated deltas per increment. The backend
+    // already clamps the persisted value; validate defensively anyway.
+    const trackpadThreshold = Number(config.wheel_trackpad_threshold);
+    if (Number.isFinite(trackpadThreshold) && trackpadThreshold >= 1) {
+        WHEEL_TRACKPAD_THRESHOLD = trackpadThreshold;
+    }
+    if (localStorage.getItem('wheelDebug') === '1') {
+        console.debug(`wheel: effective WHEEL_TRACKPAD_THRESHOLD=${WHEEL_TRACKPAD_THRESHOLD}`);
+    }
     if (Array.isArray(config.synth_colors) && config.synth_colors.length > 0) {
         SYNTH_COLORS = config.synth_colors;
     }
@@ -3059,13 +3069,49 @@ document.querySelector('#bpm-down').addEventListener('click', () => applyBpm(Num
 // range): increments (scroll up) or decrements (scroll down) the value,
 // then lets the existing listeners apply it. Delegated at document level
 // so dynamically created inputs (e.g. synth sliders) work too. Trackpad
-// scrolls emit many tiny deltas: they are accumulated so one step
-// requires a slightly more deliberate gesture (mouse-wheel-sized deltas
-// still apply one step per notch).
-const WHEEL_STEP_THRESHOLD = 30;
+// scrolls emit many tiny deltas: they are accumulated, and one step is
+// applied per WHEEL_TRACKPAD_THRESHOLD accumulated units. Mouse-wheel
+// notches are detected separately (isWheelNotch below) and apply exactly
+// one step per physical notch.
+let WHEEL_TRACKPAD_THRESHOLD = 100; // accumulated deltas per step (config: wheel_trackpad_threshold)
+const WHEEL_ACCUM_RESET_MS = 200;  // scroll pause after which the accumulator resets
 let wheelAccum = 0;
 let wheelTime = 0;
 let wheelTarget = null;
+
+// --- Mouse-wheel notch vs trackpad (precise) scroll classification ---
+// Shared by the delegated input stepper below and the synth volume wheel.
+// A notch is a line/page-mode event (Firefox, some Linux webviews), or a
+// pixel delta at least WHEEL_NOTCH_MIN_DELTA big that either arrives
+// isolated (no wheel event for WHEEL_NOTCH_GAP_MS: on macOS WKWebView one
+// wheel notch is a single ~10 px event, Chromium-based webviews send one
+// ±100 px event) or continues a run of such notches (fast spin: events
+// arrive faster than the gap, each still one physical notch). A trackpad
+// streams events continuously (~60 Hz, momentum included) and every
+// gesture starts with tiny deltas: a trackpad event is therefore never
+// isolated mid-stream and never starts a run, so ALL trackpad deltas go
+// through the accumulator, whose threshold fully controls the feel.
+// Free-spin wheels (varying deltas, no quantization) behave the same.
+// Live observation from the Web Inspector:
+// localStorage.setItem('wheelDebug', '1')
+const WHEEL_NOTCH_GAP_MS = 60;   // no wheel event for this long = isolated
+const WHEEL_NOTCH_MIN_DELTA = 8; // smallest delta that can be a full notch
+let wheelLastTime = 0;
+let wheelInNotchRun = false;
+const isWheelNotch = (event, delta) => {
+    const gap = event.timeStamp - wheelLastTime;
+    const isolated = gap > WHEEL_NOTCH_GAP_MS;
+    const magnitude = Math.abs(delta);
+    const notch =
+        event.deltaMode !== WheelEvent.DOM_DELTA_PIXEL || // line/page mode: real wheel
+        (magnitude >= WHEEL_NOTCH_MIN_DELTA && (isolated || wheelInNotchRun));
+    if (localStorage.getItem('wheelDebug') === '1') {
+        console.debug(`wheel: delta=${delta} mode=${event.deltaMode} gap=${Math.round(gap)}ms isolated=${isolated} run=${wheelInNotchRun} notch=${notch}`);
+    }
+    wheelLastTime = event.timeStamp;
+    wheelInNotchRun = notch;
+    return notch;
+};
 
 document.addEventListener('wheel', (event) => {
     if (event.ctrlKey) return; // pinch zoom / ctrl+wheel: don't touch the value
@@ -3092,17 +3138,17 @@ document.addEventListener('wheel', (event) => {
     const delta = event.deltaY !== 0 ? event.deltaY : (event.shiftKey ? event.deltaX : 0);
 
     // Reset the accumulator when switching input or after a pause
-    if (input !== wheelTarget || event.timeStamp - wheelTime > 200) wheelAccum = 0;
+    if (input !== wheelTarget || event.timeStamp - wheelTime > WHEEL_ACCUM_RESET_MS) wheelAccum = 0;
     wheelTarget = input;
     wheelTime = event.timeStamp;
 
-    if (Math.abs(delta) >= WHEEL_STEP_THRESHOLD) {
-        wheelAccum = 0; // big delta (mouse wheel notch): one step as before
+    if (isWheelNotch(event, delta)) {
+        wheelAccum = 0; // discrete mouse-wheel notch: one step, no accumulation
     } else {
         if (Math.sign(delta) !== Math.sign(wheelAccum)) wheelAccum = 0;
         wheelAccum += delta;
-        if (Math.abs(wheelAccum) < WHEEL_STEP_THRESHOLD) return; // keep scrolling
-        wheelAccum -= Math.sign(wheelAccum) * WHEEL_STEP_THRESHOLD;
+        if (Math.abs(wheelAccum) < WHEEL_TRACKPAD_THRESHOLD) return; // keep scrolling
+        wheelAccum -= Math.sign(wheelAccum) * WHEEL_TRACKPAD_THRESHOLD;
     }
 
     const step = Number(input.step) || 1;
@@ -3116,6 +3162,16 @@ document.addEventListener('wheel', (event) => {
     input.dispatchEvent(new Event('input', { bubbles: true }));
     input.dispatchEvent(new Event('change'));
 }, { passive: false });
+
+// Keep the notch classifier's clock fresh across page scrolls (wheel
+// events that never reach the input stepper above): a trackpad swipe
+// crossing over an input mid-gesture must not look like an isolated
+// mouse notch. Registered after the stepper so it runs after it and
+// only refreshes the timestamp, never the classification inputs.
+document.addEventListener('wheel', (event) => {
+    if (event.ctrlKey) return; // pinch zoom is not a scroll
+    wheelLastTime = event.timeStamp;
+}, { passive: true });
 
 // Direct keyboard input: validated on blur or on "Enter"
 bpmInput.addEventListener('change', () => applyBpm(Number(bpmInput.value)));
@@ -3774,20 +3830,31 @@ function createSynthElement(id, cfg = null) {
     // Wheel/trackpad sensitivity: trackpads emit a continuous stream of
     // small deltas (two-finger scroll), which made the adjustment far
     // too fast — each event moved the value by ±1. The deltas are
-    // accumulated instead, and one step is applied per ~100 accumulated
-    // units (roughly one mouse-wheel notch), so a mouse notch still
-    // adjusts by ±1 while a trackpad swipe adjusts smoothly and slowly.
+    // accumulated instead, and one step is applied per
+    // WHEEL_TRACKPAD_THRESHOLD accumulated units, so a trackpad swipe
+    // adjusts smoothly and slowly. Mouse-wheel notches (isWheelNotch)
+    // bypass the accumulator and apply ±1 per notch directly. The input
+    // itself is covered by the delegated document-level input stepper
+    // (same thresholds); this listener covers the tab, whose volume bar
+    // adjusts the value the same way.
     let volumeWheelAccum = 0;
     const onVolumeWheel = (e) => {
         e.preventDefault();
-        volumeWheelAccum += e.deltaY;
-        const steps = Math.trunc(volumeWheelAccum / 100);
+        // Same effective delta as the delegated stepper: on macOS,
+        // Shift+scroll can arrive as horizontal deltas only
+        const delta = e.deltaY !== 0 ? e.deltaY : (e.shiftKey ? e.deltaX : 0);
+        if (isWheelNotch(e, delta)) {
+            volumeWheelAccum = 0; // discrete notch: no accumulation
+            adjustSynthVolume(delta < 0 ? 1 : -1);
+            return;
+        }
+        volumeWheelAccum += delta;
+        const steps = Math.trunc(volumeWheelAccum / WHEEL_TRACKPAD_THRESHOLD);
         if (steps === 0) return;
-        volumeWheelAccum -= steps * 100;
+        volumeWheelAccum -= steps * WHEEL_TRACKPAD_THRESHOLD;
         adjustSynthVolume(-steps);
     };
     volumeInput.addEventListener('change', sendSynthVolume);
-    volumeInput.addEventListener('wheel', onVolumeWheel, { passive: false });
     tab.addEventListener('wheel', onVolumeWheel, { passive: false });
 
     // ---- Program: bank (A–P) + program (1–128) sent to the instrument ----
