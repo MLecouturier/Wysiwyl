@@ -521,12 +521,15 @@ function clearOverlay() {
 //          with a straight line back to the start point.
 // - wand:  magic-wand click. Every pixel 4-connected to the clicked one
 //          whose color stays within the tolerance (largest per-channel
-//          difference, 1–255 on the per-channel 0–255 scale)
-//          toggles with the same XOR semantics as the lasso. Committed
-//          on the click itself: no drag.
+//          difference, 1–255 on the per-channel 0–255 scale) is flooded,
+//          with the same positional semantics as the rectangle: a click
+//          on a free pixel adds the flooded region (fusing with any
+//          zone it touches), a click on a selected pixel removes the
+//          flooded pixels instead. Committed on the click itself: no
+//          drag.
 // Holding Alt (Option) while using any of the three tools edits the
-// manual silences instead of the selection: the same positional (rect) /
-// XOR (lasso, wand) semantics apply to the silent pixels among the
+// manual silences instead of the selection: the same positional (rect,
+// wand) / XOR (lasso) semantics apply to the silent pixels among the
 // selected ones. A silent pixel is still travelled by the playhead, it
 // just sounds nothing — a rest. Silences always live within the
 // selection: deselecting a pixel removes its silence.
@@ -1089,39 +1092,47 @@ function lassoToggleMutePixels(id, points, start) {
     return true;
 }
 
-// Magic wand on the selection: every pixel 4-connected to the clicked
-// one whose color stays within the tolerance toggles — unselected
-// becomes selected, selected becomes deselected (XOR, like the lasso).
-// Pixels of the zone under the playhead (while the synth plays) are
-// exempt from deselection. Returns true when the selection changed.
+// Magic wand on the selection: positional semantics, like the rectangle.
+// A click on an unselected pixel adds the whole flooded region (every
+// pixel 4-connected to the clicked one whose color stays within the
+// tolerance) — already-selected pixels are left untouched, and a flooded
+// region touching an existing zone fuses with it. A click on a selected
+// pixel removes the flooded pixels instead — except the pixels of the
+// zone under the playhead, which never lose their selection while the
+// synth plays. Returns true when the selection changed.
 function wandTogglePixels(id, startCell, tolerance) {
     const hi = synthHighlights.get(id);
     if (!hi) return false;
 
     const flooded = wandFloodCells(startCell, tolerance);
-
-    // Zone under the playhead: its pixels never lose their selection
-    const locked = zoneAtPixel(id, synthCursors.get(id));
+    const seedKey = `${startCell.col},${startCell.row}`;
 
     // Current selection as a cell set
     const selected = cellSetFromZones(hi.zones);
 
-    // Toggle each flooded pixel (XOR), skipping locked pixels that
-    // would be deselected
+    if (!selected.has(seedKey)) {
+        // Free seed: pure addition — the union is rebuilt as connected
+        // components, so a flooded region touching an existing zone
+        // fuses with it (contiguity is one zone)
+        for (const key of flooded) selected.add(key);
+        hi.zones = rebuildZones(hi.zones, selected);
+        sendSynthZones(id);
+        updateZonesLabel(id);
+        return true;
+    }
+
+    // Zone under the playhead: its pixels never lose their selection
+    const locked = zoneAtPixel(id, synthCursors.get(id));
+
+    // Selected seed: remove every flooded pixel, skipping the locked
+    // ones
     let changed = false;
     for (const key of flooded) {
-        const isSelected = selected.has(key);
-        if (isSelected) {
-            const [col, row] = key.split(',').map(Number);
-            if (locked && zoneContains(locked, col, row)) {
-                continue; // exempt from deselection
-            }
-            selected.delete(key);
-            changed = true;
-        } else {
-            selected.add(key);
-            changed = true;
+        const [col, row] = key.split(',').map(Number);
+        if (locked && zoneContains(locked, col, row)) {
+            continue; // exempt from deselection
         }
+        if (selected.delete(key)) changed = true;
     }
     if (!changed) return false;
 
@@ -1135,28 +1146,33 @@ function wandTogglePixels(id, startCell, tolerance) {
     return true;
 }
 
-// Magic wand on the manual silences (Alt held): every flooded selected
-// pixel toggles — played becomes silent, silent becomes played. Pixels
-// that are not selected are ignored (a silence always lives inside the
-// selection). Returns true when the silences changed.
+// Magic wand on the manual silences (Alt held): positional semantics,
+// like the Alt rectangle. A click on a played pixel silences every
+// flooded pixel that belongs to the selection; a click on a silent
+// pixel unsilences the flooded silent ones instead. Pixels that are
+// not selected are ignored either way (a silence always lives inside
+// the selection). Returns true when the silences changed.
 function wandToggleMutePixels(id, startCell, tolerance) {
     const hi = synthHighlights.get(id);
     if (!hi) return false;
 
     const flooded = wandFloodCells(startCell, tolerance);
+    const seedKey = `${startCell.col},${startCell.row}`;
 
     const selected = cellSetFromZones(hi.zones);
     const muted = muteCellSet(hi);
 
     let changed = false;
-    for (const key of flooded) {
-        if (!selected.has(key)) continue; // silences live in the selection
-        if (muted.has(key)) {
-            muted.delete(key);
-            changed = true;
-        } else {
-            muted.add(key);
-            changed = true;
+    if (!muted.has(seedKey)) {
+        // Played seed: silence every flooded pixel of the selection
+        for (const key of flooded) {
+            if (!selected.has(key)) continue; // silences live in the selection
+            if (muted.add(key)) changed = true;
+        }
+    } else {
+        // Silent seed: unsilence every flooded silent pixel
+        for (const key of flooded) {
+            if (muted.delete(key)) changed = true;
         }
     }
     if (!changed) return false;
