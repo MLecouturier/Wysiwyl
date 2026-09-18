@@ -10,9 +10,9 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "Wysiwyl",
+        "title": "Wysiwyl 2.0.5",
         "width": 1600,
-        "height": 900,
+        "height": 1000,
         "minWidth": 1000,
         "minHeight": 650,
         "center": true,

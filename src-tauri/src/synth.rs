@@ -286,10 +286,10 @@ pub fn set_synth_program(
     Ok(midi.send_program_change(port, channel, program, bank_msb, bank_lsb))
 }
 
-/// Sets the synth's channel volume in percent (0–100) and immediately
-/// sends it as MIDI CC 7 on its output port and channel. Caveat: CC 7
-/// addresses the channel, so synths sharing the same (port, channel)
-/// override each other — the last setting sent wins.
+/// Sets the synth's channel volume as a raw MIDI value (0–127) and
+/// immediately sends it as MIDI CC 7 on its output port and channel.
+/// Caveat: CC 7 addresses the channel, so synths sharing the same
+/// (port, channel) override each other — the last setting sent wins.
 #[tauri::command]
 pub fn set_synth_volume(
     id: u32,
@@ -301,13 +301,13 @@ pub fn set_synth_volume(
         let mut synths = state.synths.lock().unwrap();
         match synths.get_mut(&id) {
             Some(synth) => {
-                synth.volume = volume.min(100);
+                synth.volume = volume.min(127);
                 (synth.midi_port, synth.channel)
             }
             None => return Err(synth_not_found(id)),
         }
     };
-    midi.send_channel_volume(port, channel, volume.min(100));
+    midi.send_channel_volume(port, channel, volume.min(127));
     Ok(())
 }
 

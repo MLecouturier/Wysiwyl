@@ -11,10 +11,20 @@
     position: relative; // anchor for the mode panel overlay
     flex: 0 0 auto;
 
+    .controls-column-right {
+        width: 30%;
+    }
+
+    .controls-image {
+        background-color: $color-bg-light;
+        padding: .5rem .5rem 0;
+        border-radius: .25rem;
+    }
+
     // A column of grouped settings: rows pushed to the bottom, never
     // wider than the sidebar
     .controls-set {
-        justify-content: flex-end;
+        justify-content: flex-start;
         padding: 0 .5rem 0 .25rem;
         max-width: $sidebar-width;
     }
@@ -88,6 +98,10 @@
         font-size: 0.8rem;
         color: $color-text-secondary;
         margin-top: .5rem;
+
+        &.columns-control {
+            margin-top: 0;
+        }
 
         span {
             display: flex;

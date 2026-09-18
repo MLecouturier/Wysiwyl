@@ -165,12 +165,10 @@ impl MidiState {
     }
 
     /// Sends a Channel Volume message (CC 7) on the given output port and
-    /// channel. `volume_percent` (0–100) is mapped onto the MIDI value range
-    /// 0–127, with 100 % sent as the full value 127.
-    pub fn send_channel_volume(&self, port_index: usize, channel: u8, volume_percent: u8) {
-        let value = percent_to_midi(volume_percent);
+    /// channel. `volume` is the raw MIDI value (0–127), sent as-is.
+    pub fn send_channel_volume(&self, port_index: usize, channel: u8, volume: u8) {
         self.with_connection(port_index, |conn| {
-            let _ = conn.send(&[0xB0 | (channel & 0x0F), 7, value & 0x7F]);
+            let _ = conn.send(&[0xB0 | (channel & 0x0F), 7, volume & 0x7F]);
         });
     }
 
@@ -234,18 +232,7 @@ pub fn send_note_off(conn: &mut MidiOutputConnection, channel: u8, note: u8) {
     let _ = conn.send(&[status, note & 0x7F, 0]);
 }
 
-/// Converts a channel volume percentage (0–100) to a MIDI CC value
-/// (0–127). Rounded, so a value echoed back by the instrument converts
-/// to the same percentage.
-fn percent_to_midi(percent: u8) -> u8 {
-    ((percent.min(100) as u16 * 127 + 50) / 100) as u8
-}
 
-/// Converts a MIDI CC value (0–127) to a channel volume percentage
-/// (0–100). Inverse of `percent_to_midi`.
-fn midi_to_percent(value: u8) -> u8 {
-    ((value.min(127) as u16 * 100 + 63) / 127) as u8
-}
 
 /// Lists the available MIDI output ports. The index of each entry is the
 /// port identifier to pass to `set_synth_midi_port`. On unix the app's
@@ -539,7 +526,6 @@ fn handle_input_message(app: &AppHandle, input_name: &str, data: &[u8]) {
     // this (port, channel) — CC 7 addresses the channel — without
     // sending anything back (our own CC 7 could loop back here).
     if let Message::Volume(value) = channel_message {
-        let percent = midi_to_percent(value);
         let synth_state = app.state::<SynthState>();
         synth_state
             .synths
@@ -547,13 +533,13 @@ fn handle_input_message(app: &AppHandle, input_name: &str, data: &[u8]) {
             .unwrap()
             .values_mut()
             .filter(|synth| synth.midi_port == port && synth.channel == channel)
-            .for_each(|synth| synth.volume = percent);
+            .for_each(|synth| synth.volume = value);
         let _ = app.emit(
             "midi-volume",
             VolumeEvent {
                 port,
                 channel,
-                volume: percent,
+                volume: value,
             },
         );
         return;
@@ -589,7 +575,7 @@ enum Message {
 }
 
 /// Payload of the `midi-volume` event: the learned channel volume
-/// (percent, 0–100) of one (output port, channel) pair.
+/// (raw MIDI value, 0–127) of one (output port, channel) pair.
 #[derive(Serialize, Clone)]
 pub struct VolumeEvent {
     pub port: usize,
@@ -632,31 +618,4 @@ pub fn get_known_programs(state: State<'_, MidiState>) -> Vec<KnownProgram> {
         .collect()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
 
-    #[test]
-    fn volume_conversions_hit_their_bounds() {
-        assert_eq!(percent_to_midi(0), 0);
-        assert_eq!(percent_to_midi(50), 64);
-        assert_eq!(percent_to_midi(100), 127);
-        // Out-of-range percentages are clamped
-        assert_eq!(percent_to_midi(200), 127);
-        assert_eq!(midi_to_percent(0), 0);
-        assert_eq!(midi_to_percent(64), 50);
-        assert_eq!(midi_to_percent(127), 100);
-        assert_eq!(midi_to_percent(255), 100);
-    }
-
-    #[test]
-    fn volume_round_trip_is_stable() {
-        // A CC value echoed back by the instrument (IAC/thru loop) must
-        // convert to the percentage that produced it, so the UI field
-        // never flickers to a neighboring value.
-        for percent in 0..=100u8 {
-            let midi = percent_to_midi(percent);
-            assert_eq!(midi_to_percent(midi), percent, "percent {percent}");
-        }
-    }
-}

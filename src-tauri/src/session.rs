@@ -428,7 +428,7 @@ mod tests {
         // historical relative mapping
         assert!(s.settings.velocity_relative);
         // Volume didn't exist in that format either: full volume
-        assert_eq!(s.settings.volume, 100);
+        assert_eq!(s.settings.volume, 127);
         // Programs didn't exist in that format either
         assert_eq!(s.program, None);
     }

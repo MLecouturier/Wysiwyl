@@ -7,6 +7,14 @@ $metronome-led-off: $color-disactivated;
 $metronome-led-on: $color-accent-alt;
 $metronome-led-transition: 0.05s ease;
 
+.metronome-area {
+    flex: 0 0 auto;
+    padding: 12px 1rem;
+    // border: 1px solid $color-border;
+    border-radius: .25rem;
+    background-color: $color-bg-light;
+}
+
 .metronome-controls {
     display: flex;
     align-items: center;

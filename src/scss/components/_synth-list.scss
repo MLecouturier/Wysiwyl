@@ -38,14 +38,13 @@
 // (green = play, red = global stop affordance). 
 .synth-list-action {
     background: none;
-    flex: 1 1 auto;
-    
     border: 1px solid $color-border;
+    font-size: .8rem;
+    text-transform: uppercase;
     color: white;
-    width: 4rem;
-    max-width: 4rem;
+    min-width: 4rem;
     height: 1.75rem;
-    border-radius: .825rem;
+    border-radius: .25rem;
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -55,6 +54,7 @@
     &:hover {
         border-color: $color-text-muted;
     }
+    
 
     .material-symbols-outlined {
         font-size: 1.125rem;
@@ -63,6 +63,17 @@
 
 .synth-list-action-play {
     background-color: $color-accent-alt;
+
+    span {
+        &:first-of-type {
+            margin: 0 .25rem 0 .75rem;
+        }
+
+        &:last-of-type {
+            margin: 0 .75rem 0 .25rem;
+        }
+        
+    }
 
     &:hover {
         background-color: $color-accent-alt-hover;
@@ -142,7 +153,7 @@
     border-bottom-color: var(--synth-tab-color, #{$color-border});
     border-top-left-radius: $border-radius-base;
     border-bottom-left-radius: $border-radius-base;
-    padding: .125rem .25rem .25rem 0;
+    padding: .125rem .25rem .5rem 0;
     user-select: none;
 
     .synth-tab-drag-handle {
@@ -222,7 +233,7 @@
         position: absolute;
         right: 0;
         bottom: 0;
-        height: 3px;
+        height: 5px;
         width: var(--synth-volume, 100%);
         background-color: var(--synth-tab-color, #{$color-border});
         pointer-events: none;

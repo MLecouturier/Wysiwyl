@@ -23,19 +23,39 @@
                 <div id="controls" class="controls">
 
                     <div class="flex flex-auto items-center justify-between gap-2 mb-3 relative h-full">
-                        <div class="flex flex-col gap-2 h-full flex-auto">
+                        <div class="controls-image controls-column-left flex flex-col gap-2 h-full flex-auto">
                             <div class="flex flex-auto items-center justify-between gap-2">
                                 <button id="load-btn" class="primary" data-i18n-title="controls.load">
                                     <span class="material-symbols-outlined">image_search</span>
                                 </button>
                                 <div class="flex-fill">
                                     <p id="dimensions-info" class="text-xs text-muted tabular-nums"></p>
-                                </div>
+                                </div>    
+                            </div>
 
+                            <div class="flex flex-auto items-center justify-between gap-2">
+                                <button id="auto-levels-btn" class="icon-btn" data-i18n-title="controls.autoLevels">
+                                    <span class="material-symbols-outlined">auto_awesome</span>
+                                </button>
+                                <div class="flex-none w-4"></div>
+                                <button id="rotate-img-btn" class="icon-btn" data-i18n-title="controls.rotate">
+                                    <span class="material-symbols-outlined">rotate_90_degrees_cw</span>
+                                </button>
+                                <button id="crop-img-btn" class="icon-btn" data-i18n-title="controls.crop">
+                                    <span class="material-symbols-outlined">crop</span>
+                                </button>
+                                <button id="transform-img-btn" class="icon-btn" data-i18n-title="controls.transform">
+                                    <span class="material-symbols-outlined">tune</span>
+                                </button>
+                                <div class="flex-none w-4"></div>
+                                <label class="flex-auto columns-control" data-i18n-title="controls.columns">
+                                    <span><span data-i18n="controls.columns"></span> <em id="grid-width-value">-</em></span>
+                                    <input type="range" id="grid-width" min="0" max="1000" value="1000" />
+                                </label>
+                                <div class="flex-none w-4"></div>
                                 <button id="reset-btn" class="icon-btn" data-i18n-title="controls.reset">
                                     <span class="material-symbols-outlined">reset_settings</span>
                                 </button>
-                                <div class="flex-none w-4"></div>
                             </div>
 
                             <div class="flex flex-auto items-center justify-between gap-2 mb-3 relative h-full">
@@ -82,27 +102,7 @@
                                         <button id="transform-cancel-btn" class="secondary" data-i18n="controls.cancel"></button>
                                     </div>
                                 </div>
-                                <div class="flex flex-col gap-2 h-full flex-auto controls-set">
-                                    <label data-i18n-title="controls.columns">
-                                        <span><span data-i18n="controls.columns"></span> <em id="grid-width-value">-</em></span>
-                                        <input type="range" id="grid-width" min="0" max="1000" value="1000" />
-                                    </label>
-                                    <div class="flex flex-auto items-center justify-between gap-2">
-                                        <button id="auto-levels-btn" class="icon-btn" data-i18n-title="controls.autoLevels">
-                                            <span class="material-symbols-outlined">auto_awesome</span>
-                                        </button>
-                                        <div class="flex-fill"></div>
-                                        <button id="rotate-img-btn" class="icon-btn" data-i18n-title="controls.rotate">
-                                            <span class="material-symbols-outlined">rotate_90_degrees_cw</span>
-                                        </button>
-                                        <button id="crop-img-btn" class="icon-btn" data-i18n-title="controls.crop">
-                                            <span class="material-symbols-outlined">crop</span>
-                                        </button>
-                                        <button id="transform-img-btn" class="icon-btn" data-i18n-title="controls.transform">
-                                            <span class="material-symbols-outlined">tune</span>
-                                        </button>
-
-                                    </div>
+                                <div class="flex flex-col gap-2 flex-auto h-full controls-set">
                                     <label data-i18n-title="controls.brightness">
                                         <span><span data-i18n="controls.brightness"></span> <em id="brightness-value">0</em></span>
                                         <input type="range" id="brightness" min="-100" max="100" value="0" step="1" />
@@ -111,13 +111,12 @@
                                         <span><span data-i18n="controls.contrast"></span> <em id="contrast-value">0</em></span>
                                         <input type="range" id="contrast" min="-100" max="100" value="0" step="1" />
                                     </label>
-                                </div>
-                                <div class="flex flex-col gap-2 h-full flex-auto controls-set">
                                     <label data-i18n-title="controls.vibrance">
                                         <span><span data-i18n="controls.vibrance"></span> <em id="vibrance-value">0</em></span>
                                         <input type="range" id="vibrance" min="-100" max="100" value="0" step="1" />
                                     </label>
-                                    <div class="flex-filler h-4"></div>
+                                </div>
+                                <div class="flex flex-col gap-2 flex-auto h-full controls-set">
                                     <label data-i18n-title="controls.clarity">
                                         <span><span data-i18n="controls.clarity"></span> <em id="clarity-value">0</em></span>
                                         <input type="range" id="clarity" min="-100" max="100" value="0" step="1" />
@@ -126,8 +125,6 @@
                                         <span><span data-i18n="controls.texture"></span> <em id="texture-value">0</em></span>
                                         <input type="range" id="texture" min="-100" max="100" value="0" step="1" />
                                     </label>
-                                </div>
-                                <div class="flex flex-col gap-2 h-full flex-auto controls-set">
                                     <label data-i18n-title="controls.simplify">
                                         <span><span data-i18n="controls.simplify"></span> <em id="simplify-value">0</em></span>
                                         <input type="range" id="simplify" min="0" max="100" value="0" step="1" />
@@ -140,12 +137,13 @@
                             </div>
                         </div>
 
-                        <div class="flex flex-col gap-2 h-full">
+                        <div class="controls-column-right flex flex-col gap-2 h-full">
                             <div id="display-controls" class="flex flex-auto items-center justify-between gap-2">
                                 <div class="flex-fill"></div>
                                 <button id="fullscreen-btn" class="toggle-btn" data-i18n-title="controls.mirror" disabled>
                                     <span class="material-symbols-outlined" aria-hidden="true">present_to_all</span>
                                 </button>
+                                <div class="flex-fill"></div>
                                 <button id="mirror-zones-btn" class="toggle-btn" data-i18n-title="controls.mirrorZones">
                                     <span class="material-symbols-outlined" aria-hidden="true">grid_view</span>
                                 </button>
@@ -153,7 +151,8 @@
                                     <span class="material-symbols-outlined">compare</span>
                                 </button>
                             </div>
-                            <div class="header-area" id="metronome">
+                            <div class="flex-fill"></div>
+                            <div class="metronome-area" id="metronome">
                                 <h2 data-i18n="metronome.title">
                                     <span id="sync-badge" class="sync-badge hidden" data-i18n="metronome.syncBadge" data-i18n-title="metronome.syncBadge"></span>
                                 </h2>
@@ -179,7 +178,6 @@
                                             </div>
                                         </div>
                                     </div>
-
                                     <div id="metronome-led" class="led"></div>
                                 </div>
 
@@ -192,29 +190,7 @@
                                     </select>
                                     <select id="clock-source-select" data-i18n-title="metronome.clockSource" class="hidden"></select>
                                 </div>
-                            </div>
-
-                            <div class="footer-area" id="common-controls">
-                                <!-- <h2 data-i18n="synthList.commonControlsTitle"></h2> -->
-                                <div class="flex items-center gap-3">
-                                    <div id="language-switcher" class="ml-auto"></div>
-                                    <button id="live-help-btn" class="icon-btn" data-i18n-title="controls.help">
-                                        <span class="material-symbols-outlined" aria-hidden="true">live_help</span>
-                                    </button>
-                                    <button id="open-config-btn" class="icon-btn" data-i18n-title="config.openFile">
-                                        <span class="material-symbols-outlined" aria-hidden="true">settings</span>
-                                    </button>
-                                    <div class="flex-fill"></div>
-                                    <button id="save-session-btn" class="icon-btn" data-i18n-title="session.save">
-                                        <span class="material-symbols-outlined" aria-hidden="true">save</span>
-                                    </button>
-                                    <button id="load-session-btn" class="icon-btn" data-i18n-title="session.load">
-                                        <span class="material-symbols-outlined" aria-hidden="true">folder_open</span>
-                                    </button>
-
-
-                                </div>
-                            </div>
+                            </div>                            
                         </div>
                     </div>
                 </div>
@@ -223,17 +199,16 @@
 
         <!-- Right column: fixed width -->
         <div class="column column-right">
-
-            <div class="content-area synth-list" id="synth-list">
-                
-                <div class="synth-list-body">
-                    
+            <div class="content-area synth-list" id="synth-list">                
+                <div class="synth-list-body">                    
                     <div class="synth-tabs"></div>
                     <div class="synth-devices">
                         <div class="synth-list-header">
                             <h2 data-i18n="synthList.title"></h2>
                             <div class="synth-list-header-actions">
-                                <button id="play-all-btn" class="synth-list-action synth-list-action-play" data-i18n-title="synthList.playAllStart"><span class="material-symbols-outlined" aria-hidden="true">play_arrow</span></button>
+                                <button id="play-all-btn" class="synth-list-action synth-list-action-play" data-i18n-title="synthList.playAllStart"><span class="material-symbols-outlined" aria-hidden="true">play_arrow</span>
+                                <span class="play-all-label"></span>
+                                </button>
                                 <button id="panic-btn" class="synth-list-action synth-list-action-stop" data-i18n-title="synthList.panic"><span class="material-symbols-outlined" aria-hidden="true">skull</span></button>
                                 <div class="flex-fill"></div>
                                 <button id="add-synth-btn" class="synth-list-action" data-i18n-title="synthList.add"><span class="material-symbols-outlined" aria-hidden="true">add</span></button>
@@ -242,11 +217,28 @@
                         <div class="synth-devices-wrapper">
                             <!-- Synthesizers will be dynamically added here -->
                             <div class="placeholder-text"></div>
-                        </div>                        
+                        </div> 
+                        <div class="footer-area" id="common-controls">
+                            <div class="flex items-center gap-3">
+                                <div id="language-switcher" class="ml-auto"></div>
+                                <button id="live-help-btn" class="icon-btn" data-i18n-title="controls.help">
+                                    <span class="material-symbols-outlined" aria-hidden="true">live_help</span>
+                                </button>
+                                <button id="open-config-btn" class="icon-btn" data-i18n-title="config.openFile">
+                                    <span class="material-symbols-outlined" aria-hidden="true">settings</span>
+                                </button>
+                                <div class="flex-fill"></div>
+                                <button id="save-session-btn" class="secondary" data-i18n-title="session.save">
+                                    <span class="material-symbols-outlined" aria-hidden="true">save</span>
+                                </button>
+                                <button id="load-session-btn" class="secondary" data-i18n-title="session.load">
+                                    <span class="material-symbols-outlined" aria-hidden="true">folder_open</span>
+                                </button>
+                            </div>
+                        </div>                       
                     </div>
                 </div>
             </div>
-
         </div>
     </div>
 

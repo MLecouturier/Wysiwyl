@@ -232,7 +232,7 @@ impl SynthTemplate {
         synth.velocity_min = self.velocity_min;
         synth.velocity_max = self.velocity_max;
         synth.velocity_relative = self.velocity_relative;
-        synth.volume = self.volume.min(100);
+        synth.volume = self.volume.min(127);
         synth.hue_shift = self.hue_shift;
         synth.channel_enabled = self.channel_enabled;
         if !self.note_lengths.is_empty() {

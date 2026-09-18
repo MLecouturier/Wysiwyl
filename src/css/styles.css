@@ -90,7 +90,7 @@ h2 {
 .content-area {
   flex: 1 1 auto;
   overflow-y: auto;
-  padding: 1rem;
+  padding: 1rem 0.25rem 1rem 1rem;
 }
 
 .image-viewer-container {
@@ -217,6 +217,7 @@ input[type=range].gradient-hue::-moz-range-track {
 }
 
 select {
+  height: 1.75rem;
   background-color: #262626;
   color: #ccc;
   border: 1px solid #333;
@@ -259,9 +260,11 @@ select:disabled {
   border-color: #888;
 }
 .icon-btn.active {
-  background-color: #3a7bd5;
   border-color: #3a7bd5;
-  color: white;
+  color: #3a7bd5;
+}
+.icon-btn.active:hover {
+  border-color: #888;
 }
 
 button.primary {
@@ -290,6 +293,7 @@ button.secondary {
 }
 button.secondary:hover {
   background-color: #262626;
+  border-color: #888;
 }
 
 button.toggle-btn {
@@ -303,30 +307,37 @@ button.toggle-btn {
   transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
 }
 button.toggle-btn:hover {
-  background-color: #262626;
+  border-color: #888;
 }
 button.toggle-btn.active {
-  background-color: #3a7bd5;
   border-color: #3a7bd5;
-  color: white;
+  color: #3a7bd5;
 }
 button.toggle-btn.active:hover {
-  background-color: #2d5fa8;
+  border-color: #888;
 }
 button.toggle-btn.active.selective {
-  background-color: #e67e22;
+  color: #e67e22;
   border-color: #e67e22;
 }
 button.toggle-btn.active.selective:hover {
-  background-color: #d35400;
+  border-color: #888;
 }
 
 .controls {
   position: relative;
   flex: 0 0 auto;
 }
+.controls .controls-column-right {
+  width: 30%;
+}
+.controls .controls-image {
+  background-color: #262626;
+  padding: 0.5rem 0.5rem 0;
+  border-radius: 0.25rem;
+}
 .controls .controls-set {
-  justify-content: flex-end;
+  justify-content: flex-start;
   padding: 0 0.5rem 0 0.25rem;
   max-width: 30rem;
 }
@@ -383,6 +394,9 @@ button.toggle-btn.active.selective:hover {
   color: #ccc;
   margin-top: 0.5rem;
 }
+.controls label.columns-control {
+  margin-top: 0;
+}
 .controls label span {
   display: flex;
   justify-content: space-between;
@@ -402,6 +416,13 @@ button.toggle-btn.active.selective:hover {
   width: 3.75rem;
   outline: none;
   text-align: right;
+}
+
+.metronome-area {
+  flex: 0 0 auto;
+  padding: 12px 1rem;
+  border-radius: 0.25rem;
+  background-color: #262626;
 }
 
 .metronome-controls {
@@ -570,13 +591,13 @@ button.toggle-btn.active.selective:hover {
 
 .synth-list-action {
   background: none;
-  flex: 1 1 auto;
   border: 1px solid #333;
+  font-size: 0.8rem;
+  text-transform: uppercase;
   color: white;
-  width: 4rem;
-  max-width: 4rem;
+  min-width: 4rem;
   height: 1.75rem;
-  border-radius: 0.825rem;
+  border-radius: 0.25rem;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -592,6 +613,12 @@ button.toggle-btn.active.selective:hover {
 
 .synth-list-action-play {
   background-color: #219a52;
+}
+.synth-list-action-play span:first-of-type {
+  margin: 0 0.25rem 0 0.75rem;
+}
+.synth-list-action-play span:last-of-type {
+  margin: 0 0.75rem 0 0.25rem;
 }
 .synth-list-action-play:hover {
   background-color: #1d8446;
@@ -659,7 +686,7 @@ button.toggle-btn.active.selective:hover {
   border-bottom-color: var(--synth-tab-color, #333);
   border-top-left-radius: 0.25rem;
   border-bottom-left-radius: 0.25rem;
-  padding: 0.125rem 0.25rem 0.25rem 0;
+  padding: 0.125rem 0.25rem 0.5rem 0;
   user-select: none;
 }
 .synth-tab .synth-tab-drag-handle {
@@ -724,7 +751,7 @@ button.toggle-btn.active.selective:hover {
   position: absolute;
   right: 0;
   bottom: 0;
-  height: 3px;
+  height: 5px;
   width: var(--synth-volume, 100%);
   background-color: var(--synth-tab-color, #333);
   pointer-events: none;
@@ -746,6 +773,7 @@ button.toggle-btn.active.selective:hover {
   overflow: visible;
 }
 .synth-block .synth-title-label {
+  font-size: 1.125rem;
   width: 100%;
   text-align: center;
   font-weight: 600;
@@ -861,6 +889,12 @@ button.toggle-btn.active.selective:hover {
 }
 .synth-block .synth-header .synth-header-row .synth-midi-port {
   max-width: 11rem;
+}
+.synth-block .synth-header .synth-header-row .synth-channel.shared-channel {
+  border-color: #e0a016;
+}
+.synth-block .synth-header .synth-header-row .synth-channel.shared-channel:hover, .synth-block .synth-header .synth-header-row .synth-channel.shared-channel:focus {
+  border-color: #e0a016;
 }
 .synth-block .synth-header .synth-title-input {
   background-color: #262626;
@@ -1086,7 +1120,7 @@ button.toggle-btn.active.selective:hover {
   border-color: #2121c8;
 }
 .synth-block .magic-wand-tolerance {
-  display: none;
+  visibility: hidden;
   width: 3rem;
   height: 1.75rem;
   padding: 0.25rem 0.375rem;
@@ -1111,7 +1145,7 @@ button.toggle-btn.active.selective:hover {
   border-color: #3a7bd5;
 }
 .synth-block.wand-armed .magic-wand-tolerance {
-  display: block;
+  visibility: visible;
 }
 .synth-block.compact .synth-body > .synth-section:not(.synth-playback),
 .synth-block.compact .synth-body > .synth-full-options {
@@ -1211,13 +1245,6 @@ button.toggle-btn.active.selective:hover {
   border-top: 1px solid #333;
   background-color: #262626;
   overflow-y: auto;
-}
-
-.header-area {
-  flex: 0 0 auto;
-  padding: 12px 1rem;
-  border-bottom: 1px solid #333;
-  background-color: #262626;
 }
 
 ::-webkit-scrollbar {
@@ -2119,6 +2146,4 @@ button.toggle-btn.active.selective:hover {
 
 .pointer-events-auto {
   pointer-events: auto;
-}
-
-/*# sourceMappingURL=styles.css.map */
+}/*# sourceMappingURL=styles.css.map */

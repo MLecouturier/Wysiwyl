@@ -3337,6 +3337,10 @@ const synthTabs     = document.querySelector('.synth-tabs');
 const synthDevices  = document.querySelector('.synth-devices-wrapper');
 const placeholder   = synthListBody.querySelector('.placeholder-text');
 
+// Initial state of the play-all button: icon and label ship empty in the
+// markup, this fills them for the current locale
+syncPlayAllButton();
+
 // The full synth card in the devices column
 function synthElementById(id) {
     return synthDevices.querySelector(`.synth-block[data-synth-id="${id}"]`);
@@ -3348,9 +3352,11 @@ function synthTabById(id) {
 }
 
 // Reflects the synth's channel volume on its tab: the bottom bar's
-// width follows the volume percent (see .synth-tab-volume-bar).
+// width follows the volume, expressed as a percentage of the MIDI
+// range 0–127 (see .synth-tab-volume-bar).
 function setTabVolumeBar(tab, volume) {
-    tab?.style.setProperty('--synth-volume', `${Math.max(0, Math.min(100, volume))}%`);
+    const v = Math.max(0, Math.min(127, volume));
+    tab?.style.setProperty('--synth-volume', `${(v / 127 * 100).toFixed(2)}%`);
 }
 
 // Reflects a newly created synth's backend state (built from the
@@ -3391,9 +3397,9 @@ function applySynthConfig(el, cfg) {
     el.querySelector('.velocity-max-val').textContent = cfg.velocity_max;
     el.querySelector('.synth-relative-velocity-range')
         .classList.toggle('active', !!cfg.velocity_relative);
-    // Channel volume (percent), sent as MIDI CC 7. Default for sessions
-    // saved before the setting existed.
-    const volume = Number.isFinite(cfg.volume) ? cfg.volume : 100;
+    // Channel volume (raw MIDI value 0–127), sent as MIDI CC 7. Default
+    // for sessions saved before the setting existed.
+    const volume = Number.isFinite(cfg.volume) ? cfg.volume : 127;
     el.querySelector('.synth-volume').value = volume;
     setTabVolumeBar(el._tab, volume);
     // Hue shift (monophonic panel)
@@ -3599,9 +3605,9 @@ function createSynthElement(id, cfg = null) {
                 </div>
                 
                 <div class="synth-section-body center extra-margin">
-                <span class="material-symbols-outlined" aria-hidden="true">volume_up</span>
-                <input type="number" class="synth-volume" min="0" max="100" step="1" value="100" data-i18n-title="synth.volume" />
-                <div class="flex-filler grow"></div>
+                    <span class="material-symbols-outlined" aria-hidden="true">volume_up</span>
+                    <input type="number" class="synth-volume" min="0" max="127" step="1" value="127" data-i18n-title="synth.volume" />
+                    <div class="flex-filler grow"></div>
                     <button class="synth-rewind icon-btn" data-i18n-title="synth.rewind">
                         <span class="material-symbols-outlined" aria-hidden="true">fast_rewind</span>
                     </button>
@@ -3611,9 +3617,7 @@ function createSynthElement(id, cfg = null) {
                     </button>
                     <button class="synth-step-forward icon-btn" data-i18n-title="synth.stepForward">
                         <span class="material-symbols-outlined" aria-hidden="true">step</span>
-                    </button>
-                    
-                    
+                    </button>    
                 </div>
             </div>
 
@@ -3804,14 +3808,14 @@ function createSynthElement(id, cfg = null) {
             .catch(err => console.error('Error in step_synth:', err));
     });
 
-    // ---- Channel volume (percent), sent as MIDI CC 7 ----
+    // ---- Channel volume (raw MIDI value 0–127), sent as MIDI CC 7 ----
     // Editable live while playing. Scrolling over the input adjusts the
     // value by ±1; the wheel's page scroll is suppressed while over it.
     const volumeInput = el.querySelector('.synth-volume');
     const sendSynthVolume = () => {
         let volume = Math.round(Number(volumeInput.value));
-        if (!Number.isFinite(volume)) volume = 100;
-        volume = Math.max(0, Math.min(100, volume));
+        if (!Number.isFinite(volume)) volume = 127;
+        volume = Math.max(0, Math.min(127, volume));
         volumeInput.value = String(volume);
         setTabVolumeBar(tab, volume);
         invoke('set_synth_volume', { id, volume })
@@ -3822,8 +3826,8 @@ function createSynthElement(id, cfg = null) {
     // so scrolling over it adjusts the value the same way.
     const adjustSynthVolume = (delta) => {
         let current = Math.round(Number(volumeInput.value));
-        if (!Number.isFinite(current)) current = 100;
-        const next = Math.max(0, Math.min(100, current + delta));
+        if (!Number.isFinite(current)) current = 127;
+        const next = Math.max(0, Math.min(127, current + delta));
         volumeInput.value = String(next);
         sendSynthVolume();
     };
@@ -4385,6 +4389,9 @@ function syncPlayAllButton() {
     const blocks = Array.from(synthListBody.querySelectorAll('.synth-block'));
     const anyPlaying = blocks.some(el => el.querySelector('.synth-play').classList.contains('active'));
     playAllBtn.querySelector('.material-symbols-outlined').textContent = anyPlaying ? 'pause' : 'play_arrow';
+    playAllBtn.querySelector('.play-all-label').textContent = anyPlaying
+        ? t('synthList.stopAllLabel')
+        : t('synthList.playAllLabel');
     playAllBtn.title = anyPlaying
         ? t('synthList.playAllStop')
         : t('synthList.playAllStart');
@@ -4392,8 +4399,9 @@ function syncPlayAllButton() {
 
 // CC 7 addresses the MIDI channel, not the synth: several synths sharing
 // the same (port, channel) override each other's volume — the last
-// setting sent wins. Flags the volume inputs of every synth in that
-// case with the shared-channel warning style and tooltip.
+// setting sent wins. Flags the volume inputs and the channel selects of
+// every synth in that case with the shared-channel warning style and
+// tooltip.
 function updateVolumeSharedChannelWarnings() {
     const blocks = Array.from(synthDevices.querySelectorAll('.synth-block'));
     const counts = new Map();
@@ -4407,13 +4415,21 @@ function updateVolumeSharedChannelWarnings() {
         counts.set(key, (counts.get(key) || 0) + 1);
     });
     blocks.forEach(block => {
-        const input = block.querySelector('.synth-volume');
-        if (!input) return;
         const shared = counts.get(keyOf(block)) > 1;
-        input.classList.toggle('shared-channel', shared);
-        const key = shared ? 'synth.volumeSharedChannel' : 'synth.volume';
-        input.dataset.i18nTitle = key;
-        input.title = t(key);
+        const input = block.querySelector('.synth-volume');
+        if (input) {
+            input.classList.toggle('shared-channel', shared);
+            const key = shared ? 'synth.volumeSharedChannel' : 'synth.volume';
+            input.dataset.i18nTitle = key;
+            input.title = t(key);
+        }
+        const channelSelect = block.querySelector('.synth-channel');
+        if (channelSelect) {
+            channelSelect.classList.toggle('shared-channel', shared);
+            const key = shared ? 'synth.channelSharedChannel' : 'synth.channel';
+            channelSelect.dataset.i18nTitle = key;
+            channelSelect.title = t(key);
+        }
     });
 }
 

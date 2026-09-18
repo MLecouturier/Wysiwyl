@@ -37,9 +37,13 @@
 
     // Mode/toggle currently active (crop, transform, show original, eye...)
     &.active {
-        background-color: $color-accent;
+        // background-color: $color-accent;
         border-color: $color-accent;
-        color: white;
+        color: $color-accent;
+
+        &:hover {
+            border-color: $color-text-muted;
+        }
     }
 }
 
@@ -66,7 +70,10 @@ button.secondary {
     font-size: 0.85rem;
     transition: background-color $transition-fast, color $transition-fast, border-color $transition-fast;
 
-    &:hover { background-color: $color-bg-light; }
+    &:hover { 
+        background-color: $color-bg-light; 
+        border-color: $color-text-muted;
+    }
 }
 
 // Text on/off toggle: ghost look when inactive, accent look when active
@@ -80,22 +87,28 @@ button.toggle-btn {
     font-size: 0.85rem;
     transition: background-color $transition-fast, border-color $transition-fast, color $transition-fast;
 
-    &:hover { background-color: $color-bg-light; }
+    &:hover { 
+        border-color: $color-text-muted;
+    }
 
     &.active {
-        background-color: $color-accent;
+        // background-color: ;
         border-color: $color-accent;
-        color: white;
+        color: $color-accent;
 
-        &:hover { background-color: $color-accent-hover; }
+        &:hover { 
+            border-color: $color-text-muted;
+        }
     }
 
     // Selective state of the mirror zones toggle: only the synths visible
     // in the main window are projected — orange marks the in-between state
     &.active.selective {
-        background-color: $color-selective;
+        color: $color-selective;
         border-color: $color-selective;
 
-        &:hover { background-color: $color-selective-hover; }
+        &:hover { 
+            border-color: $color-text-muted;
+        }
     }
 }
