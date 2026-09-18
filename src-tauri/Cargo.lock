@@ -5601,7 +5601,7 @@ dependencies = [
 
 [[package]]
 name = "wysiwyl"
-version = "2.0.5"
+version = "2.1.0"
 dependencies = [
  "base64 0.22.1",
  "crossbeam-channel",
