@@ -74,7 +74,13 @@
   },
   "session": {
     "save": "Enregistrer la session de travail…",
-    "load": "Ouvrir une session de travail…"
+    "load": "Ouvrir une session de travail…",
+    "unsavedTitle": "Modifications non enregistrées",
+    "unsavedMessage": "Voulez-vous enregistrer les modifications de « {name} » avant de fermer ?",
+    "unsavedMessageUntitled": "Voulez-vous enregistrer votre session avant de fermer ?",
+    "saveButton": "Enregistrer",
+    "dontSaveButton": "Ne pas enregistrer",
+    "cancelButton": "Annuler"
   },
   "synth": {
     "title": "Synthé #{id}",

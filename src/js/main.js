@@ -9,8 +9,12 @@ const { invoke } = window.__TAURI__.core;
 const { emit, listen } = window.__TAURI__.event;
 const { WebviewWindow } = window.__TAURI__.webviewWindow;
 const { getCurrentWindow, currentMonitor, availableMonitors } = window.__TAURI__.window;
+const { getVersion } = window.__TAURI__.app;
 
 await initI18n();
+
+// Normalize the title bar (adds the version from the app metadata)
+updateWindowTitle();
 
 // Map id → custom name
 const synthNames = new Map();
@@ -761,6 +765,40 @@ window.addEventListener('keydown', (e) => {
         exitCropMode();
         closeTransformPanel();
         cancelZonePicking();
+        document.querySelectorAll('.synth-color-picker').forEach(p => p.classList.add('hidden'));
+    }
+});
+
+// ---------- Global shortcuts ----------
+// Enter commits the pending crop or perspective correction (the buttons'
+// own guards make it a no-op when nothing is pending), Space toggles
+// every synth (Shift+Space is the panic kill switch), 1-8 toggle the
+// N-th synth card in display order, Cmd/Ctrl+M toggles the projection
+// mirror. All skipped while the focus sits in a form field or button:
+// the focused widget handles the keys itself (typing a number, pressing
+// a focused button with Space…).
+// Note: Cmd+M would be reserved by a standard macOS menu (minimize) if
+// one is ever added.
+window.addEventListener('keydown', (e) => {
+    // The unsaved-session modal is modal: no shortcut fires behind it
+    if (!unsavedModal.classList.contains('hidden')) return;
+    const tag = e.target.tagName;
+    const inFormField = tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || tag === 'BUTTON';
+
+    if (e.key === 'Enter' && !inFormField) {
+        if (cropMode) cropApplyBtn.click();
+        else if (transformActive) transformApplyBtn.click();
+    } else if (e.key === ' ' && !inFormField) {
+        e.preventDefault();
+        if (e.shiftKey) panicBtn.click();
+        else playAllBtn.click();
+    } else if (!inFormField && e.key >= '1' && e.key <= '8') {
+        const blocks = Array.from(synthListBody.querySelectorAll('.synth-block'));
+        const el = blocks[Number(e.key) - 1];
+        if (el) onSynthPlayClick(Number(el.dataset.synthId), el);
+    } else if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === 'm') {
+        e.preventDefault();
+        toggleMirrorWindow();
     }
 });
 
@@ -1304,6 +1342,7 @@ function removeSynthZoneRect(id, rect) {
 function sendSynthZones(id) {
     const hi = synthHighlights.get(id);
     if (!hi) return;
+    markSessionDirty();
     invoke('set_synth_zones', { id, zones: hi.zones })
         .catch(err => console.error('Error in set_synth_zones:', err));
 }
@@ -1378,6 +1417,7 @@ function clipMuteZonesToSelection(id) {
 function sendSynthMuteZones(id) {
     const hi = synthHighlights.get(id);
     if (!hi) return;
+    markSessionDirty();
     invoke('set_synth_mute_zones', { id, zones: hi.muteZones })
         .catch(err => console.error('Error in set_synth_mute_zones:', err));
 }
@@ -1957,6 +1997,7 @@ loadBtn.addEventListener('click', async () => {
     origHeight  = result.orig_height;
     originalPng = result.base64_png;
     hasImage    = true;
+    markSessionDirty();
 
     gridSlider.value         = SLIDER_STEPS;
     showOriginalBtn.classList.remove('active');
@@ -1997,6 +2038,7 @@ function resetAllSynthZones() {
 
 // Applies a backend reshape result (new original) to the frontend state
 async function applyReshapedImage(result) {
+    markSessionDirty();
     origWidth   = result.orig_width;
     origHeight  = result.orig_height;
     originalPng = result.base64_png;
@@ -2564,6 +2606,7 @@ resetBtn.addEventListener('click', () => {
   simplify.value   = 0;
   autoLevelsBtn.classList.remove('active');
 
+  markSessionDirty();
   syncLabels();
   refresh();
 });
@@ -2572,10 +2615,54 @@ resetBtn.addEventListener('click', () => {
 const saveSessionBtn = document.querySelector('#save-session-btn');
 const loadSessionBtn = document.querySelector('#load-session-btn');
 
+// Current session file: null until the session is saved or a previously
+// saved one is loaded. `isSessionDirty` marks unsaved changes (title bar
+// asterisk, close confirmation); `suppressDirty` disables the tracking
+// while a session load rebuilds the UI programmatically.
+let currentSessionPath = null;
+let currentSessionName = null;
+let isSessionDirty = false;
+let suppressDirty = false;
+
+function sessionNameFromPath(path) {
+    const base = path.split(/[\\/]/).pop() || '';
+    return base.replace(/\.(wysiwyl|soundmap)$/i, '') || base;
+}
+
+// Mirrors the configured window title ("Wysiwyl <version>"), extended
+// with the loaded session's name and a "*" while changes are unsaved.
+async function updateWindowTitle() {
+    let title = 'Wysiwyl';
+    try {
+        title = `Wysiwyl ${await getVersion()}`;
+    } catch (err) {
+        // Fall back to the plain name
+    }
+    if (currentSessionName) title += ` — ${currentSessionName}`;
+    if (isSessionDirty) title += ' *';
+    try {
+        await getCurrentWindow().setTitle(title);
+    } catch (err) {
+        console.error('Error while updating the window title:', err);
+    }
+}
+
+function setSessionDirty(dirty) {
+    if (isSessionDirty === dirty) return;
+    isSessionDirty = dirty;
+    updateWindowTitle();
+}
+
+function markSessionDirty() {
+    if (suppressDirty || isSessionDirty) return;
+    isSessionDirty = true;
+    updateWindowTitle();
+}
+
 // Collects the frontend-owned state (metronome tempo, image sliders, synth
 // colors in display order); the backend owns the rest (image, synths).
-saveSessionBtn.addEventListener('click', async () => {
-    const ui = {
+function buildSessionUi() {
+    return {
         bpm: clampBpm(Number(bpmInput.value)),
         grid_slider: Number(gridSlider.value),
         contrast: Number(contrast.value),
@@ -2592,15 +2679,30 @@ saveSessionBtn.addEventListener('click', async () => {
             color: synthColors.get(Number(el.dataset.synthId)),
         })),
     };
+}
+
+// Saves the session: to the current file when there is one (direct
+// update), otherwise through a native Save As dialog. Returns false
+// when the dialog was canceled or the write failed (the caller then
+// keeps the session open).
+async function saveCurrentSession() {
     try {
-        await invoke('save_session', { ui });
+        const path = await invoke('save_session', { ui: buildSessionUi(), path: currentSessionPath });
+        if (!path) return false; // save dialog canceled
+        currentSessionPath = path;
+        currentSessionName = sessionNameFromPath(path);
+        setSessionDirty(false);
+        return true;
     } catch (err) {
         console.error('Error while saving the session:', err);
         alert(translateError(err));
+        return false;
     }
-});
+}
 
-loadSessionBtn.addEventListener('click', async () => {
+saveSessionBtn.addEventListener('click', () => saveCurrentSession());
+
+async function openSession() {
     let session;
     try {
         session = await invoke('load_session');
@@ -2611,82 +2713,224 @@ loadSessionBtn.addEventListener('click', async () => {
     }
     if (!session) return; // dialog canceled
 
-    // Stop everything and clear the current synths
-    await invoke('stop_metronome');
-    exitCropMode();
-    closeTransformPanel();
-    metronomeRunning = false;
-    synthListBody.querySelectorAll('.synth-block').forEach(el => el.remove());
-    synthTabs.querySelectorAll('.synth-tab').forEach(el => el.remove());
-    synthColors.clear();
-    synthCursors.clear();
-    synthHighlights.clear();
-    synthNames.clear();
-    synthDisplayNumbers.clear();
-    placeholder.classList.remove('hidden');
-    cancelZonePicking();
-    syncPlayAllButton();
-    updateImageControlsLockState();
+    // The whole UI rebuild below assigns values programmatically: the
+    // dirty tracking must not see it as user edits
+    suppressDirty = true;
 
-    // Restore the image and its processing settings (the backend already
-    // holds the original: refresh re-derives the processed grid)
-    origWidth = session.orig_width;
-    origHeight = session.orig_height;
-    originalPng = session.image_base64;
-    hasImage = true;
-    gridSlider.value = session.image_settings.grid_slider;
-    contrast.value = session.image_settings.contrast;
-    brightness.value = session.image_settings.brightness;
-    vibrance.value = session.image_settings.vibrance ?? 0;
-    posterize.value = posterizeLevelsToSlider(session.image_settings.posterize_levels);
-    texture.value = session.image_settings.texture ?? 0;
-    clarity.value = session.image_settings.clarity ?? 0;
-    simplify.value = session.image_settings.simplify ?? 0;
-    autoLevelsBtn.classList.toggle('active', session.image_settings.auto_levels ?? false);
-    mirrorZonesMode = session.image_settings.mirror_zones_mode;
-    updateMirrorZonesButton();
-    showOriginalBtn.classList.remove('active');
-    viewerEmpty.classList.add('hidden');
-    syncLabels();
-    // The plain refresh re-renders the processed grid at the session's
-    // column count. updateAllSynthZones inside it is a no-op (the UI
-    // synth list is still empty here): the synths restored by
-    // load_session already hold their zones, in the session's own grid
-    // coordinates, on the backend's side.
-    await refresh();
+    try {
+        // Stop everything and clear the current synths
+        await invoke('stop_metronome');
+        exitCropMode();
+        closeTransformPanel();
+        metronomeRunning = false;
+        synthListBody.querySelectorAll('.synth-block').forEach(el => el.remove());
+        synthTabs.querySelectorAll('.synth-tab').forEach(el => el.remove());
+        synthColors.clear();
+        synthCursors.clear();
+        synthHighlights.clear();
+        synthNames.clear();
+        synthDisplayNumbers.clear();
+        placeholder.classList.remove('hidden');
+        cancelZonePicking();
+        syncPlayAllButton();
+        updateImageControlsLockState();
 
-    // Restore the tempo and the synths
-    bpmInput.value = clampBpm(session.bpm);
-    if (session.synths.length > 0) {
-        placeholder.classList.add('hidden');
-        for (const s of session.synths) {
-            // Pre-seed the name and color for createSynthElement to pick up
-            synthColors.set(s.id, s.color);
-            if (s.name) synthNames.set(s.id, s.name);
-            // The saved programs were just resent by the backend: reflect
-            // them in the display map (keyed by the synth's port/channel)
-            if (s.program && Number.isInteger(s.program.program)) {
-                programMap.set(programKey(s.midi_port, s.channel), s.program);
+        // Restore the image and its processing settings (the backend already
+        // holds the original: refresh re-derives the processed grid)
+        origWidth = session.orig_width;
+        origHeight = session.orig_height;
+        originalPng = session.image_base64;
+        hasImage = true;
+        gridSlider.value = session.image_settings.grid_slider;
+        contrast.value = session.image_settings.contrast;
+        brightness.value = session.image_settings.brightness;
+        vibrance.value = session.image_settings.vibrance ?? 0;
+        posterize.value = posterizeLevelsToSlider(session.image_settings.posterize_levels);
+        texture.value = session.image_settings.texture ?? 0;
+        clarity.value = session.image_settings.clarity ?? 0;
+        simplify.value = session.image_settings.simplify ?? 0;
+        autoLevelsBtn.classList.toggle('active', session.image_settings.auto_levels ?? false);
+        mirrorZonesMode = session.image_settings.mirror_zones_mode;
+        updateMirrorZonesButton();
+        showOriginalBtn.classList.remove('active');
+        viewerEmpty.classList.add('hidden');
+        syncLabels();
+        // The plain refresh re-renders the processed grid at the session's
+        // column count. updateAllSynthZones inside it is a no-op (the UI
+        // synth list is still empty here): the synths restored by
+        // load_session already hold their zones, in the session's own grid
+        // coordinates, on the backend's side.
+        await refresh();
+
+        // Restore the tempo and the synths
+        bpmInput.value = clampBpm(session.bpm);
+        if (session.synths.length > 0) {
+            placeholder.classList.add('hidden');
+            for (const s of session.synths) {
+                // Pre-seed the name and color for createSynthElement to pick up
+                synthColors.set(s.id, s.color);
+                if (s.name) synthNames.set(s.id, s.name);
+                // The saved programs were just resent by the backend: reflect
+                // them in the display map (keyed by the synth's port/channel)
+                if (s.program && Number.isInteger(s.program.program)) {
+                    programMap.set(programKey(s.midi_port, s.channel), s.program);
+                }
+                // The synth settings are flattened into the session-synth object
+                // (serde flatten), so `s` itself is the config to apply
+                synthDevices.appendChild(createSynthElement(s.id, s));
+                const hi = synthHighlights.get(s.id);
+                if (hi) {
+                    // Zones come as run-encoded components; the backend
+                    // already holds them (load_session restored its side)
+                    hi.zones = s.zones || [];
+                    hi.muteZones = s.mute_zones || [];
+                }
+                updateZonesLabel(s.id);
             }
-            // The synth settings are flattened into the session-synth object
-            // (serde flatten), so `s` itself is the config to apply
-            synthDevices.appendChild(createSynthElement(s.id, s));
-            const hi = synthHighlights.get(s.id);
-            if (hi) {
-                // Zones come as run-encoded components; the backend
-                // already holds them (load_session restored its side)
-                hi.zones = s.zones || [];
-                hi.muteZones = s.mute_zones || [];
-            }
-            updateZonesLabel(s.id);
+            // New zones must never collide with the restored creation orders
+            seedZoneOrder(Array.from(synthHighlights.values())
+                .flatMap(hi => hi.zones.concat(hi.muteZones)));
+            redrawAllHighlights();
+            // Normalize the ids of legacy session files (possible gaps after
+            // deletions): the ids must match the display order again
+            await renumberSynthIds();
         }
-        // New zones must never collide with the restored creation orders
-        seedZoneOrder(Array.from(synthHighlights.values())
-            .flatMap(hi => hi.zones.concat(hi.muteZones)));
-        redrawAllHighlights();
-        // Normalize the ids of legacy session files (possible gaps after
-        // deletions): the ids must match the display order again
-        await renumberSynthIds();
+
+    } finally {
+        // A failed restore must never leave the tracking disabled
+        suppressDirty = false;
+    }
+    currentSessionPath = session.path;
+    currentSessionName = sessionNameFromPath(session.path);
+    isSessionDirty = false;
+    updateWindowTitle();
+}
+
+loadSessionBtn.addEventListener('click', () => openSession());
+
+// ---------- Unsaved-changes tracking ----------
+// The saved state lives in inputs (sliders, selects, number fields)
+// and in buttons (loop, direction, note lengths, channel toggles…).
+// Delegated listeners catch the user's edits wherever they happen;
+// programmatic assignments (`.value =` during a load or a reset) fire
+// no DOM event, so the restore paths never leave a false trace. The
+// transform/crop panels only hold a live preview: the session image
+// changes when their Apply button is clicked (targeted marks below).
+const SAVED_CONTROL_CONTAINERS = '#controls, .synth-block';
+const NON_SAVED_CONTAINERS = '#transform-panel, #crop-bar, #metronome, #language-switcher, .magic-wand-tolerance';
+
+function markDirtyFromInputEvent(e) {
+    if (suppressDirty) return;
+    const target = e.target;
+    if (!(target instanceof Element)) return;
+    // The tempo is part of the session, though its field lives inside the
+    // (otherwise excluded) metronome area
+    if (target === bpmInput) {
+        markSessionDirty();
+        return;
+    }
+    if (target.closest(NON_SAVED_CONTAINERS)) return;
+    if (target.closest(SAVED_CONTROL_CONTAINERS)) markSessionDirty();
+}
+document.addEventListener('input', markDirtyFromInputEvent, true);
+document.addEventListener('change', markDirtyFromInputEvent, true);
+
+// Saved-state buttons inside the synth cards emit clicks, not
+// input/change events. The transport and other non-saved actions are
+// excluded; the mode-arming zone tools are too (the actual zone commit
+// is marked where the zones are sent to the backend).
+const NON_SAVED_SYNTH_BUTTONS = [
+    '.synth-play', '.synth-rewind', '.synth-step-forward',
+    '.synth-eye-btn', '.synth-toggle-full-options', '.synth-save-template',
+    '.synth-add-zone-btn', '.synth-lasso-add-zone-btn',
+    '.synth-magic-wand-add-zone-btn', '.synth-remove',
+    '.synth-color-band', '.synth-color-picker',
+].join(',');
+
+document.addEventListener('click', (e) => {
+    if (suppressDirty) return;
+    if (!(e.target instanceof Element)) return;
+    const btn = e.target.closest('button');
+    if (!btn) return;
+    if (btn.closest(NON_SAVED_CONTAINERS)) {
+        // The BPM steppers of the metronome area do change saved state
+        if (btn.classList.contains('bpm-step') || btn.classList.contains('bpm-spinner-btn')) {
+            markSessionDirty();
+        }
+        return;
+    }
+    if (btn.closest('.synth-block') && !btn.closest(NON_SAVED_SYNTH_BUTTONS)) {
+        markSessionDirty();
+    }
+}, true);
+
+// ---------- Session shortcuts (Cmd/Ctrl+S, Cmd/Ctrl+O) ----------
+window.addEventListener('keydown', (e) => {
+    if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+    const key = e.key.toLowerCase();
+    if (key === 's') {
+        e.preventDefault();
+        saveCurrentSession();
+    } else if (key === 'o') {
+        e.preventDefault();
+        openSession();
+    }
+});
+
+// ---------- Close confirmation for unsaved sessions ----------
+const unsavedModal = document.querySelector('#session-unsaved-modal');
+const unsavedModalMessage = document.querySelector('#session-unsaved-message');
+const unsavedSaveBtn = document.querySelector('#session-unsaved-save');
+const unsavedDiscardBtn = document.querySelector('#session-unsaved-discard');
+const unsavedCancelBtn = document.querySelector('#session-unsaved-cancel');
+
+let allowMainWindowClose = false;
+
+function showUnsavedModal() {
+    unsavedModalMessage.textContent = currentSessionName
+        ? t('session.unsavedMessage', { name: currentSessionName })
+        : t('session.unsavedMessageUntitled');
+    unsavedModal.classList.remove('hidden');
+}
+
+function hideUnsavedModal() {
+    unsavedModal.classList.add('hidden');
+}
+
+// Destroys the projection mirror, then closes the main window. The
+// mirror is bypassed directly (its close-requested handler would
+// needlessly report back to a dying window).
+async function proceedWithClose() {
+    allowMainWindowClose = true;
+    hideUnsavedModal();
+    if (mirrorWindowRef) {
+        const win = mirrorWindowRef;
+        mirrorWindowRef = null;
+        try {
+            await win.destroy();
+        } catch (err) {
+            // The window may already be gone
+            console.error('Error while closing the mirror window:', err);
+        }
+    }
+    try {
+        await getCurrentWindow().close();
+    } catch (err) {
+        console.error('Error while closing the main window:', err);
+    }
+}
+
+unsavedSaveBtn.addEventListener('click', async () => {
+    // A canceled Save As (first save) keeps the session open
+    if (await saveCurrentSession()) await proceedWithClose();
+    else hideUnsavedModal();
+});
+unsavedDiscardBtn.addEventListener('click', () => proceedWithClose());
+unsavedCancelBtn.addEventListener('click', hideUnsavedModal);
+
+window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !unsavedModal.classList.contains('hidden')) {
+        hideUnsavedModal();
     }
 });
 
@@ -2719,6 +2963,7 @@ sliderDefaults.forEach((def, el) => {
   el.addEventListener('dblclick', () => {
     if (el.value == def) return;
     el.value = def;
+    markSessionDirty();
     syncLabels();
     scheduleRefresh();
   });
@@ -2726,6 +2971,7 @@ sliderDefaults.forEach((def, el) => {
 
 autoLevelsBtn.addEventListener('click', () => {
   autoLevelsBtn.classList.toggle('active');
+  markSessionDirty();
   scheduleRefresh();
 });
 
@@ -2764,6 +3010,7 @@ gridValue.addEventListener('dblclick', () => {
     const cells = Math.round(Number(input.value));
     if (Number.isFinite(cells) && cells >= MIN_CELLS && cells <= origWidth) {
       gridSlider.value = cellsToSlider(cells, origWidth);
+      markSessionDirty();
       syncLabels();
       scheduleRefresh();
     }
@@ -2863,6 +3110,12 @@ async function openMirrorWindow() {
         visible: false,
         decorations: true,
         resizable: true,
+        // Display-only window: it never takes the keyboard focus, not at
+        // creation and not during its fullscreen space transition — the
+        // main window (whose keyboard shortcuts drive the whole app)
+        // keeps it throughout
+        focus: false,
+        focusable: false,
     });
     mirrorWindowRef = win;
 
@@ -2883,6 +3136,15 @@ async function openMirrorWindow() {
             await win.setSize(new PhysicalSize(target.size.width, target.size.height));
             await win.setFullscreen(true);
             await win.show();
+            // The mirror is created non-focusable, so the main window keeps
+            // the keyboard focus throughout. One immediate setFocus call
+            // remains as a belt-and-braces for platforms where showing a
+            // window still activates it
+            try {
+                await getCurrentWindow().setFocus();
+            } catch (err) {
+                console.error('Error while restoring the main window focus:', err);
+            }
         } catch (err) {
             console.error('Error while placing the mirror window:', err);
         }
@@ -2921,6 +3183,7 @@ fullscreenBtn.addEventListener('click', toggleMirrorWindow);
 mirrorZonesBtn.addEventListener('click', () => {
     const idx = MIRROR_ZONES_MODES.indexOf(mirrorZonesMode);
     mirrorZonesMode = MIRROR_ZONES_MODES[(idx + 1) % MIRROR_ZONES_MODES.length];
+    markSessionDirty();
     updateMirrorZonesButton();
     pushMirrorZones();
 });
@@ -2982,10 +3245,16 @@ getCurrentWindow().onFocusChanged(() => {
 });
 
 // Closing the main window closes the projection too: without this the
-// app would live on with a mirror whose source of events is gone. The
-// mirror is destroyed directly (bypassing its close-requested handler,
-// which would needlessly report back to a dying window).
-getCurrentWindow().onCloseRequested(async () => {
+// app would live on with a mirror whose source of events is gone. A
+// session with unsaved changes first asks for a decision (Save / Discard
+// / Cancel): the mirror is only destroyed once the outcome is settled,
+// so a canceled close leaves the whole setup intact.
+getCurrentWindow().onCloseRequested(async (event) => {
+    if (isSessionDirty && !allowMainWindowClose) {
+        event.preventDefault();
+        showUnsavedModal();
+        return;
+    }
     if (!mirrorWindowRef) return;
     const win = mirrorWindowRef;
     mirrorWindowRef = null;
@@ -3938,6 +4207,7 @@ function createSynthElement(id, cfg = null) {
             const name = input.value.trim();
             if (name) synthNames.set(id, name);
             else synthNames.delete(id);
+            markSessionDirty();
             invoke('set_synth_name', { id, name: input.value })
                 .catch(err => console.error('Error in set_synth_name:', err));
             titleLabel.textContent = synthDisplayName(id);
@@ -4050,6 +4320,7 @@ function createSynthElement(id, cfg = null) {
     colorPicker.querySelectorAll('.color-swatch').forEach(btn => {
         btn.addEventListener('click', () => {
             const color = btn.dataset.color;
+            markSessionDirty();
             synthColors.set(id, color);
             colorBand.style.background = color;
             tab.style.setProperty('--synth-tab-color', color);
@@ -4754,6 +5025,7 @@ function initTabDrag(tab, el) {
         // anything visually.
         scrollSynthCardIntoView(el);
 
+        markSessionDirty();
         renumberSynthIds().catch(err => console.error('Error in set_synth_order:', err));
     };
 
@@ -4848,6 +5120,7 @@ async function onSynthRemoveClick(id, el) {
 
     // Confirmation click: disarm, then actually remove
     resetSynthRemoveConfirm();
+    markSessionDirty();
     await invoke('stop_synth', { id }).catch(() => {});
     await invoke('remove_synth', { id });
 
@@ -4878,6 +5151,7 @@ async function onSynthRemoveClick(id, el) {
 addSynthBtn.addEventListener('click', async () => {
     try {
         const synth = await invoke('add_synth');
+        markSessionDirty();
         placeholder.classList.add('hidden');
         const el = createSynthElement(synth.id, synth);
         synthDevices.appendChild(el);

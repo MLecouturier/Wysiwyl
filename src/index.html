@@ -255,6 +255,20 @@
         </div>
     </div>
 
+    <!-- Unsaved-session confirmation, shown when closing the main window -->
+    <div id="session-unsaved-modal" class="modal-overlay hidden">
+        <div class="modal-box">
+            <h3 data-i18n="session.unsavedTitle"></h3>
+            <p id="session-unsaved-message"></p>
+            <div class="modal-actions">
+                <div class="flex-fill"></div>
+                <button id="session-unsaved-cancel" class="secondary" data-i18n="session.cancelButton"></button>
+                <button id="session-unsaved-discard" class="secondary" data-i18n="session.dontSaveButton"></button>
+                <button id="session-unsaved-save" class="primary" data-i18n="session.saveButton"></button>
+            </div>
+        </div>
+    </div>
+
     <script type="module" src="js/main.js"></script>
 </body>
 </html>

@@ -60,3 +60,49 @@
     background-color: $color-bg-neutral;
     border-radius: $border-radius-base;
 }
+
+// ==========================================================================
+// Unsaved-session confirmation modal (main window close)
+// ==========================================================================
+// Built statically in index.html (id #session-unsaved-modal = JS hook);
+// the message and button labels are i18n-driven.
+
+.modal-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 2000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: rgba(0, 0, 0, 0.55);
+}
+
+.modal-box {
+    background-color: $color-bg-panel;
+    border: 1px solid $color-border;
+    border-radius: $border-radius-base;
+    padding: 1.25rem 1.5rem;
+    min-width: 22rem;
+    max-width: 30rem;
+    box-shadow: 0 .5rem 2rem rgba(0, 0, 0, 0.5);
+
+    h3 {
+        margin: 0 0 .5rem;
+        font-size: 1rem;
+        font-weight: 600;
+        color: $color-text-primary;
+    }
+
+    p {
+        margin: 0 0 1rem;
+        font-size: 0.85rem;
+        line-height: 1.4;
+        color: $color-text-secondary;
+    }
+}
+
+.modal-actions {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+}

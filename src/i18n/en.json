@@ -74,7 +74,13 @@
   },
   "session": {
     "save": "Save the work session…",
-    "load": "Open a work session…"
+    "load": "Open a work session…",
+    "unsavedTitle": "Unsaved changes",
+    "unsavedMessage": "Do you want to save the changes to “{name}” before closing?",
+    "unsavedMessageUntitled": "Do you want to save your session before closing?",
+    "saveButton": "Save",
+    "dontSaveButton": "Don't save",
+    "cancelButton": "Cancel"
   },
   "synth": {
     "title": "Synth #{id}",

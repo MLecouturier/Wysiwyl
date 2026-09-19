@@ -65,7 +65,8 @@ where
         type Value = String;
 
         fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            formatter.write_str(r#"a mirror zones mode ("all", "active", "none") or a legacy boolean"#)
+            formatter
+                .write_str(r#"a mirror zones mode ("all", "active", "none") or a legacy boolean"#)
         }
 
         fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<Self::Value, E> {
@@ -161,9 +162,12 @@ pub struct SessionImage {
 }
 
 /// Payload returned by `load_session`, for the frontend to rebuild its UI.
+/// `path` is the file the session was loaded from, so the frontend can
+/// track the current session file (title bar, direct re-save with Cmd+S).
 #[derive(Serialize, Debug)]
 pub struct LoadedSession {
     pub version: u32,
+    pub path: String,
     pub bpm: u32,
     pub image_base64: String,
     pub orig_width: u32,
@@ -172,30 +176,40 @@ pub struct LoadedSession {
     pub synths: Vec<SessionSynth>,
 }
 
-/// Saves the current work session to a `.wysiwyl` file picked through a
-/// native save dialog. Canceling the dialog is not an error.
+/// Saves the current work session to a `.wysiwyl` file. When `path` is
+/// provided the session is written there directly (updating a previously
+/// loaded one); otherwise a native save dialog is shown. Returns the
+/// path actually written, or `None` when the dialog was canceled (not an
+/// error).
 #[tauri::command]
 pub async fn save_session(
     app: AppHandle,
     ui: SessionUi,
+    path: Option<String>,
     image_state: State<'_, ImageState>,
     synth_state: State<'_, SynthState>,
     midi_state: State<'_, MidiState>,
-) -> Result<(), AppError> {
+) -> Result<Option<String>, AppError> {
     use tauri_plugin_dialog::DialogExt;
 
-    let file_path = app
-        .dialog()
-        .file()
-        .add_filter("Wysiwyl session", &["wysiwyl"])
-        .blocking_save_file();
+    let path = match path {
+        Some(p) => std::path::PathBuf::from(p),
+        None => {
+            let file_path = app
+                .dialog()
+                .file()
+                .add_filter("Wysiwyl session", &["wysiwyl"])
+                .blocking_save_file();
 
-    let Some(path) = file_path else {
-        return Ok(()); // canceled
+            let Some(file_path) = file_path else {
+                return Ok(None); // canceled
+            };
+            file_path
+                .as_path()
+                .ok_or_else(|| err("invalid_file_path"))?
+                .to_path_buf()
+        }
     };
-    let path = path
-        .as_path()
-        .ok_or_else(|| err("invalid_file_path"))?;
 
     // Encode the original image (the processed grid is re-derived from it)
     let image_guard = image_state.original.lock().unwrap();
@@ -256,11 +270,10 @@ pub async fn save_session(
 
     let json = serde_json::to_string_pretty(&file)
         .map_err(|e| err("session_write_error").with_param("details", e))?;
-    fs::write(path, json)
-        .map_err(|e| err("session_write_error").with_param("details", e))?;
-    Ok(())
-}
+    fs::write(&path, json).map_err(|e| err("session_write_error").with_param("details", e))?;
 
+    Ok(Some(path.to_string_lossy().into_owned()))
+}
 /// Loads a `.wysiwyl` (or legacy `.soundmap`) file picked through a native open dialog and
 /// reinstalls its whole state (image, synths) into the backend. Returns
 /// the session's content for the frontend to rebuild its UI; `None` means
@@ -283,12 +296,10 @@ pub async fn load_session(
     let Some(path) = file_path else {
         return Ok(None); // canceled
     };
-    let path = path
-        .as_path()
-        .ok_or_else(|| err("invalid_file_path"))?;
+    let path = path.as_path().ok_or_else(|| err("invalid_file_path"))?;
 
-    let content = fs::read_to_string(path)
-        .map_err(|e| err("session_read_error").with_param("details", e))?;
+    let content =
+        fs::read_to_string(path).map_err(|e| err("session_read_error").with_param("details", e))?;
 
     // Version gate, before any struct parsing: a session of an older
     // format (rectangular zones, versions 1-2) is refused with a clear
@@ -370,10 +381,14 @@ pub async fn load_session(
     {
         let mut to_send = std::collections::HashMap::<(usize, u8), ProgramState>::new();
         for entry in &file.synths {
-            let Some(program) = entry.program else { continue };
+            let Some(program) = entry.program else {
+                continue;
+            };
             let (port, channel) = {
                 let synths = synth_state.synths.lock().unwrap();
-                let Some(synth) = synths.get(&entry.id) else { continue };
+                let Some(synth) = synths.get(&entry.id) else {
+                    continue;
+                };
                 (synth.midi_port, synth.channel)
             };
             to_send.insert((port, channel), program);
@@ -393,6 +408,7 @@ pub async fn load_session(
 
     Ok(Some(LoadedSession {
         version: file.version,
+        path: path.to_string_lossy().into_owned(),
         bpm: file.bpm,
         image_base64,
         orig_width,
@@ -558,7 +574,11 @@ mod tests {
         synth.note_length_reversed = true;
         synth.note_sustain = false;
         synth.mono_note_range = [true, false, true];
-        synth.voice_note_ranges = [[true, false, false], [false, true, false], [false, false, true]];
+        synth.voice_note_ranges = [
+            [true, false, false],
+            [false, true, false],
+            [false, false, true],
+        ];
         synth.scale = Scale::Blues;
         synth.scale_root = 9;
 
