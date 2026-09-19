@@ -2,7 +2,7 @@ import { initI18n, t, translateError, getLocale, setLocale, AVAILABLE_LOCALES, a
 import { computeLayout, cellSetFromZones, drawZones, drawCursorCell, MUTE_GLYPH } from './viewer-render.js';
 import {
     seedZoneOrder, rectZone, zoneCellSet, zoneContains,
-    zoneIntersectsRect, zonesPixelCount, rebuildZones,
+    zoneIntersectsRect, rebuildZones,
 } from './zones.js';
 
 const { invoke } = window.__TAURI__.core;
@@ -1332,29 +1332,72 @@ function sendSynthNoteLengths(id, el) {
         .catch(err => console.error('Error in set_synth_note_lengths:', err));
 }
 
-// Number of pixels a synth will play: the exact count of its zones'
-// cells, 0 when no zone is selected. With the exact component model the
-// count matches the backend's sequence length (the historical rectangle
-// model double-counted overlaps).
-function synthSequenceLength(id) {
+// Note-length values in beats — the frontend mirror of the backend's
+// length_beats (metronome.rs). Used to compute the total duration of a
+// synth's selection from its enabled lengths.
+const NOTE_LENGTH_BEATS = {
+    sixteenth: 0.25,
+    eighth: 0.5,
+    quarter: 1,
+    half: 2,
+    whole: 4,
+};
+
+// Total duration, in metronome beats, of the pixels a synth will travel
+// over: for every selected pixel the brightness level picks a length
+// among the enabled ones (exact mirror of the backend's pick_note_length,
+// reversal included), then divided by the synth's tempo ratio. Muted
+// pixels count too — a silence occupies the duration of the note it
+// would have played, keeping the rhythm structure consistent.
+function synthZonesTotalBeats(id, el) {
     const hi = synthHighlights.get(id);
-    if (!hi) return 0;
-    return zonesPixelCount(hi.zones);
+    if (!hi || !processedPixels || hi.zones.length === 0) return 0;
+
+    // Enabled lengths, ordered like the backend: darkest band gets the
+    // shortest (the longest when reversed)
+    let lengths = Array.from(el.querySelectorAll('.note-length-btn.active'))
+        .map(btn => NOTE_LENGTH_BEATS[btn.dataset.length] ?? NOTE_LENGTH_BEATS.quarter);
+    if (lengths.length === 0) lengths = [NOTE_LENGTH_BEATS.quarter];
+    lengths.sort((a, b) => a - b);
+    if (el.querySelector('.synth-reverse-note-length').classList.contains('active')) {
+        lengths.reverse();
+    }
+
+    const ratio = Number(el.querySelector('.synth-tempo').value) || 1;
+    const n = lengths.length;
+    const { width: pw, rgba } = processedPixels;
+    let total = 0;
+
+    for (const z of hi.zones) {
+        for (const r of z.runs) {
+            for (let col = r.x0; col <= r.x1; col++) {
+                const i = (r.y * pw + col) * 4;
+                if (i + 2 >= rgba.length) continue; // torn zone edge
+                const luma = 0.299 * rgba[i] + 0.587 * rgba[i + 1] + 0.114 * rgba[i + 2];
+                const level = Math.round(luma / 255 * 127);
+                const idx = Math.min(Math.floor(level * n / 128), n - 1);
+                total += lengths[idx];
+            }
+        }
+    }
+    return total / ratio;
 }
 
-// "zones-val" shows the number of selected pixels for the synth.
+// "zones-val" shows the total duration of the synth's selection, in
+// metronome beats (each pixel's note length ÷ tempo ratio).
 function updateZonesLabel(id) {
     const el = synthElementById(id);
     if (!el) return;
     const zonesVal = el.querySelector('.zones-val');
 
-    if (!hasImage) {
+    if (!hasImage || !processedPixels) {
         zonesVal.textContent = '-';
         return;
     }
 
-    const pixelCount = synthSequenceLength(id);
-    zonesVal.textContent = pixelCount > 0 ? `${pixelCount} px` : '0 px';
+    const beats = synthZonesTotalBeats(id, el);
+    const formatted = beats.toLocaleString(getLocale(), { maximumFractionDigits: 2 });
+    zonesVal.textContent = `${formatted} ${t('synth.zonesBeatsUnit')}`;
 }
 
 function updateAllSynthZonesLabels() {
@@ -3556,7 +3599,7 @@ function createSynthElement(id, cfg = null) {
             <div class="synth-section">
                 <div class="synth-section-header">
                     <span class="synth-section-title" data-i18n="synth.zonesLabel"></span>
-                    <em class="synth-section-value zones-val"></em>
+                    <em class="synth-section-value zones-val" data-i18n-title="synth.zonesBeatsInfo"></em>
                     <div class="flex-fill"></div>
                     <button class="synth-add-zone-btn icon-btn" data-i18n-title="synth.addZone">
                         <span class="material-symbols-outlined" aria-hidden="true">select</span>
@@ -4089,6 +4132,7 @@ function createSynthElement(id, cfg = null) {
             }
             btn.classList.toggle('active');
             sendSynthNoteLengths(id, el);
+            updateZonesLabel(id);
         });
     });
     // Sync the default state (quarter checked) with the backend
@@ -4100,6 +4144,7 @@ function createSynthElement(id, cfg = null) {
         el.querySelector('.synth-note-length-section').classList.toggle('reversed', reversed);
         invoke('set_synth_note_length_reversed', { id, reversed })
             .catch(err => console.error('Error in set_synth_note_length_reversed:', err));
+        updateZonesLabel(id);
     });
 
     // ---- Note articulation: sustained vs pizzicato ----

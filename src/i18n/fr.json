@@ -147,6 +147,8 @@
     "toggleGreen": "Activer/désactiver le vert",
     "toggleBlue": "Activer/désactiver le bleu",
     "zonesLabel": "Zones",
+    "zonesBeatsUnit": "T.",
+    "zonesBeatsInfo": "Durée totale de lecture de la sélection, en temps du métronome : chaque pixel occupe la longueur de note que sa luminosité sélectionne (boutons 𝅘𝅥𝅯…𝅝), divisée par le ratio de tempo de ce synthé. Les pixels muets comptent : un silence occupe la durée de la note qu'il aurait jouée.",
     "addZone": "Tracer une zone sur l'image",
     "addZoneLasso": "Sélection à main levée sur l'image",
     "addZoneMagicWand": "Sélection baguette magique sur l'image",
