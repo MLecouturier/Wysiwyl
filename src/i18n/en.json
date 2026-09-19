@@ -148,7 +148,7 @@
     "toggleBlue": "Enable/disable blue",
     "zonesLabel": "Zones",
     "zonesBeatsUnit": "B.",
-    "zonesBeatsInfo": "Total reading duration of the selection, in metronome beats: each pixel occupies the note length its brightness picks (𝅘𝅥𝅯…𝅝 buttons), divided by this synth's tempo ratio. Muted pixels count: a silence occupies the duration of the note it would have played.",
+    "zonesBeatsInfo": "Total reading duration of the selection, in metronome beats: each pixel occupies the note length its brightness picks (𝅘𝅥𝅯…𝅝 buttons), divided by this synth's tempo ratio. Muted pixels count: a silence occupies the duration of the note it would have played. Click the value to toggle between beats, seconds (at the metronome's BPM) and the number of pixels.",
     "addZone": "Draw a zone on the image",
     "addZoneLasso": "Free-hand selection on the image",
     "addZoneMagicWand": "Magic-wand selection on the image",

@@ -954,6 +954,13 @@ button.toggle-btn.active.selective:hover {
   font-variant-numeric: tabular-nums;
   min-width: 4.5rem;
 }
+.synth-block .synth-body .synth-section .synth-section-header .zones-val {
+  cursor: pointer;
+  transition: color 0.2s ease;
+}
+.synth-block .synth-body .synth-section .synth-section-header .zones-val:hover {
+  color: #e0e0e0;
+}
 .synth-block .synth-body .synth-section .synth-section-body {
   display: flex;
   align-items: center;
@@ -2150,4 +2157,6 @@ button.toggle-btn.active.selective:hover {
 
 .pointer-events-auto {
   pointer-events: auto;
-}/*# sourceMappingURL=styles.css.map */
+}
+
+/*# sourceMappingURL=styles.css.map */

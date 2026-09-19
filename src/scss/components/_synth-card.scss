@@ -226,6 +226,15 @@
                     font-variant-numeric: tabular-nums;
                     min-width: 4.5rem;
                 }
+
+                // Zones value: clicking cycles beats → seconds → pixels
+                // (pointer + hover brightening, like the interactive controls)
+                .zones-val {
+                    cursor: pointer;
+                    transition: color $transition-fast;
+
+                    &:hover { color: $color-text-primary; }
+                }
             }
 
             .synth-section-body {

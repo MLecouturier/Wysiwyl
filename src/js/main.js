@@ -2,7 +2,7 @@ import { initI18n, t, translateError, getLocale, setLocale, AVAILABLE_LOCALES, a
 import { computeLayout, cellSetFromZones, drawZones, drawCursorCell, MUTE_GLYPH } from './viewer-render.js';
 import {
     seedZoneOrder, rectZone, zoneCellSet, zoneContains,
-    zoneIntersectsRect, rebuildZones,
+    zoneIntersectsRect, zonesPixelCount, rebuildZones,
 } from './zones.js';
 
 const { invoke } = window.__TAURI__.core;
@@ -1383,8 +1383,33 @@ function synthZonesTotalBeats(id, el) {
     return total / ratio;
 }
 
-// "zones-val" shows the total duration of the synth's selection, in
-// metronome beats (each pixel's note length ÷ tempo ratio).
+// Display mode of the zones value: 'beats' (total duration in metronome
+// beats), 'seconds' (the same duration at the metronome's BPM, compact
+// clock form) or 'pixels' (raw count of selected pixels). Clicking the
+// value cycles through the three modes — a global display preference,
+// persisted like the locale.
+const ZONES_DISPLAY_MODES = ['beats', 'seconds', 'pixels'];
+const storedZonesDisplayMode = localStorage.getItem('wysiwyl.zonesDisplayMode');
+let zonesDisplayMode = ZONES_DISPLAY_MODES.includes(storedZonesDisplayMode)
+    ? storedZonesDisplayMode
+    : 'beats';
+
+// Duration in compact clock form: 0:42, 1:23, 1:02:03 (whole seconds,
+// locale-independent digits).
+function formatDurationClock(totalSeconds) {
+    const total = Math.round(totalSeconds);
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    const mm = String(m).padStart(2, '0');
+    const ss = String(s).padStart(2, '0');
+    return h > 0 ? `${h}:${mm}:${ss}` : `${m}:${ss}`;
+}
+
+// "zones-val" shows the synth's selection summary, in the global display
+// mode: total duration in metronome beats (each pixel's note length ÷
+// tempo ratio), the same duration in seconds at the metronome's BPM, or
+// the number of selected pixels.
 function updateZonesLabel(id) {
     const el = synthElementById(id);
     if (!el) return;
@@ -1395,7 +1420,19 @@ function updateZonesLabel(id) {
         return;
     }
 
+    if (zonesDisplayMode === 'pixels') {
+        const hi = synthHighlights.get(id);
+        const count = hi ? zonesPixelCount(hi.zones) : 0;
+        zonesVal.textContent = `${count.toLocaleString(getLocale())} px`;
+        return;
+    }
+
     const beats = synthZonesTotalBeats(id, el);
+    if (zonesDisplayMode === 'seconds') {
+        const bpm = clampBpm(Number(bpmInput.value));
+        zonesVal.textContent = formatDurationClock(beats * 60 / bpm);
+        return;
+    }
     const formatted = beats.toLocaleString(getLocale(), { maximumFractionDigits: 2 });
     zonesVal.textContent = `${formatted} ${t('synth.zonesBeatsUnit')}`;
 }
@@ -3259,6 +3296,9 @@ function setMetronomeSynced(synced, bpm) {
     }
     bpmInput.disabled = synced;
     bpmControls.forEach(btn => { btn.disabled = synced; });
+    // The seconds display of the zones value must follow the DAW's
+    // measured BPM (a no-op recomputation in the other display modes)
+    updateAllSynthZonesLabels();
     refreshClockBadge();
 }
 
@@ -4188,6 +4228,17 @@ function createSynthElement(id, cfg = null) {
         max: Number(cfg?.brightness_max ?? 127),
     });
     updateZonesLabel(id);
+
+    // Zones value: click to cycle the display mode (beats → seconds →
+    // pixels). Global preference: every card switches together.
+    el.querySelector('.zones-val').addEventListener('click', () => {
+        const next = ZONES_DISPLAY_MODES[
+            (ZONES_DISPLAY_MODES.indexOf(zonesDisplayMode) + 1) % ZONES_DISPLAY_MODES.length
+        ];
+        zonesDisplayMode = next;
+        localStorage.setItem('wysiwyl.zonesDisplayMode', next);
+        updateAllSynthZonesLabels();
+    });
 
     // Eye button
     el.querySelector('.synth-eye-btn').addEventListener('click', (e) => {
