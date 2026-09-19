@@ -63,8 +63,6 @@
                                     <div class="mode-bar flex-auto justify-between">
                                         <span class="text-sm text-muted" data-i18n="controls.cropHint"></span>
                                         <div class="flex-fill"></div>
-                                        <button id="crop-apply-btn" class="primary" data-i18n="controls.apply" disabled></button>
-                                        <button id="crop-cancel-btn" class="secondary" data-i18n="controls.cancel"></button>
                                     </div>
                                     <div class="mode-bar flex-auto justify-between">
                                         <div id="crop-ratio-group" class="ratio-group" data-i18n-title="controls.cropRatio">
@@ -76,28 +74,40 @@
                                         </div>
                                         <div class="flex-fill"></div>
                                     </div>
+                                    <div class="flex-fill"></div>
+                                    <div class="mode-bar flex-auto justify-between">
+                                        <div class="flex-fill"></div>
+                                        <button id="crop-apply-btn" class="primary" data-i18n="controls.apply" disabled></button>
+                                        <button id="crop-cancel-btn" class="secondary" data-i18n="controls.cancel"></button>
+                                    </div>
                                 </div>
-                                <div id="transform-panel" class="mode-panel hidden">
-                                    <div class="mode-bar">
-                                        <button id="transform-grid-btn" class="toggle-btn active" data-i18n-title="controls.transformGrid">
+                                <div id="transform-panel" class="mode-panel mode-panel-stacked hidden">
+                                    <div class="flex flex-auto items-center justify-between gap-4">
+                                        
+                                        <div class="w-2-5">
+                                            <button id="transform-grid-btn" class="toggle-btn active" data-i18n-title="controls.transformGrid">
                                             <span class="material-symbols-outlined">grid_3x3</span>
                                         </button>
-                                    </div>
-                                    <div class="flex flex-auto items-center justify-between gap-2">
-                                        <label>
+                                        </div>
+                                        <label class="w-2-5">
                                             <span><span data-i18n="controls.rotation"></span> <em id="transform-rotation-value">0°</em></span>
                                             <input type="range" id="transform-rotation" min="-45" max="45" value="0" step="0.1" />
                                         </label>
-                                        <label>
+                                        <div class="flex-fill"></div>
+                                    </div>
+                                    <div class="flex flex-auto items-center justify-between gap-4">
+                                        <label class="w-2-5">
                                             <span><span data-i18n="controls.perspectiveV"></span> <em id="transform-persp-v-value">0</em></span>
                                             <input type="range" id="transform-persp-v" min="-50" max="50" value="0" step="1" />
                                         </label>
-                                        <label>
+                                        <label class="w-2-5">
                                             <span><span data-i18n="controls.perspectiveH"></span> <em id="transform-persp-h-value">0</em></span>
                                             <input type="range" id="transform-persp-h" min="-50" max="50" value="0" step="1" />
                                         </label>
+                                        <div class="flex-fill"></div>
                                     </div>
-                                    <div class="mode-bar">
+                                    <div class="mode-bar flex-auto justify-between">
+                                        <div class="flex-fill"></div>
                                         <button id="transform-apply-btn" class="primary" data-i18n="controls.apply"></button>
                                         <button id="transform-cancel-btn" class="secondary" data-i18n="controls.cancel"></button>
                                     </div>
