@@ -55,6 +55,9 @@
     "clockSource": "Source de synchro : port d'entrée MIDI dont l'horloge est suivie",
     "virtualSource": "Wysiwyl (virtuel — DAW)"
   },
+  "chrono": {
+    "reset": "Remettre le chrono à zéro"
+  },
   "synthList": {
     "title": "Synth·s",
     "playAllStart": "Démarrer tous les synthétiseurs",

@@ -563,6 +563,23 @@ button.toggle-btn.active.selective:hover {
   flex: 0 0 auto;
 }
 
+.chrono-area {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 12px 1rem;
+  border-radius: 0.25rem;
+  background-color: #262626;
+}
+.chrono-area .timer {
+  font-variant-numeric: tabular-nums;
+  font-size: 2rem;
+  line-height: 1;
+  color: #e0e0e0;
+}
+
 .synth-list {
   background-color: #232323;
   display: flex;

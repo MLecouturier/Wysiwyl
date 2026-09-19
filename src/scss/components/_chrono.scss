@@ -1,0 +1,28 @@
+// ==========================================================================
+// Chrono (elapsed-play timer)
+// ==========================================================================
+// Sits between the display controls and the metronome: a readout of the
+// time spent playing (starts with the first synth, freezes when none
+// plays anymore) and the button that zeroes it. The reset button reuses
+// the shared .icon-btn look (see _buttons.scss).
+@use '../variables' as *;
+
+.chrono-area {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: .5rem;
+    padding: 12px 1rem;
+    border-radius: $border-radius-base;
+    background-color: $color-bg-light;
+
+    .timer {
+        // Tabular figures: every digit has a constant width, so the
+        // readout doesn't jitter while counting
+        font-variant-numeric: tabular-nums;
+        font-size: 2rem;
+        line-height: 1;
+        color: $color-text-primary;
+    }
+}

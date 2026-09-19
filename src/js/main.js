@@ -390,7 +390,78 @@ function updateImageControlsLockState() {
     }
     imageLockControls.forEach(el => { el.disabled = anyPlaying; });
     document.querySelector('#controls').classList.toggle('locked', anyPlaying);
+    // Every play-state transition flows through here (synth start/stop,
+    // play all, panic, automatic end-of-sequence stop, synth removal,
+    // session restore) — the chrono rides along the same central hook
+    updateChronoState();
 }
+
+// ---------- Chrono ----------
+// Elapsed-play timer displayed next to the metronome: starts counting
+// with the first synthesizer that plays and freezes when none plays
+// anymore. Pause/resume semantics — later play sessions keep
+// accumulating on top of the frozen time; only the reset button zeroes
+// it (and lets an ongoing count restart from zero).
+const chronoDisplay = document.querySelector('#chrono .timer');
+const chronoResetBtn = document.querySelector('#reset-timer');
+
+let chronoElapsedMs = 0;       // time accumulated across play sessions
+let chronoRunningSince = null; // performance.now() stamp while running, else null
+let chronoRafId = null;        // pending requestAnimationFrame handle
+
+// Formats a duration as mm:ss, switching to h:mm:ss once past the hour
+function formatChronoTime(ms) {
+    const totalSeconds = Math.floor(ms / 1000);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    const mm = String(minutes).padStart(2, '0');
+    const ss = String(seconds).padStart(2, '0');
+    return hours > 0 ? `${hours}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+
+// Total time to display: everything accumulated plus the current run
+function chronoTotalMs() {
+    return chronoElapsedMs + (chronoRunningSince !== null ? performance.now() - chronoRunningSince : 0);
+}
+
+function renderChrono() {
+    chronoDisplay.textContent = formatChronoTime(chronoTotalMs());
+}
+
+// The rAF loop only lives while a synth plays: each frame repaints the
+// readout then reschedules itself (nothing ticks in the background at
+// rest — the frozen value stays as-is on screen)
+function chronoTick() {
+    renderChrono();
+    chronoRafId = requestAnimationFrame(chronoTick);
+}
+
+// Starts counting when the first synth starts playing, freezes the
+// readout when the last one stops (keeping the accumulated time for the
+// next play session). Guarded, so repeated calls while the state is
+// unchanged are no-ops.
+function updateChronoState() {
+    const anyPlaying = anySynthPlaying();
+    if (anyPlaying && chronoRunningSince === null) {
+        chronoRunningSince = performance.now();
+        chronoRafId = requestAnimationFrame(chronoTick);
+    } else if (!anyPlaying && chronoRunningSince !== null) {
+        chronoElapsedMs += performance.now() - chronoRunningSince;
+        chronoRunningSince = null;
+        cancelAnimationFrame(chronoRafId);
+        chronoRafId = null;
+        renderChrono();
+    }
+}
+
+chronoResetBtn.addEventListener('click', () => {
+    chronoElapsedMs = 0;
+    if (chronoRunningSince !== null) chronoRunningSince = performance.now();
+    renderChrono();
+});
+
+renderChrono(); // 00:00 at startup
 
 // ---------- Canvas overlay ----------
 let gridW = 1; // current grid width in pixels
