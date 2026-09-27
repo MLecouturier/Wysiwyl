@@ -1,4 +1,5 @@
 import { initI18n, t, translateError, getLocale, setLocale, AVAILABLE_LOCALES, applyTranslations } from './i18n.js';
+import { loadTemplates, getTemplate } from './templates.js';
 import { computeLayout, cellSetFromZones, drawZones, drawCursorCell, MUTE_GLYPH } from './viewer-render.js';
 import {
     seedZoneOrder, rectZone, zoneCellSet,
@@ -12,6 +13,18 @@ const { getCurrentWindow, currentMonitor, availableMonitors } = window.__TAURI__
 const { getVersion } = window.__TAURI__.app;
 
 await initI18n();
+
+// Load the editable HTML layout templates (src/templates/*.html) once,
+// before any synth card gets built. Without them no synth UI can be
+// built: surface the failure visibly instead of silently dying into a
+// zombie window with dead buttons, then stop the module.
+try {
+    await loadTemplates();
+} catch (err) {
+    console.error('Error while loading the HTML templates:', err);
+    alert(translateError(err));
+    throw err;
+}
 
 // Normalize the title bar (adds the version from the app metadata)
 updateWindowTitle();
@@ -3816,17 +3829,11 @@ function applySynthConfig(el, cfg) {
 // One bass/medium/treble filter group: used four times per card
 // (monophonic note + each of the three polyphonic voices)
 function noteRangeGroup() {
-    return `
-        <div class="synth-note-range">
-            <button class="synth-bass icon-btn" data-i18n-title="synth.noteRangeBass">𝄢</button>
-            <button class="synth-medium icon-btn" data-i18n-title="synth.noteRangeMedium">𝄡</button>
-            <button class="synth-treble icon-btn" data-i18n-title="synth.noteRangeTreble">𝄞</button>
-        </div>`;
+    return getTemplate('synth-note-range');
 }
 
 function createSynthElement(id, cfg = null) {
-    const el = document.createElement('div');
-    el.className = 'synth-block';
+    const el = getTemplate('synth-card');
     el.dataset.synthId = id;
 
     // Updates the `id` binding this function's closures capture, so every
@@ -3842,19 +3849,9 @@ function createSynthElement(id, cfg = null) {
     // Compact tab in the first column: drag handle + play/pause. The
     // synth's title appears in the tooltip only. Shares the `id` binding
     // with the card's own listeners, so it follows the renumbering too.
-    const tab = document.createElement('div');
-    tab.className = 'synth-tab';
+    const tab = getTemplate('synth-tab');
     tab.dataset.synthId = id;
     tab.title = synthDisplayName(id);
-    tab.innerHTML = `
-        <button class="synth-tab-drag-handle" data-i18n-title="synth.dragHandle" tabindex="-1">
-            <span class="material-symbols-outlined" aria-hidden="true">drag_indicator</span>
-        </button>
-        <button class="synth-tab-play" tabindex="-1">
-            <span class="material-symbols-outlined synth-play-icon" aria-hidden="true">play_arrow</span>
-            <span class="synth-play-label"></span>
-        </button>
-        <div class="synth-tab-volume-bar"></div>`;
     const tabPlayBtn = tab.querySelector('.synth-tab-play');
     setPlayButtonState(tabPlayBtn, false);
     tabPlayBtn.addEventListener('click', () => onSynthPlayClick(id, el));
@@ -3892,210 +3889,15 @@ function createSynthElement(id, cfg = null) {
         `<button class="color-swatch" data-color="${c}" style="background:${c}" title="${c}"></button>`
     ).join('');
 
-    el.innerHTML = `        <div class="synth-color-band" style="background:${defaultColor}" data-i18n-title="synth.pickColor"></div>
-        <div class="synth-color-picker hidden">
-            <div class="color-swatches">${colorSwatches}</div>
-        </div>
-        <div class="synth-header">
-            <div class="synth-header-row">
-                <select class="synth-midi-port" data-i18n-title="synth.midiPort"></select>
-                <select class="synth-channel">${channelOptions}</select>
-                <div class="flex-fill"></div>
-                <button class="synth-save-template icon-btn" data-i18n-title="synth.saveAsTemplate">
-                    <span class="material-symbols-outlined" aria-hidden="true">bookmark_add</span>
-                </button>
-                <button class="synth-toggle-full-options icon-btn" data-i18n-title="synth.toggleFullOptions">
-                        <span class="material-symbols-outlined" aria-hidden="true">collapse_all</span>
-                    </button>
-                <button class="synth-remove icon-btn" data-i18n-title="synth.remove">
-                    <span class="material-symbols-outlined" aria-hidden="true">close</span>
-                </button>
-            </div>
-                <div class="synth-header-row">
-                    <div class="synth-title-label" data-i18n-title="synth.renameHint"></div>
-                    <div class="synth-section-program-change" data-i18n-title="synth.programEditHint">
-                        <span class="program-label" data-i18n="synth.programLabel"></span>
-                        <select class="program-bank-manual" data-i18n-title="synth.programBankManual">${bankOptions}</select>
-                        <input type="number" class="program-number-manual" placeholder="-" min="1" max="128" step="1" data-i18n-title="synth.programManual" />
-                    </div>
-                </div>
-        </div>
-        <div class="synth-body">
-            <div class="synth-section">
-                <div class="synth-section-header">
-                    <span class="synth-section-title" data-i18n="synth.zonesLabel"></span>
-                    <em class="synth-section-value zones-val" data-i18n-title="synth.zonesBeatsInfo"></em>
-                    <div class="flex-fill"></div>
-                    <button class="synth-add-zone-btn icon-btn" data-i18n-title="synth.addZone">
-                        <span class="material-symbols-outlined" aria-hidden="true">select</span>
-                    </button>
-                    <button class="synth-lasso-add-zone-btn icon-btn" data-i18n-title="synth.addZoneLasso">
-                        <span class="material-symbols-outlined" aria-hidden="true">lasso_select</span>
-                    </button>
-                    <button class="synth-magic-wand-add-zone-btn icon-btn" data-i18n-title="synth.addZoneMagicWand">
-                        <span class="material-symbols-outlined" aria-hidden="true">wand_shine</span>
-                    </button>
-                    <input type="number" class="magic-wand-tolerance" value="32" min="1" max="255" step="1" data-i18n-title="synth.magicWandTolerance" />
-                    <button class="synth-select-all-btn icon-btn" data-i18n-title="synth.selectAllZones">
-                        <span class="material-symbols-outlined" aria-hidden="true">select_all</span>
-                    </button>
-                    <button class="synth-clear-zones-btn icon-btn" data-i18n-title="synth.clearZones">
-                        <span class="material-symbols-outlined" aria-hidden="true">remove_selection</span>
-                    </button>
-                    <div class="flex-fill"></div>
-                    
-                    <button class="synth-eye-btn icon-btn active" data-i18n-title="synth.toggleHighlight"><span class="material-symbols-outlined" aria-hidden="true">visibility</span></button>
-                </div>
-            </div>
-
-            <div class="synth-section synth-playback">
-                <div class="synth-section-header">
-                    <span class="synth-section-title" data-i18n="synth.playbackTitle"></span>
-                    <div class="flex-fill"></div>
-                    <select class="synth-tempo" data-i18n-title="synth.tempoRatio">
-                        <option value=1>1/1</option>
-                        <option value=0.75>3/4</option>
-                        <option value=0.66>2/3</option>
-                        <option value=0.5>1/2</option>
-                        <option value=0.33>1/3</option>
-                        <option value=0.25>1/4</option>
-                    </select>
-                    <div class="flex-fill"></div>                    
-                    <select class="synth-reading-direction" data-i18n-title="synth.readingDirectionTitle">${readingDirectionOptions}</select>
-                    <button class="synth-sort-btn icon-btn" data-i18n-title="synth.toggleSort"><span class="material-symbols-outlined" aria-hidden="true">sort</span></button>
-                    <div class="flex-fill"></div>
-                    <button class="synth-loop-btn icon-btn active" data-i18n-title="synth.toggleLoop">
-                        <span class="material-symbols-outlined" aria-hidden="true">laps</span>
-                    </button>
-                    <button class="synth-back-n-forth-btn icon-btn" data-i18n-title="synth.toggleBackAndForth">
-                        <span class="material-symbols-outlined" aria-hidden="true">sync_alt</span>
-                    </button>    
-                </div>
-                
-                <div class="synth-section-body center extra-margin">
-                    <span class="material-symbols-outlined" aria-hidden="true">volume_up</span>
-                    <input type="number" class="synth-volume" min="0" max="127" step="1" value="127" data-i18n-title="synth.volume" />
-                    <div class="flex-filler grow"></div>
-                    <button class="synth-rewind icon-btn" data-i18n-title="synth.rewind">
-                        <span class="material-symbols-outlined" aria-hidden="true">fast_rewind</span>
-                    </button>
-                    <button class="synth-play">
-                        <span class="material-symbols-outlined synth-play-icon" aria-hidden="true">play_arrow</span>
-                        <span class="synth-play-label"></span>
-                    </button>
-                    <button class="synth-step-forward icon-btn" data-i18n-title="synth.stepForward">
-                        <span class="material-symbols-outlined" aria-hidden="true">step</span>
-                    </button>    
-                </div>
-            </div>
-
-            <div class="synth-section">
-                <div class="synth-section-header">
-                    <button class="synth-mode-btn toggle-btn active" data-mode="monophonic"></button>
-                    <button class="synth-mode-btn toggle-btn" data-mode="polyphonic"></button>
-                </div>
-            </div>
-
-            <div class="synth-full-options">
-                <div class="synth-mode-panel synth-mode-panel-mono">
-                    <div class="synth-section">
-                        <div class="synth-section-header">
-                            <span class="synth-section-title" data-i18n="synth.noteRangeTitle" data-i18n-title="synth.noteRangeTitle"></span>
-                        </div>
-                        <div class="synth-section-body">
-                            ${noteRangeGroup()}
-                            <select class="synth-scale" data-i18n-title="synth.scale"></select>
-                            <select class="synth-scale-root" data-i18n-title="synth.scaleRoot"></select>
-                        </div>
-                    </div>
-                    <div class="synth-section">
-                        <div class="synth-section-header">
-                            <span class="synth-section-title" data-i18n="synth.hueShift" data-i18n-title="synth.hueShift"></span>
-                            <em class="synth-section-value hue-shift-val">0°</em>
-                        </div>
-                        <div class="synth-section-body">
-                            <input type="range" class="synth-hue-shift gradient-hue" min="0" max="360" value="0" step="1" />
-                        </div>
-                    </div>
-                </div>
-
-                <div class="synth-mode-panel synth-mode-panel-poly hidden">
-                    <div class="synth-section">
-                        <div class="synth-section-header">
-                            <span class="synth-section-title" data-i18n="synth.channelsPanelLabel"></span>
-                            <select class="synth-scale" data-i18n-title="synth.scale"></select>
-                            <select class="synth-scale-root" data-i18n-title="synth.scaleRoot"></select>
-                        </div>
-                        <div class="synth-section-body">
-                            <div class="synth-channel-toggles">
-                                <div class="synth-channel-toggle-group">
-                                    <button class="synth-channel-toggle channel-red active" data-channel="0" data-i18n-title="synth.toggleRed">R</button>
-                                    ${noteRangeGroup()}
-                                </div>
-                                <div class="synth-channel-toggle-group">
-                                    <button class="synth-channel-toggle channel-green active" data-channel="1" data-i18n-title="synth.toggleGreen">G</button>
-                                    ${noteRangeGroup()}
-                                </div>
-                                <div class="synth-channel-toggle-group">
-                                    <button class="synth-channel-toggle channel-blue active" data-channel="2" data-i18n-title="synth.toggleBlue">B</button>
-                                    ${noteRangeGroup()}
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="synth-section">
-                    <div class="synth-section-header">
-                        <span class="synth-section-title" data-i18n="synth.noteLengthsTitle"></span>
-                        <div class="flex-fill"></div>
-                        <button class="synth-reverse-note-length icon-btn" data-i18n-title="synth.reverseNoteLength">
-                            <span class="material-symbols-outlined" aria-hidden="true">swap_horiz</span>
-                        </button>
-                        <button class="synth-note-sustain icon-btn" data-i18n-title="synth.noteSustain">
-                            <span class="material-symbols-outlined" aria-hidden="true">touch_long</span>
-                        </button>
-                    </div>
-                    <div class="synth-section-body synth-note-length-section">
-                        <button class="note-length-btn noto-music icon-btn" data-length="sixteenth" data-i18n-title="synth.noteLengthSixteenth">𝅘𝅥𝅯</button>
-                        <button class="note-length-btn noto-music icon-btn" data-length="eighth" data-i18n-title="synth.noteLengthEighth">𝅘𝅥𝅮</button>
-                        <button class="note-length-btn noto-music icon-btn active" data-length="quarter" data-i18n-title="synth.noteLengthQuarter">𝅘𝅥</button>
-                        <button class="note-length-btn noto-music icon-btn" data-length="half" data-i18n-title="synth.noteLengthHalf">𝅗𝅥</button>
-                        <button class="note-length-btn noto-music icon-btn" data-length="whole" data-i18n-title="synth.noteLengthWhole">𝅝</button>
-                    </div>
-                </div>
-                <div class="synth-section">
-                    <div class="synth-section-header">
-                        <span class="synth-section-title" data-i18n="synth.brightnessThreshold" data-i18n-title="synth.brightnessThreshold"></span>
-                        <em class="synth-section-value"><span class="brightness-start-val">0</span> – <span class="brightness-end-val">127</span></em>
-                    </div>
-                    <div class="synth-section-body synth-range-track">
-                        <div class="synth-range-fill gradient-wb"></div>
-                        <input type="range" class="synth-range-input brightness-start" min="0" max="127" value="0" step="1" />
-                        <input type="range" class="synth-range-input brightness-end" min="0" max="127" value="127" step="1" />
-                    </div>
-                </div>
-
-                <div class="synth-section">
-                    <div class="synth-section-header">
-                        <span class="synth-section-title" data-i18n="synth.velocityRange" data-i18n-title="synth.velocityRange"></span>
-                        <em class="synth-section-value"><span class="velocity-min-val">0</span> – <span class="velocity-max-val">127</span></em>   
-                        <div class="flex-fill"></div> 
-                        <button class="synth-relative-velocity-range icon-btn active" data-i18n-title="synth.velocityRelative">
-                            <span class="material-symbols-outlined" aria-hidden="true">arrow_or_edge</span>
-                        </button>                    
-                    </div>
-                    <div class="synth-section-body synth-range-track">
-                        <div class="synth-range-fill"></div>
-                        <input type="range" class="synth-range-input velocity-min" min="0" max="126" value="0" step="1" />
-                        <input type="range" class="synth-range-input velocity-max" min="0" max="127" value="127" step="1" />
-                    </div>
-                </div>
-
-                <p class="synth-pixel-info"></p>
-            </div>
-        </div>
-    `;
+    // Hydrate what the static template can't express: the dynamic
+    // option lists (i18n- and config-driven), the palette swatches, the
+    // four note-range groups and the identification color
+    el.querySelector('.synth-color-band').style.background = defaultColor;
+    el.querySelector('.color-swatches').innerHTML = colorSwatches;
+    el.querySelector('.synth-channel').innerHTML = channelOptions;
+    el.querySelector('.program-bank-manual').innerHTML = bankOptions;
+    el.querySelector('.synth-reading-direction').innerHTML = readingDirectionOptions;
+    el.querySelectorAll('[data-include="note-range-group"]').forEach(slot => slot.replaceWith(noteRangeGroup()));
 
     // Translate everything marked with data-i18n* above, plus the elements
     // whose text depends on dynamic state (title, play button, pixel info).

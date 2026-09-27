@@ -108,7 +108,7 @@ Chaque `id` — dans les pages statiques comme dans les templates dynamiques —
 
 ### Organisation du SCSS
 
-`styles.scss` n'est que le point d'entrée : son ordre de `@use` *est* l'ordre de la cascade — polices, reset, un fichier de composants par zone de l'interface, utilitaires en dernier. Les couleurs et tokens de design sont des variables `$color-*` dans `_variables.scss`. Le markup dynamique construit par les templates de `main.js` suit les mêmes conventions ; les classes requêtées par le JS sont des hooks : ne jamais renommer l'une sans mettre à jour le `querySelector` correspondant.
+`styles.scss` n'est que le point d'entrée : son ordre de `@use` *est* l'ordre de la cascade — polices, reset, un fichier de composants par zone de l'interface, utilitaires en dernier. Les couleurs et tokens de design sont des variables `$color-*` dans `_variables.scss`. Le markup dynamique vit dans des templates HTML éditables (`src/templates/*.html`, chargés une fois par `js/templates.js` puis clonés par `main.js`) et suit les mêmes conventions ; les classes requêtées par le JS sont des hooks : ne jamais renommer l'une sans mettre à jour le `querySelector` correspondant.
 
 ### Compilation des styles
 
@@ -153,6 +153,8 @@ Construire une version distribuable :
 ```bash
 cargo tauri build
 ```
+
+Note : en développement, `cargo tauri dev` sert `src/` en direct depuis le disque via le serveur intégré du CLI (aucun bundler). Ce serveur, tout comme le protocole d'assets de l'application (utilisé dans les builds distribués), injecte un `<script>` dans toute réponse HTML et retombe sur `index.html` pour les chemins inconnus — les fichiers HTML chargés au runtime (les templates de layout) sont donc parsés défensivement par `js/templates.js`, qui extrait l'élément racine attendu de chaque template au lieu de se fier au premier élément de la réponse.
 
 Dans l'application :
 

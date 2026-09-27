@@ -1,0 +1,14 @@
+<!--
+    One bass/medium/treble filter group, cloned four times per synth
+    card (monophonic note + each of the three polyphonic voices) into
+    the [data-include="note-range-group"] slots of synth-card.html.
+
+    The class names and data-i18n* attributes are the contract with
+    js/main.js, js/i18n.js and the SCSS — renaming any of them breaks
+    the app.
+-->
+<div class="synth-note-range">
+    <button class="synth-bass icon-btn" data-i18n-title="synth.noteRangeBass">𝄢</button>
+    <button class="synth-medium icon-btn" data-i18n-title="synth.noteRangeMedium">𝄡</button>
+    <button class="synth-treble icon-btn" data-i18n-title="synth.noteRangeTreble">𝄞</button>
+</div>

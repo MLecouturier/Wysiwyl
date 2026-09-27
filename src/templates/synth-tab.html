@@ -1,0 +1,20 @@
+<!--
+    Compact tab of one synthesizer (first column): drag handle +
+    play/pause. The synth's title appears in the tooltip only; the
+    volume bar is filled via the --synth-volume CSS variable and the
+    identification color via --synth-tab-color.
+
+    The class names and data-i18n* attributes are the contract with
+    js/main.js, js/i18n.js and the SCSS — renaming any of them breaks
+    the app.
+-->
+<div class="synth-tab">
+    <button class="synth-tab-drag-handle" data-i18n-title="synth.dragHandle" tabindex="-1">
+        <span class="material-symbols-outlined" aria-hidden="true">drag_indicator</span>
+    </button>
+    <button class="synth-tab-play" tabindex="-1">
+        <span class="material-symbols-outlined synth-play-icon" aria-hidden="true">play_arrow</span>
+        <span class="synth-play-label"></span>
+    </button>
+    <div class="synth-tab-volume-bar"></div>
+</div>

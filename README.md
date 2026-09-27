@@ -113,7 +113,7 @@ Every `id` — in the static pages as well as in the dynamic templates — exist
 
 ### SCSS organization
 
-`styles.scss` is only the entry point: its `@use` order *is* the cascade order — fonts, reset, one component file per UI area, utilities last. Colors and design tokens are `$color-*` variables in `_variables.scss`. Dynamic markup built by `main.js` templates follows the same conventions; classes queried by the JS are hooks: never rename one without updating the matching `querySelector`.
+`styles.scss` is only the entry point: its `@use` order *is* the cascade order — fonts, reset, one component file per UI area, utilities last. Colors and design tokens are `$color-*` variables in `_variables.scss`. Dynamic markup lives in editable HTML templates (`src/templates/*.html`, loaded once by `js/templates.js` then cloned by `main.js`) and follows the same conventions; classes queried by the JS are hooks: never rename one without updating the matching `querySelector`.
 
 ### Stylesheet compilation
 
@@ -158,6 +158,8 @@ Build a distributable version:
 ```bash
 cargo tauri build
 ```
+
+Note: in development, `cargo tauri dev` serves `src/` live from disk through the CLI's built-in server (no bundler). Both that server and the app's own asset protocol (used in bundled builds) inject a `<script>` into every HTML response and fall back to `index.html` for unknown paths — so HTML files fetched at runtime (the layout templates) are parsed defensively by `js/templates.js`, which extracts each template's expected root element instead of trusting the response's first element.
 
 In the application:
 
