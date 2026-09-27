@@ -756,9 +756,13 @@ window.addEventListener('keydown', (e) => {
 // own guards make it a no-op when nothing is pending), Space toggles
 // every synth (Shift+Space is the panic kill switch), 1-8 toggle the
 // N-th synth card in display order, Cmd/Ctrl+M toggles the projection
-// mirror. All skipped while the focus sits in a form field or button:
-// the focused widget handles the keys itself (typing a number, pressing
-// a focused button with Space…).
+// mirror. Space and 1-8 are only skipped where the focused widget
+// actually consumes the key: Space types in text fields, presses a
+// focused button and opens a focused select; digits are typed in
+// text/number fields and type-ahead in selects. They stay active on
+// sliders and number inputs (Space), and on sliders and buttons
+// (digits). Cmd/Ctrl+1-8 toggle the N-th synth from any focus, even
+// from a text-entry field.
 // Note: Cmd+M would be reserved by a standard macOS menu (minimize) if
 // one is ever added.
 window.addEventListener('keydown', (e) => {
@@ -766,15 +770,25 @@ window.addEventListener('keydown', (e) => {
     if (!unsavedModal.classList.contains('hidden')) return;
     const tag = e.target.tagName;
     const inFormField = tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || tag === 'BUTTON';
+    const spaceBlocked = tag === 'BUTTON' || tag === 'SELECT' || tag === 'TEXTAREA'
+        || (tag === 'INPUT' && e.target.type !== 'number' && e.target.type !== 'range');
+    const digitsBlocked = tag === 'SELECT' || tag === 'TEXTAREA'
+        || (tag === 'INPUT' && e.target.type !== 'range');
+    const bare = !e.metaKey && !e.ctrlKey && !e.altKey;
 
     if (e.key === 'Enter' && !inFormField) {
         if (cropMode) cropApplyBtn.click();
         else if (transformActive) transformApplyBtn.click();
-    } else if (e.key === ' ' && !inFormField) {
+    } else if (e.key === ' ' && !spaceBlocked && bare) {
         e.preventDefault();
         if (e.shiftKey) panicBtn.click();
         else playAllBtn.click();
-    } else if (!inFormField && e.key >= '1' && e.key <= '8') {
+    } else if (!digitsBlocked && bare && e.key >= '1' && e.key <= '8') {
+        const blocks = Array.from(synthListBody.querySelectorAll('.synth-block'));
+        const el = blocks[Number(e.key) - 1];
+        if (el) onSynthPlayClick(Number(el.dataset.synthId), el);
+    } else if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key >= '1' && e.key <= '8') {
+        // Universal variant: fires even from a focused text-entry field
         const blocks = Array.from(synthListBody.querySelectorAll('.synth-block'));
         const el = blocks[Number(e.key) - 1];
         if (el) onSynthPlayClick(Number(el.dataset.synthId), el);
