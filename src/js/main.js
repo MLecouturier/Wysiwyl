@@ -1,7 +1,7 @@
 import { initI18n, t, translateError, getLocale, setLocale, AVAILABLE_LOCALES, applyTranslations } from './i18n.js';
 import { computeLayout, cellSetFromZones, drawZones, drawCursorCell, MUTE_GLYPH } from './viewer-render.js';
 import {
-    seedZoneOrder, rectZone, zoneCellSet, zoneContains,
+    seedZoneOrder, rectZone, zoneCellSet,
     zoneIntersectsRect, zonesPixelCount, rebuildZones,
 } from './zones.js';
 
@@ -681,37 +681,6 @@ function zoneDragRect() {
     };
 }
 
-// The zone of this synth containing the played pixel, if any. `w` is
-// the grid width the pixel index was computed on (the tick payload).
-function zoneAtPixel(id, pixel, w = gridW) {
-    if (pixel == null) return null;
-    const hi = synthHighlights.get(id);
-    if (!hi) return null;
-    const col = pixel % w;
-    const row = Math.floor(pixel / w);
-    return hi.zones.find(z => zoneContains(z, col, row)) || null;
-}
-
-// While a synth is playing, the zone under its playhead is locked against
-// erasure: an erasing drag that touches it is cancelled, so the pixels
-// being played are never removed under the cursor. Returns true when the
-// drag has just been cancelled.
-function cancelEraseDragOnLockedZone(id, playheadPixel, gridWidth = gridW) {
-    if (!zoneDrag || zoneDrag.id !== id) return false;
-    // A silence drag never removes pixels from the sequence: the locked
-    // zone is safe, the playhead keeps travelling over the silent pixels
-    if (zoneDrag.alt) return false;
-    const rect = zoneDragRect();
-    if (!rect || !rectOverlapsZones(id, rect)) return false;
-    const locked = zoneAtPixel(id, playheadPixel, gridWidth);
-    if (locked && zoneIntersectsRect(locked, rect)) {
-        zoneDrag = null;
-        redrawAllHighlights();
-        return true;
-    }
-    return false;
-}
-
 function cellFromClientPoint(clientX, clientY) {
     const layout = getImageLayout();
     if (!layout) return null;
@@ -882,9 +851,6 @@ pixelOverlay.addEventListener('mousemove', (e) => {
     const cell = cellFromClientPoint(e.clientX, e.clientY);
     if (!cell) return;
     zoneDrag.cur = cell;
-    // Cancel an erasing drag as soon as it grows over the zone under the
-    // playhead (checked again on every playback tick)
-    if (cancelEraseDragOnLockedZone(zoneDrag.id, synthCursors.get(zoneDrag.id), synthCursorGrid.get(zoneDrag.id)?.w)) return;
     redrawAllHighlights();
     drawZonePreview();
 });
@@ -916,11 +882,8 @@ window.addEventListener('mouseup', (e) => {
     }
     const { id, alt } = zoneDrag;
     const rect = zoneDragRect();
-    // Cancel an erasing drag touching the locked zone (the one under the
-    // playhead) instead of committing it — a no-op in silence mode
-    const cancelled = cancelEraseDragOnLockedZone(id, synthCursors.get(id), synthCursorGrid.get(id)?.w);
     zoneDrag = null;
-    if (!cancelled && rect) {
+    if (rect) {
         // A rectangle overlapping an existing zone (even partially) only
         // removes pixels; it never creates an overlapping zone. A single
         // pixel works too: a click on a free pixel selects it, a click on
@@ -1144,28 +1107,19 @@ function lassoTogglePixels(id, points, start) {
     const enclosed = lassoEnclosedCells(points, start);
     if (enclosed.size === 0) return false;
 
-    // Zone under the playhead: its pixels never lose their selection
-    const locked = zoneAtPixel(id, synthCursors.get(id));
-
     // Current selection as a cell set
     const selected = cellSetFromZones(hi.zones);
 
-    // Toggle each enclosed pixel (XOR), skipping locked pixels that would
-    // be deselected
+    // Toggle each enclosed pixel (XOR)
     let changed = false;
     for (const key of enclosed) {
         const isSelected = selected.has(key);
         if (isSelected) {
-            const [col, row] = key.split(',').map(Number);
-            if (locked && zoneContains(locked, col, row)) {
-                continue; // exempt from deselection
-            }
             selected.delete(key);
-            changed = true;
         } else {
             selected.add(key);
-            changed = true;
         }
+        changed = true;
     }
     if (!changed) return false;
 
@@ -1216,9 +1170,8 @@ function lassoToggleMutePixels(id, points, start) {
 // pixel 4-connected to the clicked one whose color stays within the
 // tolerance) — already-selected pixels are left untouched, and a flooded
 // region touching an existing zone fuses with it. A click on a selected
-// pixel removes the flooded pixels instead — except the pixels of the
-// zone under the playhead, which never lose their selection while the
-// synth plays. Returns true when the selection changed.
+// pixel removes the flooded pixels instead. Returns true when the
+// selection changed.
 function wandTogglePixels(id, startCell, tolerance) {
     const hi = synthHighlights.get(id);
     if (!hi) return false;
@@ -1240,17 +1193,9 @@ function wandTogglePixels(id, startCell, tolerance) {
         return true;
     }
 
-    // Zone under the playhead: its pixels never lose their selection
-    const locked = zoneAtPixel(id, synthCursors.get(id));
-
-    // Selected seed: remove every flooded pixel, skipping the locked
-    // ones
+    // Selected seed: remove every flooded pixel
     let changed = false;
     for (const key of flooded) {
-        const [col, row] = key.split(',').map(Number);
-        if (locked && zoneContains(locked, col, row)) {
-            continue; // exempt from deselection
-        }
         if (selected.delete(key)) changed = true;
     }
     if (!changed) return false;
@@ -5256,9 +5201,6 @@ window.__TAURI__.event.listen('synth-pixel-tick', (event) => {
     const pixelInfoEl = el.querySelector('.synth-pixel-info');
     pixelInfoEl.textContent = t('synth.pixelInfo', { cursor, rgb: rgbStr, tsl: tslStr, noteInfo, velocity: velocity ?? '-' });
     pixelInfoEl.dataset.hasTick = '1';
-    // Abort an erasing drag when the playhead has entered the zone being
-    // edited: let the cursor play, the locked zone stays untouched
-    cancelEraseDragOnLockedZone(id, cursor, tickW);
     drawSynthPixel(id, cursor, muted, tickW, tickH);
 });
 

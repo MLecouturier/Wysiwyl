@@ -665,8 +665,10 @@ pub fn set_synth_zones(
     // Keep the playhead on the same pixel across zone edits (instead of
     // restarting at the beginning): the flat sequence index has no meaning
     // in the new sequence, but the pixel it points to usually still exists
-    // — find it back in the new sequence. When it cannot be found (zones
-    // emptied, grid reshaped), the reading restarts at 0.
+    // — find it back in the new sequence. When it has been deselected,
+    // the reading continues on the next still-selected pixel of the old
+    // reading order, and only restarts at 0 when nothing of the old
+    // sequence survives (zones emptied, whole selection replaced).
     let mut cursor = 0;
     if let Some(img) = image.as_ref() {
         cursor = remapped_cursor(

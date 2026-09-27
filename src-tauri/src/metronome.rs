@@ -1,5 +1,5 @@
 use image::{DynamicImage, GenericImageView};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -520,8 +520,11 @@ pub(crate) fn build_pixel_sequence(
 /// Computes the sequence index of the pixel currently under the synth's
 /// playhead, once its sequence has changed (zones edited, sorted reading
 /// or reading direction changed): keeps the playhead on the same pixel
-/// instead of restarting at the beginning. Returns 0 when the pixel is no
-/// longer selected (or the old sequence was empty).
+/// instead of restarting at the beginning. When that pixel is no longer
+/// selected, the playhead continues on the next still-selected pixel of
+/// the old reading order (in its travel direction, wrapping around), and
+/// only restarts at the beginning when nothing of the old sequence
+/// survives (or when either sequence is empty).
 pub(crate) fn remapped_cursor(
     synth: &Synth,
     old_zones: &[Zone],
@@ -537,9 +540,35 @@ pub(crate) fn remapped_cursor(
     if old_seq.is_empty() {
         return 0;
     }
-    let pixel = old_seq[synth.cursor % old_seq.len()];
     let new_seq = build_pixel_sequence(new_zones, width, height, new_direction, new_sorted);
-    new_seq.iter().position(|&p| p == pixel).unwrap_or(0)
+    if new_seq.is_empty() {
+        return 0;
+    }
+    // Index of every selected pixel in the new sequence: O(1) lookups
+    // keep the walk below linear
+    let index_of: HashMap<usize, usize> =
+        new_seq.iter().enumerate().map(|(i, &p)| (p, i)).collect();
+    let len = old_seq.len();
+    let pos = synth.cursor % len;
+    // Same pixel still selected: the playhead stays exactly where it is
+    if let Some(&idx) = index_of.get(&old_seq[pos]) {
+        return idx;
+    }
+    // Playhead pixel deselected: walk the old sequence in the synth's
+    // travel direction (a back-and-forth synth may be travelling
+    // backwards) and land on the first still-selected pixel, wrapping
+    // around like the looping playhead
+    let step = if synth.play_forward { 1 } else { len - 1 };
+    let mut i = (pos + step) % len;
+    for _ in 0..len - 1 {
+        if let Some(&idx) = index_of.get(&old_seq[i]) {
+            return idx;
+        }
+        i = (i + step) % len;
+    }
+    // Nothing of the old sequence survives: start the new reading at its
+    // beginning
+    0
 }
 
 /// Plays the pixel at the synth's current playhead position, then advances
@@ -1884,6 +1913,109 @@ mod tests {
             height,
         );
         assert_eq!(cursor, 3);
+    }
+
+    #[test]
+    fn remapped_cursor_continues_on_the_next_surviving_pixel() {
+        // A full row selected, playhead on its third pixel (pixel 2)
+        let zones = [Zone::from_rect(0, 0, 0, 5, 1)];
+        let mut synth = Synth::new(1);
+        synth.cursor = 2;
+        let (width, height) = (5usize, 2usize);
+
+        // The playhead's pixel is deselected: the two runs flanking it
+        // remain — the reading continues on the next one in reading
+        // order (pixel 3, index 2 of the new per-zone sequence)
+        let zones_after = [Zone::from_rect(0, 0, 0, 2, 1), Zone::from_rect(0, 3, 0, 2, 1)];
+        let cursor = remapped_cursor(
+            &synth,
+            &zones,
+            &zones_after,
+            false,
+            false,
+            ReadingDirection::LeftToRight,
+            ReadingDirection::LeftToRight,
+            width,
+            height,
+        );
+        assert_eq!(cursor, 2);
+    }
+
+    #[test]
+    fn remapped_cursor_wraps_when_nothing_survives_after_the_playhead() {
+        // Playhead on the sequence's last pixel, which is deselected:
+        // nothing survives after it, the walk wraps around and lands on
+        // the first still-selected pixel (pixel 0, index 0)
+        let zones = [Zone::from_rect(0, 0, 0, 4, 1)];
+        let mut synth = Synth::new(1);
+        synth.cursor = 3;
+        let (width, height) = (4usize, 2usize);
+
+        let zones_after = [Zone::from_rect(0, 0, 0, 3, 1)];
+        let cursor = remapped_cursor(
+            &synth,
+            &zones,
+            &zones_after,
+            false,
+            false,
+            ReadingDirection::LeftToRight,
+            ReadingDirection::LeftToRight,
+            width,
+            height,
+        );
+        assert_eq!(cursor, 0);
+    }
+
+    #[test]
+    fn remapped_cursor_restarts_when_nothing_of_the_old_selection_survives() {
+        // The whole old selection is replaced by a new zone elsewhere: no
+        // old pixel survives, the new reading starts at its beginning
+        let zones = [Zone::from_rect(0, 0, 0, 2, 1)];
+        let mut synth = Synth::new(1);
+        synth.cursor = 1;
+        let (width, height) = (4usize, 2usize);
+
+        let zones_after = [Zone::from_rect(0, 2, 1, 2, 1)];
+        let cursor = remapped_cursor(
+            &synth,
+            &zones,
+            &zones_after,
+            false,
+            false,
+            ReadingDirection::LeftToRight,
+            ReadingDirection::LeftToRight,
+            width,
+            height,
+        );
+        assert_eq!(cursor, 0);
+    }
+
+    #[test]
+    fn remapped_cursor_follows_the_travel_direction_backwards() {
+        // Back-and-forth, playhead travelling backwards: when its pixel is
+        // deselected, the continuation is the previous pixel of the
+        // sequence (the next one in the travel direction), not the next
+        // one in reading order — here pixel 1 (index 1), never pixel 3
+        // (index 2)
+        let zones = [Zone::from_rect(0, 0, 0, 4, 1)];
+        let mut synth = Synth::new(1);
+        synth.cursor = 2;
+        synth.play_forward = false;
+        let (width, height) = (4usize, 2usize);
+
+        let zones_after = [Zone::from_rect(0, 0, 0, 2, 1), Zone::from_rect(0, 3, 0, 1, 1)];
+        let cursor = remapped_cursor(
+            &synth,
+            &zones,
+            &zones_after,
+            false,
+            false,
+            ReadingDirection::LeftToRight,
+            ReadingDirection::LeftToRight,
+            width,
+            height,
+        );
+        assert_eq!(cursor, 1);
     }
 
     // --- MIDI clock sync ---
