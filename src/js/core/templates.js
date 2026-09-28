@@ -32,7 +32,7 @@ const cache = new Map();
 // the error propagates and stops the module.
 export async function loadTemplates() {
     await Promise.all(TEMPLATE_NAMES.map(async (name) => {
-        const url = new URL(`../templates/${name}.html`, import.meta.url);
+        const url = new URL(`../../templates/${name}.html`, import.meta.url);
         const res = await fetch(url);
         if (!res.ok) {
             throw new Error(`Failed to load template "${name}" (HTTP ${res.status})`);

@@ -4,7 +4,8 @@
   "version": "2.2.0",
   "type": "module",
   "scripts": {
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "test": "node --test tests/"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2"

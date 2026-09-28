@@ -3,7 +3,7 @@
 // snapshot, zone snapshot, playhead cursors); this page renders them with
 // the same shared code (viewer-render.js) so the projection matches the
 // main viewer exactly.
-import { computeLayout, drawZones, drawCursorCell, MUTE_GLYPH } from './viewer-render.js';
+import { computeLayout, drawZones, drawCursorCell, MUTE_GLYPH } from '../core/geometry.js';
 
 const { emit, listen } = window.__TAURI__.event;
 const { getCurrentWindow } = window.__TAURI__.window;
