@@ -358,6 +358,7 @@ pub async fn load_session(
             let mut synth = entry.settings.to_synth(entry.id);
             synth.name = entry.name.clone();
             synth.zones = entry.zones.clone();
+            synth.invalidate_sequence();
             synth.mute_zones = entry.mute_zones.clone();
             // Sessions predating the display number: fall back to the
             // saved id, itself stable across this session's lifetime

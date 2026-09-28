@@ -124,6 +124,17 @@ impl Default for ImageState {
     }
 }
 
+/// Cached flat pixel sequence (absolute image indexes) built from a
+/// synth's zones. Rebuilt lazily by the metronome thread only when the
+/// grid dimensions no longer match, and explicitly invalidated whenever
+/// the zones or the reading options change (see `Synth::invalidate_sequence`).
+#[derive(Clone)]
+pub struct CachedSequence {
+    pub width: usize,
+    pub height: usize,
+    pub sequence: Vec<usize>,
+}
+
 /// State of an individual synthesizer.
 #[derive(Clone, Serialize)]
 pub struct Synth {
@@ -193,6 +204,11 @@ pub struct Synth {
     // --- Scale quantization ---
     pub scale: Scale,   // scale the derived notes are snapped to (Chromatic = none)
     pub scale_root: u8, // scale tonic as a pitch class 0–11 (0 = C)
+
+    /// Cache of the pixel sequence, rebuilt on demand by the metronome
+    /// thread. Not serialized: it is derived state, never sent to the UI.
+    #[serde(skip)]
+    pub cached_sequence: Option<CachedSequence>,
 }
 
 impl Synth {
@@ -247,7 +263,16 @@ impl Synth {
 
             scale: Scale::Chromatic,
             scale_root: 0,
+
+            cached_sequence: None,
         }
+    }
+
+    /// Drops the cached pixel sequence: the zones, the reading direction,
+    /// the sorted reading or the grid must have changed. The metronome
+    /// rebuilds it on the next tick.
+    pub fn invalidate_sequence(&mut self) {
+        self.cached_sequence = None;
     }
 }
 
@@ -303,3 +328,34 @@ impl Default for MidiState {
 
 // Zone-geometry tests live in the `zone` module; the renumber tests
 // live in `synth.rs` next to `renumber_synths`.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cached_sequence_is_not_serialized() {
+        // Derived state: it must never leak into the `add_synth` payload.
+        let mut synth = Synth::new(1);
+        synth.cached_sequence = Some(CachedSequence {
+            width: 2,
+            height: 1,
+            sequence: vec![0, 1],
+        });
+        let json = serde_json::to_value(&synth).unwrap();
+        assert!(json.get("cached_sequence").is_none());
+        assert!(json.get("zones").is_some()); // the rest is still sent
+    }
+
+    #[test]
+    fn invalidate_sequence_clears_the_cache() {
+        let mut synth = Synth::new(1);
+        synth.cached_sequence = Some(CachedSequence {
+            width: 2,
+            height: 1,
+            sequence: vec![],
+        });
+        synth.invalidate_sequence();
+        assert!(synth.cached_sequence.is_none());
+    }
+}

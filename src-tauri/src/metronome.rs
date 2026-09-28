@@ -1,4 +1,5 @@
 use image::{DynamicImage, GenericImageView};
+use serde::Serialize;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
@@ -10,9 +11,70 @@ use crate::config::ConfigState;
 use crate::error::{err, AppError};
 use crate::midi;
 use crate::state::{
-    ImageState, MidiState, NoteLength, ReadingDirection, RowRun, Scale, Synth, SynthMode,
-    SynthState, Zone,
+    CachedSequence, ImageState, MidiState, NoteLength, ReadingDirection, RowRun, Scale, Synth,
+    SynthMode, SynthState, Zone,
 };
+
+// ---------------------------------------------------------------------------
+// Event payloads
+// ---------------------------------------------------------------------------
+// Typed contracts for the events the backend emits, so the frontend's
+// expected shape is stated in one place instead of ad-hoc json! values.
+
+/// Payload of `synth-pixel-tick`: the state of one played pixel. Mono and
+/// poly shapes coexist — `note`/`raw_note`/`hue` are set in monophonic
+/// mode, `voices` in polyphonic mode, and the irrelevant optionals are
+/// omitted from the JSON.
+#[derive(Serialize, Clone)]
+pub struct PixelTick {
+    pub id: u32,
+    pub cursor: usize,
+    pub w: usize,
+    pub h: usize,
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+    pub a: u8,
+    pub brightness_level: u8,
+    pub velocity: u8,
+    pub mode: SynthMode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw_note: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hue: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub voices: Option<Vec<VoiceTick>>,
+    pub muted: bool,
+}
+
+/// One R/G/B voice of a polyphonic `PixelTick`.
+#[derive(Serialize, Clone)]
+pub struct VoiceTick {
+    pub enabled: bool,
+    pub note: u8,
+    pub raw_note: u8,
+    pub muted: bool,
+}
+
+/// Payload of `synth-stopped`.
+#[derive(Serialize, Clone)]
+pub struct SynthStopped {
+    pub id: u32,
+}
+
+/// Payload of `metronome-sync`: only the fields relevant to the transition
+/// are set (all optional, absent from the JSON when `None`).
+#[derive(Serialize, Clone, Default)]
+pub struct MetronomeSync {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub synced: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bpm: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub master: Option<bool>,
+}
 
 /// Computes the perceived brightness of an RGBA pixel (Rec.601 formula), 0.0–255.0.
 fn pixel_luma(r: u8, g: u8, b: u8) -> f32 {
@@ -124,7 +186,7 @@ fn process_monophonic(
     b: u8,
     brightness_level: u8,
     velocity: u8,
-    payload: &mut serde_json::Value,
+    payload: &mut PixelTick,
     retrigger: bool,
     manual_mute: bool,
 ) {
@@ -167,10 +229,10 @@ fn process_monophonic(
         synth.note_generation = synth.note_generation.wrapping_add(1);
     }
 
-    payload["note"] = serde_json::json!(effective_note);
-    payload["raw_note"] = serde_json::json!(raw_note);
-    payload["hue"] = serde_json::json!(hue);
-    payload["muted"] = serde_json::json!(!in_range);
+    payload.note = Some(effective_note);
+    payload.raw_note = Some(raw_note);
+    payload.hue = Some(hue);
+    payload.muted = !in_range;
 }
 
 /// Processes a pixel in polyphonic mode: each enabled R/G/B channel generates
@@ -189,7 +251,7 @@ fn process_polyphonic(
     b: u8,
     brightness_level: u8,
     velocity: u8,
-    payload: &mut serde_json::Value,
+    payload: &mut PixelTick,
     retrigger: bool,
     manual_mute: bool,
 ) {
@@ -236,12 +298,12 @@ fn process_polyphonic(
             synth.note_generation = synth.note_generation.wrapping_add(1);
         }
 
-        voices_payload.push(serde_json::json!({
-            "enabled": enabled,
-            "note": effective_note,
-            "raw_note": raw_note,
-            "muted": !in_range,
-        }));
+        voices_payload.push(VoiceTick {
+            enabled,
+            note: effective_note,
+            raw_note,
+            muted: !in_range,
+        });
     }
 
     // global active_note: true if at least one voice is sounding (useful for the highlight/UI)
@@ -251,8 +313,8 @@ fn process_polyphonic(
         .enumerate()
         .any(|(i, v)| v.note_is_on && synth.channel_enabled[i]);
 
-    payload["voices"] = serde_json::json!(voices_payload);
-    payload["muted"] = serde_json::json!(!global_in_range);
+    payload.voices = Some(voices_payload);
+    payload.muted = !global_in_range;
 }
 
 /// True when the pixel at (x, y) is covered by one of the given zones
@@ -599,13 +661,30 @@ fn step_synth_once(
     // sorted_reading). The cursor is an index into this sequence; zones
     // partially outside the image are clipped, and an empty zone list
     // (nothing selected) leaves a paused synth stalled.
-    let sequence = build_pixel_sequence(
-        &synth.zones,
-        width,
-        height,
-        synth.reading_direction,
-        synth.sorted_reading,
-    );
+    //
+    // The sequence is cached on the synth and rebuilt only when the grid
+    // dimensions change: rebuilding it every tick is O(selection) and
+    // dominated large selections. Zone/direction/sorted edits invalidate
+    // the cache explicitly (Synth::invalidate_sequence).
+    if synth
+        .cached_sequence
+        .as_ref()
+        .is_none_or(|c| c.width != width || c.height != height)
+    {
+        let sequence = build_pixel_sequence(
+            &synth.zones,
+            width,
+            height,
+            synth.reading_direction,
+            synth.sorted_reading,
+        );
+        synth.cached_sequence = Some(CachedSequence {
+            width,
+            height,
+            sequence,
+        });
+    }
+    let sequence = &synth.cached_sequence.as_ref().expect("just built").sequence;
     let seq_len = sequence.len();
 
     // Deferred end of a non-looping sequence: end_pending means the last
@@ -631,7 +710,7 @@ fn step_synth_once(
                     voice.note_is_on = false;
                 }
             }
-            let _ = app.emit("synth-stopped", serde_json::json!({ "id": synth.id }));
+            let _ = app.emit("synth-stopped", SynthStopped { id: synth.id });
         }
         return None;
     }
@@ -684,16 +763,24 @@ fn step_synth_once(
     // projection mirror decode the absolute pixel index against the grid
     // it was computed on — they stay in sync even when the column count
     // changes while synths are playing
-    let mut payload = serde_json::json!({
-        "id": synth.id,
-        "cursor": pixel_index,
-        "w": width,
-        "h": height,
-        "r": r, "g": g, "b": b, "a": a,
-        "brightness_level": brightness_level,
-        "velocity": velocity,
-        "mode": synth.mode,
-    });
+    let mut payload = PixelTick {
+        id: synth.id,
+        cursor: pixel_index,
+        w: width,
+        h: height,
+        r,
+        g,
+        b,
+        a,
+        brightness_level,
+        velocity,
+        mode: synth.mode,
+        note: None,
+        raw_note: None,
+        hue: None,
+        voices: None,
+        muted: false,
+    };
 
     match synth.mode {
         SynthMode::Monophonic => {
@@ -1266,10 +1353,22 @@ pub fn start_metronome(app: AppHandle, state: tauri::State<MetronomeState>) {
             if master != was_master {
                 let midi_state = app.state::<MidiState>();
                 if master {
-                    let _ = app.emit("metronome-sync", serde_json::json!({ "master": true }));
+                    let _ = app.emit(
+                        "metronome-sync",
+                        MetronomeSync {
+                            master: Some(true),
+                            ..Default::default()
+                        },
+                    );
                     midi::broadcast_realtime(&midi_state, midi::MIDI_START);
                 } else {
-                    let _ = app.emit("metronome-sync", serde_json::json!({ "master": false }));
+                    let _ = app.emit(
+                        "metronome-sync",
+                        MetronomeSync {
+                            master: Some(false),
+                            ..Default::default()
+                        },
+                    );
                     midi::broadcast_realtime(&midi_state, midi::MIDI_STOP);
                 }
                 was_master = master;
@@ -1285,6 +1384,8 @@ pub fn start_metronome(app: AppHandle, state: tauri::State<MetronomeState>) {
             let synth_state = app.state::<SynthState>();
             let midi_state = app.state::<MidiState>();
 
+            // Image then synths, in the mandated order (see locks.rs):
+            // this loop holds both while stepping every synth.
             if let Some(image) = image_state.processed.lock().unwrap().as_ref() {
                 let mut synths = synth_state.synths.lock().unwrap();
 
@@ -1321,7 +1422,13 @@ pub fn start_metronome(app: AppHandle, state: tauri::State<MetronomeState>) {
             if clock_mode && !matches!(mode, ClockMode::Auto | ClockMode::Input) {
                 clock_mode = false;
                 last_synced_bpm = 0;
-                let _ = app.emit("metronome-sync", serde_json::json!({ "synced": false }));
+                let _ = app.emit(
+                    "metronome-sync",
+                    MetronomeSync {
+                        synced: Some(false),
+                        ..Default::default()
+                    },
+                );
             }
 
             // --- Timing source: master broadcast, external MIDI clock,
@@ -1369,7 +1476,13 @@ pub fn start_metronome(app: AppHandle, state: tauri::State<MetronomeState>) {
                     // before the next wake
                     clock_mode = false;
                     last_synced_bpm = 0;
-                    let _ = app.emit("metronome-sync", serde_json::json!({ "synced": false }));
+                    let _ = app.emit(
+                        "metronome-sync",
+                        MetronomeSync {
+                            synced: Some(false),
+                            ..Default::default()
+                        },
+                    );
                     let current_bpm = bpm.load(Ordering::Relaxed).max(1);
                     let beat_ms = 60_000u64 / current_bpm as u64;
                     thread::sleep(Duration::from_millis(beat_ms / 4));
@@ -1386,7 +1499,11 @@ pub fn start_metronome(app: AppHandle, state: tauri::State<MetronomeState>) {
                             last_synced_bpm = measured;
                             let _ = app.emit(
                                 "metronome-sync",
-                                serde_json::json!({ "synced": true, "bpm": measured }),
+                                MetronomeSync {
+                                    synced: Some(true),
+                                    bpm: Some(measured),
+                                    ..Default::default()
+                                },
                             );
                         }
                     }
@@ -1422,11 +1539,23 @@ pub fn start_metronome(app: AppHandle, state: tauri::State<MetronomeState>) {
         // streams again), and stop broadcasting the master clock with a
         // transport Stop so the followers halt too.
         if was_master {
-            let _ = app.emit("metronome-sync", serde_json::json!({ "master": false }));
+            let _ = app.emit(
+                "metronome-sync",
+                MetronomeSync {
+                    master: Some(false),
+                    ..Default::default()
+                },
+            );
             midi::broadcast_realtime(&app.state::<MidiState>(), midi::MIDI_STOP);
         }
         if clock_mode {
-            let _ = app.emit("metronome-sync", serde_json::json!({ "synced": false }));
+            let _ = app.emit(
+                "metronome-sync",
+                MetronomeSync {
+                    synced: Some(false),
+                    ..Default::default()
+                },
+            );
         }
     });
 }
@@ -1460,6 +1589,7 @@ pub fn step_synth(
     let interval_ms = 60_000u64 / bpm;
 
     let (port, channel, scheduled, generation, step_duration) = {
+        // Image then synths, in the mandated order (see locks.rs).
         let image_guard = image_state.processed.lock().unwrap();
         let image = match image_guard.as_ref() {
             Some(img) => img,

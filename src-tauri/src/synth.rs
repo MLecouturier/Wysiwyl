@@ -432,38 +432,32 @@ pub fn set_synth_reading_direction(
     state: State<SynthState>,
     image_state: State<ImageState>,
 ) -> Result<(), AppError> {
-    // Lock in the metronome's order (image, then synths) to avoid an
-    // AB-BA deadlock with the tick loop
-    let image = image_state.processed.lock().unwrap();
-    let mut synths = state.synths.lock().unwrap();
-    let synth = match synths.get_mut(&id) {
-        Some(s) => s,
-        None => return Err(synth_not_found(id)),
-    };
+    // Image then synths, in the mandated order (see locks.rs).
+    crate::locks::with_locked_synth(&image_state, &state, id, |synth, image| {
+        // The sequence order changes: remap the playhead onto the same
+        // pixel so the reading continues where it is
+        let mut cursor = 0;
+        if let Some(img) = image {
+            cursor = remapped_cursor(
+                synth,
+                &synth.zones,
+                &synth.zones,
+                synth.sorted_reading,
+                synth.sorted_reading,
+                synth.reading_direction,
+                direction,
+                img.width() as usize,
+                img.height() as usize,
+            );
+        }
 
-    // The sequence order changes: remap the playhead onto the same pixel
-    // so the reading continues where it is
-    let mut cursor = 0;
-    if let Some(img) = image.as_ref() {
-        cursor = remapped_cursor(
-            synth,
-            &synth.zones,
-            &synth.zones,
-            synth.sorted_reading,
-            synth.sorted_reading,
-            synth.reading_direction,
-            direction,
-            img.width() as usize,
-            img.height() as usize,
-        );
-    }
-
-    synth.reading_direction = direction;
-    synth.cursor = cursor;
-    // A stale end_pending from the old sequence would stop a playing
-    // synth on its next tick
-    synth.end_pending = false;
-    Ok(())
+        synth.reading_direction = direction;
+        synth.invalidate_sequence();
+        synth.cursor = cursor;
+        // A stale end_pending from the old sequence would stop a playing
+        // synth on its next tick
+        synth.end_pending = false;
+    })
 }
 
 #[tauri::command]
@@ -659,43 +653,37 @@ pub fn set_synth_zones(
     state: State<SynthState>,
     image_state: State<ImageState>,
 ) -> Result<(), AppError> {
-    // Lock in the metronome's order (image, then synths) to avoid an
-    // AB-BA deadlock with the tick loop
-    let image = image_state.processed.lock().unwrap();
-    let mut synths = state.synths.lock().unwrap();
-    let synth = match synths.get_mut(&id) {
-        Some(s) => s,
-        None => return Err(synth_not_found(id)),
-    };
+    // Image then synths, in the mandated order (see locks.rs).
+    crate::locks::with_locked_synth(&image_state, &state, id, |synth, image| {
+        // Keep the playhead on the same pixel across zone edits (instead of
+        // restarting at the beginning): the flat sequence index has no meaning
+        // in the new sequence, but the pixel it points to usually still exists
+        // — find it back in the new sequence. When it has been deselected,
+        // the reading continues on the next still-selected pixel of the old
+        // reading order, and only restarts at 0 when nothing of the old
+        // sequence survives (zones emptied, whole selection replaced).
+        let mut cursor = 0;
+        if let Some(img) = image {
+            cursor = remapped_cursor(
+                synth,
+                &synth.zones,
+                &zones,
+                synth.sorted_reading,
+                synth.sorted_reading,
+                synth.reading_direction,
+                synth.reading_direction,
+                img.width() as usize,
+                img.height() as usize,
+            );
+        }
 
-    // Keep the playhead on the same pixel across zone edits (instead of
-    // restarting at the beginning): the flat sequence index has no meaning
-    // in the new sequence, but the pixel it points to usually still exists
-    // — find it back in the new sequence. When it has been deselected,
-    // the reading continues on the next still-selected pixel of the old
-    // reading order, and only restarts at 0 when nothing of the old
-    // sequence survives (zones emptied, whole selection replaced).
-    let mut cursor = 0;
-    if let Some(img) = image.as_ref() {
-        cursor = remapped_cursor(
-            synth,
-            &synth.zones,
-            &zones,
-            synth.sorted_reading,
-            synth.sorted_reading,
-            synth.reading_direction,
-            synth.reading_direction,
-            img.width() as usize,
-            img.height() as usize,
-        );
-    }
-
-    synth.zones = zones;
-    synth.cursor = cursor;
-    // A stale end_pending from the old sequence would stop a playing
-    // synth on its next tick
-    synth.end_pending = false;
-    Ok(())
+        synth.zones = zones;
+        synth.invalidate_sequence();
+        synth.cursor = cursor;
+        // A stale end_pending from the old sequence would stop a playing
+        // synth on its next tick
+        synth.end_pending = false;
+    })
 }
 
 /// Sets the manual silence zones of a synthesizer: selected pixels inside
@@ -730,36 +718,30 @@ pub fn set_synth_sorted_reading(
     state: State<SynthState>,
     image_state: State<ImageState>,
 ) -> Result<(), AppError> {
-    // Lock in the metronome's order (image, then synths) to avoid an
-    // AB-BA deadlock with the tick loop
-    let image = image_state.processed.lock().unwrap();
-    let mut synths = state.synths.lock().unwrap();
-    let synth = match synths.get_mut(&id) {
-        Some(s) => s,
-        None => return Err(synth_not_found(id)),
-    };
+    // Image then synths, in the mandated order (see locks.rs).
+    crate::locks::with_locked_synth(&image_state, &state, id, |synth, image| {
+        // The sequence order changes: remap the playhead onto the same pixel
+        // so the reading continues where it is
+        let mut cursor = 0;
+        if let Some(img) = image {
+            cursor = remapped_cursor(
+                synth,
+                &synth.zones,
+                &synth.zones,
+                synth.sorted_reading,
+                enabled,
+                synth.reading_direction,
+                synth.reading_direction,
+                img.width() as usize,
+                img.height() as usize,
+            );
+        }
 
-    // The sequence order changes: remap the playhead onto the same pixel
-    // so the reading continues where it is
-    let mut cursor = 0;
-    if let Some(img) = image.as_ref() {
-        cursor = remapped_cursor(
-            synth,
-            &synth.zones,
-            &synth.zones,
-            synth.sorted_reading,
-            enabled,
-            synth.reading_direction,
-            synth.reading_direction,
-            img.width() as usize,
-            img.height() as usize,
-        );
-    }
-
-    synth.sorted_reading = enabled;
-    synth.cursor = cursor;
-    synth.end_pending = false;
-    Ok(())
+        synth.sorted_reading = enabled;
+        synth.invalidate_sequence();
+        synth.cursor = cursor;
+        synth.end_pending = false;
+    })
 }
 
 #[cfg(test)]

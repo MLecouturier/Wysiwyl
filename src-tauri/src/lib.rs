@@ -1,6 +1,7 @@
 pub mod config;
 pub mod error;
 pub mod image_processing;
+pub mod locks;
 pub mod metronome;
 pub mod midi;
 pub mod session;
@@ -47,30 +48,38 @@ pub fn run() {
 
             Ok(())
         })
+        // Command registry: the complete frontend/backend IPC surface,
+        // grouped by domain. Each command is defined in its module; this
+        // list is the single index of what the webview may call.
         .invoke_handler(tauri::generate_handler![
+            // --- Configuration (config.rs) ---
             config::get_config,
             config::open_config_file,
             config::set_max_image_size,
             config::set_default_bpm,
             config::set_default_synth_from,
+            // --- Image (image_processing.rs) ---
             image_processing::load_image,
             image_processing::rotate_image,
             image_processing::crop_image,
             image_processing::preview_image_transform,
             image_processing::apply_image_transform,
             image_processing::apply_image_adjustments,
+            // --- Sessions (session.rs) ---
+            session::save_session,
+            session::load_session,
+            // --- MIDI ports / programs (midi.rs) ---
             midi::list_midi_ports,
             midi::list_midi_input_ports,
             midi::get_known_programs,
-            synth::set_synth_program,
-            session::save_session,
-            session::load_session,
+            // --- Metronome / clock (metronome.rs) ---
             metronome::start_metronome,
             metronome::stop_metronome,
             metronome::set_metronome_bpm,
             metronome::set_clock_mode,
             metronome::is_metronome_running,
             metronome::step_synth,
+            // --- Synthesizers (synth.rs) ---
             synth::add_synth,
             synth::remove_synth,
             synth::set_synth_order,
@@ -81,6 +90,7 @@ pub fn run() {
             synth::is_synth_playing,
             synth::set_synth_channel,
             synth::set_synth_midi_port,
+            synth::set_synth_program,
             synth::set_synth_name,
             synth::set_synth_tempo,
             synth::set_synth_brightness_range,
