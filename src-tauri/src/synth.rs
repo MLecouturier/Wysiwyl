@@ -1,9 +1,12 @@
-use std::collections::{HashMap, HashSet};
-use tauri::State;
 use crate::config::ConfigState;
 use crate::error::{err, AppError};
 use crate::metronome::remapped_cursor;
-use crate::state::{NoteLength, ProgramState, ReadingDirection, Scale, Synth, SynthMode, SynthState, ImageState, MidiState, Zone};
+use crate::state::{
+    ImageState, MidiState, NoteLength, ProgramState, ReadingDirection, Scale, Synth, SynthMode,
+    SynthState, Zone,
+};
+use std::collections::{HashMap, HashSet};
+use tauri::State;
 
 // --- Existing SynthConfig / SynthEngine (pure pixel-processing logic) ---
 // (unchanged, assumed to remain above or below in this file)
@@ -16,16 +19,16 @@ fn synth_not_found(id: u32) -> AppError {
 /// Sets a custom display name for a synthesizer. An empty (or
 /// whitespace-only) name clears it, falling back to the default name.
 #[tauri::command]
-pub fn set_synth_name(
-    id: u32,
-    name: String,
-    state: State<SynthState>,
-) -> Result<(), AppError> {
+pub fn set_synth_name(id: u32, name: String, state: State<SynthState>) -> Result<(), AppError> {
     let trimmed = name.trim().to_string();
     let mut synths = state.synths.lock().unwrap();
     match synths.get_mut(&id) {
         Some(synth) => {
-            synth.name = if trimmed.is_empty() { None } else { Some(trimmed) };
+            synth.name = if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            };
             Ok(())
         }
         None => Err(synth_not_found(id)),
@@ -181,10 +184,7 @@ pub fn stop_synth(
 /// sounding notes (mono + polyphonic voices). The note generation is
 /// bumped so pending delayed Note Offs cancel themselves.
 #[tauri::command]
-pub fn panic_all(
-    state: State<SynthState>,
-    midi_state: State<MidiState>,
-) {
+pub fn panic_all(state: State<SynthState>, midi_state: State<MidiState>) {
     let mut synths = state.synths.lock().unwrap();
     for synth in synths.values_mut() {
         synth.playing = false;
@@ -278,9 +278,7 @@ pub fn set_synth_program(
 ) -> Result<ProgramState, AppError> {
     let (port, channel) = {
         let synths = state.synths.lock().unwrap();
-        let synth = synths
-            .get(&id)
-            .ok_or_else(|| synth_not_found(id))?;
+        let synth = synths.get(&id).ok_or_else(|| synth_not_found(id))?;
         (synth.midi_port, synth.channel)
     };
     Ok(midi.send_program_change(port, channel, program, bank_msb, bank_lsb))
@@ -380,7 +378,11 @@ pub fn set_synth_tempo(id: u32, tempo: f64, state: State<SynthState>) -> Result<
 }
 
 #[tauri::command]
-pub fn set_synth_loop(id: u32, loop_enabled: bool, state: State<SynthState>) -> Result<(), AppError> {
+pub fn set_synth_loop(
+    id: u32,
+    loop_enabled: bool,
+    state: State<SynthState>,
+) -> Result<(), AppError> {
     let mut synths = state.synths.lock().unwrap();
     match synths.get_mut(&id) {
         Some(synth) => {
@@ -606,7 +608,11 @@ pub fn set_synth_scale(
 }
 
 #[tauri::command]
-pub fn set_synth_hue_shift(id: u32, hue_shift: u16, state: State<SynthState>) -> Result<(), AppError> {
+pub fn set_synth_hue_shift(
+    id: u32,
+    hue_shift: u16,
+    state: State<SynthState>,
+) -> Result<(), AppError> {
     let mut synths = state.synths.lock().unwrap();
     match synths.get_mut(&id) {
         Some(synth) => {

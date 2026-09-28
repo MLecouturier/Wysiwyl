@@ -114,6 +114,7 @@ fn saturation_to_velocity(
 /// distinct note of a fixed duration, disabling the legato sustain).
 /// `manual_mute` silences the pixel by hand (rest): no note is sounded,
 /// exactly like a pixel outside the brightness window.
+#[allow(clippy::too_many_arguments)] // folded into a context struct by the Phase 2 refactor
 fn process_monophonic(
     synth: &mut Synth,
     midi: &MidiState,
@@ -178,6 +179,7 @@ fn process_monophonic(
 /// note lengths are enabled, see process_monophonic). `manual_mute` silences
 /// the pixel by hand (rest): no voice is sounded, exactly like a pixel
 /// outside the brightness window.
+#[allow(clippy::too_many_arguments)] // folded into a context struct by the Phase 2 refactor
 fn process_polyphonic(
     synth: &mut Synth,
     midi: &MidiState,
@@ -199,9 +201,9 @@ fn process_polyphonic(
 
     let mut voices_payload = Vec::with_capacity(3);
 
-    for i in 0..3 {
+    for (i, &value) in channel_values.iter().enumerate() {
         let enabled = synth.channel_enabled[i];
-        let raw_note = channel_to_midi_note(channel_values[i]);
+        let raw_note = channel_to_midi_note(value);
         // Rescale the channel value proportionally across this voice's
         // enabled range filters, then quantize to the synth's scale: the
         // pitch rises gradually from the low to the high bound of the
@@ -209,7 +211,7 @@ fn process_polyphonic(
         // scale degrees.
         let effective_note = effective_note_for(
             synth,
-            channel_values[i] as f32 / 255.0,
+            value as f32 / 255.0,
             note_range_bounds,
             &synth.voice_note_ranges[i],
         );
@@ -405,8 +407,10 @@ pub(crate) fn build_pixel_sequence(
                 // keeping only the selected pixels (deduplicated — a pixel
                 // covered by overlapping zones would otherwise break the
                 // spiral)
-                let selected: HashSet<usize> =
-                    per_zone.iter().flat_map(|runs| runs_pixels(runs, width)).collect();
+                let selected: HashSet<usize> = per_zone
+                    .iter()
+                    .flat_map(|runs| runs_pixels(runs, width))
+                    .collect();
                 if selected.is_empty() {
                     return sequence;
                 }
@@ -525,6 +529,7 @@ pub(crate) fn build_pixel_sequence(
 /// the old reading order (in its travel direction, wrapping around), and
 /// only restarts at the beginning when nothing of the old sequence
 /// survives (or when either sequence is empty).
+#[allow(clippy::too_many_arguments)] // folded into a context struct by the Phase 2 refactor
 pub(crate) fn remapped_cursor(
     synth: &Synth,
     old_zones: &[Zone],
@@ -1926,7 +1931,10 @@ mod tests {
         // The playhead's pixel is deselected: the two runs flanking it
         // remain — the reading continues on the next one in reading
         // order (pixel 3, index 2 of the new per-zone sequence)
-        let zones_after = [Zone::from_rect(0, 0, 0, 2, 1), Zone::from_rect(0, 3, 0, 2, 1)];
+        let zones_after = [
+            Zone::from_rect(0, 0, 0, 2, 1),
+            Zone::from_rect(0, 3, 0, 2, 1),
+        ];
         let cursor = remapped_cursor(
             &synth,
             &zones,
@@ -2003,7 +2011,10 @@ mod tests {
         synth.play_forward = false;
         let (width, height) = (4usize, 2usize);
 
-        let zones_after = [Zone::from_rect(0, 0, 0, 2, 1), Zone::from_rect(0, 3, 0, 1, 1)];
+        let zones_after = [
+            Zone::from_rect(0, 0, 0, 2, 1),
+            Zone::from_rect(0, 3, 0, 1, 1),
+        ];
         let cursor = remapped_cursor(
             &synth,
             &zones,
@@ -2179,7 +2190,7 @@ mod tests {
         let (width, height) = (4usize, 2usize);
         // Top→bottom: column 0 (rows 0,1), column 1 (rows 0,1), column 2 (row 1)
         let ttb = build_pixel_sequence(
-            &[lshape.clone()],
+            std::slice::from_ref(&lshape),
             width,
             height,
             ReadingDirection::TopToBottom,
@@ -2189,7 +2200,7 @@ mod tests {
 
         // Bottom→top: same columns, rows descending
         let btt = build_pixel_sequence(
-            &[lshape.clone()],
+            std::slice::from_ref(&lshape),
             width,
             height,
             ReadingDirection::BottomToTop,
@@ -2214,13 +2225,7 @@ mod tests {
         // bounding box but keeps only the selected cells
         let cells = [(0, 0), (1, 0), (2, 0), (0, 1), (1, 1)];
         let lshape = Zone::from_cells(0, &cells); // 2x2 block + (2,0)
-        let cw = build_pixel_sequence(
-            &[lshape],
-            3,
-            2,
-            ReadingDirection::Spiral,
-            false,
-        );
+        let cw = build_pixel_sequence(&[lshape], 3, 2, ReadingDirection::Spiral, false);
         // Clockwise spiral over rows 0-1 x cols 0-2: 0,1,2 then col 2
         // down (5 = (2,1), unselected → filtered) then bottom row back
         // (4, 3). Selected cells only: 0,1,2,4,3
@@ -2231,13 +2236,8 @@ mod tests {
     fn zones_clipped_outside_the_image_are_skipped() {
         // Defensive clip: a zone entirely beyond the right edge
         let out_of_bounds = Zone::from_rect(0, 10, 0, 4, 4); // cols 10-13 on a 8-wide grid
-        let seq = build_pixel_sequence(
-            &[out_of_bounds],
-            8,
-            4,
-            ReadingDirection::LeftToRight,
-            false,
-        );
+        let seq =
+            build_pixel_sequence(&[out_of_bounds], 8, 4, ReadingDirection::LeftToRight, false);
         assert!(seq.is_empty());
     }
 }

@@ -1,0 +1,68 @@
+name: 'CI'
+
+on:
+  push:
+    branches: ['main']
+  pull_request:
+
+jobs:
+  frontend:
+    name: 'Frontend tests'
+    runs-on: 'ubuntu-latest'
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: lts/*
+
+      # The tests import only local ES modules and Node built-ins: no
+      # npm install is needed (the frontend stays bundler-free).
+      - name: Run the JavaScript tests
+        run: npm test
+
+  rust:
+    name: 'Rust checks'
+    runs-on: 'ubuntu-latest'
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache the Cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: 'src-tauri -> target'
+
+      # Tauri v2 prerequisites on Linux, plus libasound2-dev for midir's
+      # ALSA backend.
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libasound2-dev
+
+      - name: Check formatting
+        run: cargo fmt --check
+        working-directory: 'src-tauri'
+
+      - name: Run Clippy
+        run: cargo clippy --all-targets -- -D warnings
+        working-directory: 'src-tauri'
+
+      - name: Run the Rust tests
+        run: cargo test
+        working-directory: 'src-tauri'

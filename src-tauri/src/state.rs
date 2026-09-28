@@ -104,6 +104,12 @@ impl ChannelVoice {
     }
 }
 
+impl Default for ChannelVoice {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct ImageState {
     pub original: Mutex<Option<DynamicImage>>,
     pub processed: Mutex<Option<DynamicImage>>,
@@ -134,7 +140,7 @@ pub struct Synth {
     pub note: u8,         // fixed MIDI note for now: A4 = 69
     pub channel: u8,      // MIDI channel 0-15
     pub midi_port: usize, // MIDI output port index (see list_midi_ports)
-    pub zones: Vec<Zone>,      // connected zones to play (empty = nothing selected)
+    pub zones: Vec<Zone>, // connected zones to play (empty = nothing selected)
     pub mute_zones: Vec<Zone>, // manually silenced pixels (rests): the playhead still
     // travels over them but no note is sounded (empty = none)
     pub loop_enabled: bool,   // loop playback or stop at end of range

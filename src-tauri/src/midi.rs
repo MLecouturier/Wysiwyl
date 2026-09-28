@@ -139,10 +139,10 @@ impl MidiState {
     /// unavailable.
     fn with_connection(&self, port_index: usize, f: impl FnOnce(&mut MidiOutputConnection)) {
         let mut connections = self.connections.lock().unwrap();
-        if !connections.contains_key(&port_index) {
+        if let std::collections::hash_map::Entry::Vacant(entry) = connections.entry(port_index) {
             match open_connection(port_index) {
                 Some(conn) => {
-                    connections.insert(port_index, conn);
+                    entry.insert(conn);
                 }
                 None => return,
             }
@@ -231,8 +231,6 @@ pub fn send_note_off(conn: &mut MidiOutputConnection, channel: u8, note: u8) {
     let status = 0x80 | (channel & 0x0F);
     let _ = conn.send(&[status, note & 0x7F, 0]);
 }
-
-
 
 /// Lists the available MIDI output ports. The index of each entry is the
 /// port identifier to pass to `set_synth_midi_port`. On unix the app's
@@ -551,7 +549,7 @@ fn handle_input_message(app: &AppHandle, input_name: &str, data: &[u8]) {
         let entry = known.entry((port, channel)).or_default();
         match channel_message {
             Message::Program(p) => entry.program = Some(p),
-            Message::Bank(cc, value) if cc == 0 => entry.bank_msb = Some(value),
+            Message::Bank(0, value) => entry.bank_msb = Some(value),
             Message::Bank(_, value) => entry.bank_lsb = Some(value),
             // Handled (and returned) before reaching the program tracking
             Message::Volume(_) => return,
@@ -617,5 +615,3 @@ pub fn get_known_programs(state: State<'_, MidiState>) -> Vec<KnownProgram> {
         })
         .collect()
 }
-
-

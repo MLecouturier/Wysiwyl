@@ -44,7 +44,11 @@ impl Zone {
         Zone {
             order,
             runs: (y..y + h)
-                .map(|row| RowRun { y: row, x0: x, x1: x + w - 1 })
+                .map(|row| RowRun {
+                    y: row,
+                    x0: x,
+                    x1: x + w - 1,
+                })
                 .collect(),
         }
     }
@@ -64,12 +68,20 @@ impl Zone {
             let mut prev = xs[0];
             for &x in &xs[1..] {
                 if x > prev + 1 {
-                    runs.push(RowRun { y, x0: run_start, x1: prev });
+                    runs.push(RowRun {
+                        y,
+                        x0: run_start,
+                        x1: prev,
+                    });
                     run_start = x;
                 }
                 prev = x;
             }
-            runs.push(RowRun { y, x0: run_start, x1: prev });
+            runs.push(RowRun {
+                y,
+                x0: run_start,
+                x1: prev,
+            });
         }
         Zone { order, runs }
     }
@@ -171,9 +183,18 @@ mod tests {
         // historical binary-search-on-y containment stopped at the
         // first matching run and missed the second one.
         let cells = [
-            (0, 0), (1, 0),
-            (0, 1), (1, 1), (4, 1), (5, 1),
-            (0, 2), (1, 2), (2, 2), (3, 2), (4, 2), (5, 2),
+            (0, 0),
+            (1, 0),
+            (0, 1),
+            (1, 1),
+            (4, 1),
+            (5, 1),
+            (0, 2),
+            (1, 2),
+            (2, 2),
+            (3, 2),
+            (4, 2),
+            (5, 2),
         ];
         let u = Zone::from_cells(0, &cells);
         // Both arms of the U on the middle row must be found

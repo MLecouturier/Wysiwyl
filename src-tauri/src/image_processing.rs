@@ -65,12 +65,10 @@ pub async fn load_image(
 
     let path = file_path.ok_or_else(|| err("no_file_selected"))?;
 
-    let path_buf = path
-        .as_path()
-        .ok_or_else(|| err("invalid_file_path"))?;
+    let path_buf = path.as_path().ok_or_else(|| err("invalid_file_path"))?;
 
-    let mut img = image::open(path_buf)
-        .map_err(|e| err("image_load_error").with_param("details", e))?;
+    let mut img =
+        image::open(path_buf).map_err(|e| err("image_load_error").with_param("details", e))?;
 
     // Downscale oversized originals so the app stays responsive
     let max_size = config_state.config.lock().unwrap().max_image_size;
@@ -166,9 +164,14 @@ fn rotate_fine(img: &DynamicImage, angle_degrees: f32) -> DynamicImage {
 
 /// Projective transform, applied as (x, y, 1) * coeffs (homogeneous divide).
 struct Homography {
-    a: f32, b: f32, c: f32,
-    d: f32, e: f32, f: f32,
-    g: f32, k: f32,
+    a: f32,
+    b: f32,
+    c: f32,
+    d: f32,
+    e: f32,
+    f: f32,
+    g: f32,
+    k: f32,
 }
 
 impl Homography {
@@ -224,11 +227,7 @@ fn solve_linear8(mut m: [[f32; 8]; 8], mut v: [f32; 8]) -> [f32; 8] {
 
 /// Builds the homography mapping the rectangle (0,0)-(dst_w, dst_h) onto the
 /// four quad corners (top-left, top-right, bottom-right, bottom-left).
-fn homography_from_corners(
-    dst_w: u32,
-    dst_h: u32,
-    quad: [(f32, f32); 4],
-) -> Homography {
+fn homography_from_corners(dst_w: u32, dst_h: u32, quad: [(f32, f32); 4]) -> Homography {
     // Dest corners in the same order as the quad
     let dst = [
         (0.0, 0.0),
@@ -252,7 +251,16 @@ fn homography_from_corners(
     }
 
     let [a, b, c, d, e, f, g, k] = solve_linear8(m, v);
-    Homography { a, b, c, d, e, f, g, k }
+    Homography {
+        a,
+        b,
+        c,
+        d,
+        e,
+        f,
+        g,
+        k,
+    }
 }
 
 /// Extracts a symmetric trapezoid (keystone correction) from `img` into a
@@ -270,9 +278,9 @@ fn perspective_correct(img: &DynamicImage, v: f32, h: f32) -> DynamicImage {
 
     // Extents of the 4 edges of the trapezoid: the edge matching the
     // keystone direction shrinks, the opposite one spans the full canvas
-    let tw = wf * (1.0 - v.max(0.0));  // top edge width
+    let tw = wf * (1.0 - v.max(0.0)); // top edge width
     let bw = wf * (1.0 - (-v).max(0.0)); // bottom edge width
-    let lh = hf * (1.0 - h.max(0.0));  // left edge height
+    let lh = hf * (1.0 - h.max(0.0)); // left edge height
     let rh = hf * (1.0 - (-h).max(0.0)); // right edge height
 
     // Source quadrilateral, symmetric about the canvas center
@@ -357,9 +365,7 @@ pub fn preview_image_transform(
     params: TransformParams,
 ) -> Result<tauri::ipc::Response, AppError> {
     let guard = state.original.lock().unwrap();
-    let original = guard
-        .as_ref()
-        .ok_or_else(|| err("no_image_loaded"))?;
+    let original = guard.as_ref().ok_or_else(|| err("no_image_loaded"))?;
 
     let img = apply_transform(original, &params);
     Ok(rgba_ipc_response(&img))
@@ -420,10 +426,7 @@ pub fn rotate_image(state: State<'_, ImageState>) -> Result<LoadedImageInfo, App
 /// requested column count (grid_width) followed by the pixel-value
 /// adjustments, all at grid scale. Pure: reads the original, returns the
 /// result, touches no state.
-pub(crate) fn render_processed(
-    original: &DynamicImage,
-    params: &AdjustmentParams,
-) -> DynamicImage {
+pub(crate) fn render_processed(original: &DynamicImage, params: &AdjustmentParams) -> DynamicImage {
     let (orig_w, orig_h) = original.dimensions();
 
     // --- Actual downsampling: grid_width becomes the number of columns/notes ---
@@ -433,11 +436,7 @@ pub(crate) fn render_processed(
         .round()
         .max(1.0) as u32;
 
-    let mut img = original.resize_exact(
-        target_w,
-        target_h,
-        image::imageops::FilterType::Nearest,
-    );
+    let mut img = original.resize_exact(target_w, target_h, image::imageops::FilterType::Nearest);
 
     // --- Pattern adjustments (applied at grid scale: they act on the very
     // pixels the synthesizers read, note to note) ---
@@ -594,7 +593,11 @@ fn blur_axis(
     kernel: &[f32],
     horizontal: bool,
 ) -> image::RgbaImage {
-    let (outer, inner) = if horizontal { (height, width) } else { (width, height) };
+    let (outer, inner) = if horizontal {
+        (height, width)
+    } else {
+        (width, height)
+    };
     let mut out = image::RgbaImage::new(width, height);
 
     for o in 0..outer {
@@ -602,11 +605,10 @@ fn blur_axis(
             let mut acc = [0.0f32; 3];
             for j in 0..=(2 * radius) {
                 let offset = j as isize - radius as isize;
-                let idx = (i as isize + offset)
-                    .clamp(0, inner as isize - 1) as u32;
+                let idx = (i as isize + offset).clamp(0, inner as isize - 1) as u32;
                 let (x, y) = if horizontal { (idx, o) } else { (o, idx) };
                 let p = src.get_pixel(x, y);
-                let w = kernel[offset.unsigned_abs() as usize];
+                let w = kernel[offset.unsigned_abs()];
                 acc[0] += p[0] as f32 * w;
                 acc[1] += p[1] as f32 * w;
                 acc[2] += p[2] as f32 * w;
@@ -793,7 +795,11 @@ mod tests {
     #[test]
     fn perspective_keeps_the_wider_edge_intact() {
         // 100x100 solid image, vertical keystone: bottom wider than top
-        let img = DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(100, 100, image::Rgba([200, 150, 100, 255])));
+        let img = DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            100,
+            100,
+            image::Rgba([200, 150, 100, 255]),
+        ));
         let out = perspective_correct(&img, 0.2, 0.0);
         assert_eq!(out.dimensions(), (100, 100));
 
@@ -809,16 +815,23 @@ mod tests {
     #[test]
     fn rotate_fine_expands_the_canvas_and_keeps_center_pixel() {
         // 90° rotation of a 100x50 image swaps the dimensions
-        let img = DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(100, 50, image::Rgba([120, 130, 140, 255])));
+        let img = DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            100,
+            50,
+            image::Rgba([120, 130, 140, 255]),
+        ));
         let out = rotate_fine(&img, 90.0);
         assert_eq!(out.dimensions(), (50, 100));
-        assert_eq!(out.to_rgba8().get_pixel(25, 50), &image::Rgba([120, 130, 140, 255]));
+        assert_eq!(
+            out.to_rgba8().get_pixel(25, 50),
+            &image::Rgba([120, 130, 140, 255])
+        );
 
         // A small angle only slightly expands the canvas
         let out = rotate_fine(&img, 10.0);
         let (w, h) = out.dimensions();
-        assert!(w >= 100 && w < 130, "unexpected width {w}");
-        assert!(h >= 50 && h < 130, "unexpected height {h}");
+        assert!((100..130).contains(&w), "unexpected width {w}");
+        assert!((50..130).contains(&h), "unexpected height {h}");
     }
 
     #[test]
@@ -839,7 +852,9 @@ mod tests {
     #[test]
     fn unsharp_mask_is_identity_on_uniform_image() {
         let img = DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
-            8, 8, image::Rgba([120, 60, 200, 255]),
+            8,
+            8,
+            image::Rgba([120, 60, 200, 255]),
         ));
         let out = unsharp_mask(&img, 1.5, 100.0);
         assert!(out
@@ -857,8 +872,14 @@ mod tests {
             buf.put_pixel(x, 0, image::Rgba([v, v, v, 255]));
         }
         let out = unsharp_mask(&DynamicImage::ImageRgba8(buf), 1.5, 100.0).to_rgba8();
-        assert!(out.get_pixel(3, 0)[0] < 64, "dark edge side should get darker");
-        assert!(out.get_pixel(4, 0)[0] > 192, "bright edge side should get brighter");
+        assert!(
+            out.get_pixel(3, 0)[0] < 64,
+            "dark edge side should get darker"
+        );
+        assert!(
+            out.get_pixel(4, 0)[0] > 192,
+            "bright edge side should get brighter"
+        );
     }
 
     #[test]
@@ -881,7 +902,10 @@ mod tests {
         let out = bilateral_simplify(&DynamicImage::ImageRgba8(buf), 50.0).to_rgba8();
 
         let center = out.get_pixel(4, 4)[0];
-        assert!(center > 100 && center < 160, "outlier should be pulled toward the flat area");
+        assert!(
+            center > 100 && center < 160,
+            "outlier should be pulled toward the flat area"
+        );
         assert_eq!(out.get_pixel(0, 0)[0], 100, "flat area must stay unchanged");
     }
 
@@ -893,8 +917,14 @@ mod tests {
         let out = adjust_vibrance(&DynamicImage::ImageRgba8(buf), 50.0).to_rgba8();
 
         // The pastel gets a visible chroma boost...
-        assert!(out.get_pixel(0, 0)[0] > 200, "muted red channel should increase");
-        assert!(out.get_pixel(0, 0)[2] < 160, "muted blue channel should decrease");
+        assert!(
+            out.get_pixel(0, 0)[0] > 200,
+            "muted red channel should increase"
+        );
+        assert!(
+            out.get_pixel(0, 0)[2] < 160,
+            "muted blue channel should decrease"
+        );
         // ...while the saturated primary is left untouched
         assert_eq!(out.get_pixel(1, 0), &image::Rgba([255, 0, 0, 255]));
     }
@@ -924,7 +954,11 @@ mod tests {
         let out = auto_levels(&DynamicImage::ImageRgba8(buf)).to_rgba8();
 
         assert!(out.get_pixel(0, 0)[0] <= 5, "dark end should reach black");
-        assert_eq!(out.get_pixel(31, 0)[0], 255, "bright end should reach white");
+        assert_eq!(
+            out.get_pixel(31, 0)[0],
+            255,
+            "bright end should reach white"
+        );
     }
 
     #[test]
@@ -945,8 +979,14 @@ mod tests {
 
         let left = out.get_pixel(0, 0);
         let right = out.get_pixel(31, 0);
-        assert!(left[0] > left[1] && left[1] >= left[2], "hue must survive the stretch (dark)");
-        assert!(right[0] > right[1] && right[1] > right[2], "hue must survive the stretch (bright)");
+        assert!(
+            left[0] > left[1] && left[1] >= left[2],
+            "hue must survive the stretch (dark)"
+        );
+        assert!(
+            right[0] > right[1] && right[1] > right[2],
+            "hue must survive the stretch (bright)"
+        );
         assert_eq!(right[0], 255, "bright half should reach white");
     }
 
@@ -964,9 +1004,12 @@ mod tests {
         let out = auto_levels(&DynamicImage::ImageRgba8(buf)).to_rgba8();
         for y in 0..32 {
             for x in 0..32 {
-                assert_eq!(out.get_pixel(x, y), src.get_pixel(x, y), "must stay untouched");
+                assert_eq!(
+                    out.get_pixel(x, y),
+                    src.get_pixel(x, y),
+                    "must stay untouched"
+                );
             }
         }
     }
 }
-
