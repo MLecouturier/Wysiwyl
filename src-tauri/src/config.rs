@@ -5,7 +5,7 @@ use tauri::{AppHandle, Manager, State};
 
 use crate::error::{err, AppError};
 use crate::metronome::{ClockMode, MetronomeState};
-use crate::state::{NoteLength, ReadingDirection, Scale, Synth, SynthMode};
+use crate::state::{Scale, SynthConfig};
 
 /// Default bounds of the three note-range filters, in MIDI note numbers.
 pub const DEFAULT_NOTE_RANGE_BOUNDS: [(u8, u8); 3] = [(21, 47), (48, 71), (72, 108)];
@@ -65,7 +65,7 @@ pub struct AppConfig {
     /// `input`. Stored as reported by the MIDI input listeners.
     pub clock_source: Option<String>,
     /// Template applied to every newly created synthesizer.
-    pub default_synth: SynthTemplate,
+    pub default_synth: SynthConfig,
     /// Bounds (low, high), in MIDI note numbers, of the three note-range
     /// filters (bass, medium, treble). Hand-edited values are sanitized on
     /// load: swapped if inverted, clamped to 0–127.
@@ -95,7 +95,7 @@ impl Default for AppConfig {
             default_bpm: 120,
             clock_mode: ClockMode::Auto,
             clock_source: None,
-            default_synth: SynthTemplate::default(),
+            default_synth: SynthConfig::default(),
             note_range_bounds: DEFAULT_NOTE_RANGE_BOUNDS,
             synth_colors: default_synth_colors(),
             enabled_scales: default_enabled_scales(),
@@ -146,105 +146,6 @@ impl AppConfig {
         self.enabled_scales = seen;
         // Trackpad scroll feel: keep the threshold in a usable range
         self.wheel_trackpad_threshold = self.wheel_trackpad_threshold.clamp(1, 2000);
-    }
-}
-
-/// Settings of a synthesizer that can be saved as the default template.
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(default)]
-pub struct SynthTemplate {
-    pub tempo_ratio: f64,
-    pub channel: u8,
-    pub midi_port: usize,
-    pub mode: SynthMode,
-    pub loop_enabled: bool,
-    pub back_and_forth: bool,
-    pub reading_direction: ReadingDirection,
-    pub sorted_reading: bool,
-    pub brightness_min: u8,
-    pub brightness_max: u8,
-    pub velocity_min: u8,
-    pub velocity_max: u8,
-    pub velocity_relative: bool,
-    pub volume: u8,
-    pub hue_shift: u16,
-    pub channel_enabled: [bool; 3],
-    pub note_lengths: Vec<NoteLength>,
-    pub note_length_reversed: bool,
-    pub note_sustain: bool,
-    pub mono_note_range: [bool; 3],
-    pub voice_note_ranges: [[bool; 3]; 3],
-    pub scale: Scale,
-    pub scale_root: u8,
-}
-
-impl Default for SynthTemplate {
-    fn default() -> Self {
-        // Mirrors the defaults of Synth::new
-        Self::from_synth(&Synth::new(0))
-    }
-}
-
-impl SynthTemplate {
-    /// Extracts the template-relevant settings from an existing synth.
-    pub fn from_synth(synth: &Synth) -> Self {
-        Self {
-            tempo_ratio: synth.tempo_ratio,
-            channel: synth.channel,
-            midi_port: synth.midi_port,
-            mode: synth.mode,
-            loop_enabled: synth.loop_enabled,
-            back_and_forth: synth.back_and_forth,
-            reading_direction: synth.reading_direction,
-            sorted_reading: synth.sorted_reading,
-            brightness_min: synth.brightness_min,
-            brightness_max: synth.brightness_max,
-            velocity_min: synth.velocity_min,
-            velocity_max: synth.velocity_max,
-            velocity_relative: synth.velocity_relative,
-            volume: synth.volume,
-            hue_shift: synth.hue_shift,
-            channel_enabled: synth.channel_enabled,
-            note_lengths: synth.note_lengths.clone(),
-            note_length_reversed: synth.note_length_reversed,
-            note_sustain: synth.note_sustain,
-            mono_note_range: synth.mono_note_range,
-            voice_note_ranges: synth.voice_note_ranges,
-            scale: synth.scale,
-            scale_root: synth.scale_root,
-        }
-    }
-
-    /// Builds a fresh synthesizer with this template's settings (playback
-    /// state, cursor, name, etc. keep their standard defaults).
-    pub fn to_synth(&self, id: u32) -> Synth {
-        let mut synth = Synth::new(id);
-        synth.tempo_ratio = self.tempo_ratio;
-        synth.channel = self.channel;
-        synth.midi_port = self.midi_port;
-        synth.mode = self.mode;
-        synth.loop_enabled = self.loop_enabled && !self.back_and_forth;
-        synth.back_and_forth = self.back_and_forth;
-        synth.reading_direction = self.reading_direction;
-        synth.sorted_reading = self.sorted_reading;
-        synth.brightness_min = self.brightness_min;
-        synth.brightness_max = self.brightness_max;
-        synth.velocity_min = self.velocity_min;
-        synth.velocity_max = self.velocity_max;
-        synth.velocity_relative = self.velocity_relative;
-        synth.volume = self.volume.min(127);
-        synth.hue_shift = self.hue_shift;
-        synth.channel_enabled = self.channel_enabled;
-        if !self.note_lengths.is_empty() {
-            synth.note_lengths = self.note_lengths.clone();
-        }
-        synth.note_length_reversed = self.note_length_reversed;
-        synth.note_sustain = self.note_sustain;
-        synth.mono_note_range = self.mono_note_range;
-        synth.voice_note_ranges = self.voice_note_ranges;
-        synth.scale = self.scale;
-        synth.scale_root = self.scale_root.min(11);
-        synth
     }
 }
 
@@ -373,7 +274,7 @@ pub fn set_default_synth_from(
         let synth = synths
             .get(&id)
             .ok_or_else(|| err("synth_not_found").with_param("id", id))?;
-        SynthTemplate::from_synth(synth)
+        SynthConfig::from_synth(synth)
     };
     let mut config = config_state.config.lock().unwrap();
     config.default_synth = template;

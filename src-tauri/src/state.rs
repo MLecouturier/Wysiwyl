@@ -135,8 +135,9 @@ pub struct CachedSequence {
     pub sequence: Vec<usize>,
 }
 
-/// State of an individual synthesizer.
-#[derive(Clone, Serialize)]
+/// State of an individual synthesizer. Internal state: the UI receives a
+/// [`SynthView`] (configuration flattened) rather than this struct.
+#[derive(Clone)]
 pub struct Synth {
     pub id: u32,
     /// Number shown in the default title ("Synth #n"). Attributed once
@@ -146,69 +147,13 @@ pub struct Synth {
     /// synth's default name change under a reorder or a removal.
     pub display_number: u32,
     pub name: Option<String>, // custom display name; None = default "Synth #id"
-    pub playing: bool,
-    pub cursor: usize,    // index into the zone pixel sequence (0..sequence length)
-    pub note: u8,         // fixed MIDI note for now: A4 = 69
-    pub channel: u8,      // MIDI channel 0-15
-    pub midi_port: usize, // MIDI output port index (see list_midi_ports)
-    pub zones: Vec<Zone>, // connected zones to play (empty = nothing selected)
+    pub zones: Vec<Zone>,     // connected zones to play (empty = nothing selected)
     pub mute_zones: Vec<Zone>, // manually silenced pixels (rests): the playhead still
     // travels over them but no note is sounded (empty = none)
-    pub loop_enabled: bool,   // loop playback or stop at end of range
-    pub back_and_forth: bool, // bounce back and forth between the sequence
-    // bounds (mutually exclusive with the loop)
-    pub reading_direction: ReadingDirection, // order in which the sequence is built
-    pub sorted_reading: bool,                // read the pixels by their absolute position in
-    // the image instead of zone by zone
-    pub play_forward: bool, // current travel direction through the sequence
-    // (flipped by the back-and-forth mode)
-    pub end_pending: bool, // end of a non-looping sequence reached: stop on the next tick
-    // (gives the final note a full step duration)
-    pub tempo_ratio: f64, // playback speed relative to the metronome (1.0 = metronome tempo)
-    pub tempo_accumulator: f64, // fractional-tick accumulator: a synth with tempo < 1.0
-    // only advances once enough metronome ticks have accumulated
-    pub brightness_min: u8, // minimum brightness threshold (0–127)
-    pub brightness_max: u8, // maximum brightness threshold (0–127)
-    pub active_note: bool,  // false if the current pixel is out of range (muted)
-    pub note_is_on: bool,   // true if a MIDI note is currently sounding (sustain)
-    pub velocity: u8,       // current MIDI velocity, derived from the pixel's brightness (1–127)
-    pub velocity_min: u8,   // floor of the velocity range (0–126): brightness is
-    // mapped between this value and velocity_max
-    pub velocity_max: u8,        // ceiling of the velocity range (1–127)
-    pub velocity_relative: bool, // true: saturation rescaled onto [min, max];
-    // false: native 1–127 mapping, clamped to [min, max]
-    pub volume: u8, // channel volume as a raw MIDI value (0–127), sent as MIDI CC 7
-
-    // --- Pixel-to-note translation modes ---
-    pub mode: SynthMode,
-    pub hue_shift: u16, // hue shift in degrees (0–360), monophonic mode
-    pub channel_enabled: [bool; 3], // R, G, B enabled/disabled, polyphonic mode
-    pub poly_voices: [ChannelVoice; 3], // independent MIDI state per R, G, B channel
-
-    // --- Brightness-driven note lengths ---
-    pub note_lengths: Vec<NoteLength>, // enabled lengths; empty = all quarter notes
-    pub note_length_reversed: bool,    // flip the brightness→length mapping direction
-    pub note_sustain: bool,            // true: notes hold their full length (the Note
-    // Off arrives with the next note); false:
-    // pizzicato — the Note Off is sent right
-    // after the Note On and the instrument's
-    // natural decay (release phase) shapes the tail
-    pub note_generation: u32, // bumped on each note articulation, so stale
-    // delayed Note Offs can cancel themselves
-
-    // --- MIDI note range filters ---
-    pub mono_note_range: [bool; 3], // bass, medium, treble enabled for the
-    // monophonic note (all off = full 0–127)
-    pub voice_note_ranges: [[bool; 3]; 3], // same, per R/G/B voice, polyphonic mode
-
-    // --- Scale quantization ---
-    pub scale: Scale,   // scale the derived notes are snapped to (Chromatic = none)
-    pub scale_root: u8, // scale tonic as a pitch class 0–11 (0 = C)
-
-    /// Cache of the pixel sequence, rebuilt on demand by the metronome
-    /// thread. Not serialized: it is derived state, never sent to the UI.
-    #[serde(skip)]
-    pub cached_sequence: Option<CachedSequence>,
+    /// Configuration, serialized with the session and the config file.
+    pub config: SynthConfig,
+    /// Volatile playback state: rebuilt while playing, never serialized.
+    pub playback: Playback,
 }
 
 impl Synth {
@@ -219,52 +164,10 @@ impl Synth {
             // number (template, session restore) set it right after
             display_number: id,
             name: None,
-            playing: false,
-            cursor: 0,
-            note: 69, // A4
-            channel: 0,
-            midi_port: 0,
             zones: Vec::new(),      // empty = nothing selected
             mute_zones: Vec::new(), // empty = no manually silenced pixel
-            loop_enabled: true,     // loop enabled by default
-            back_and_forth: false,
-            reading_direction: ReadingDirection::LeftToRight,
-            sorted_reading: false,
-            play_forward: true,
-            end_pending: false,
-            tempo_ratio: 1.0,
-            tempo_accumulator: 0.0,
-            brightness_min: 0,
-            brightness_max: 127,
-            active_note: true,
-            note_is_on: false,
-            velocity: 100,
-            velocity_min: 0,
-            velocity_max: 127,
-            velocity_relative: true,
-            volume: 127,
-
-            mode: SynthMode::Monophonic,
-            hue_shift: 0,
-            channel_enabled: [true, true, true],
-            poly_voices: [
-                ChannelVoice::new(),
-                ChannelVoice::new(),
-                ChannelVoice::new(),
-            ],
-
-            note_lengths: vec![NoteLength::Quarter],
-            note_length_reversed: false,
-            note_sustain: false,
-            note_generation: 0,
-
-            mono_note_range: [false, false, false],
-            voice_note_ranges: [[false, false, false]; 3],
-
-            scale: Scale::Chromatic,
-            scale_root: 0,
-
-            cached_sequence: None,
+            config: SynthConfig::default(),
+            playback: Playback::default(),
         }
     }
 
@@ -272,7 +175,157 @@ impl Synth {
     /// the sorted reading or the grid must have changed. The metronome
     /// rebuilds it on the next tick.
     pub fn invalidate_sequence(&mut self) {
-        self.cached_sequence = None;
+        self.playback.cached_sequence = None;
+    }
+}
+
+/// Per-synth configuration: every field saved in a session's synth entry
+/// and offered as the config file's default synth template. Serializable,
+/// and sanitized when applied (see [`SynthConfig::to_synth`]).
+#[derive(Clone, Serialize, Deserialize, Debug)]
+#[serde(default)]
+pub struct SynthConfig {
+    pub tempo_ratio: f64, // playback speed relative to the metronome (1.0 = metronome tempo)
+    pub channel: u8,      // MIDI channel 0-15
+    pub midi_port: usize, // MIDI output port index (see list_midi_ports)
+    pub mode: SynthMode,  // pixel-to-note translation mode
+    pub loop_enabled: bool, // loop playback or stop at end of range
+    pub back_and_forth: bool, // bounce back and forth (mutually exclusive with the loop)
+    pub reading_direction: ReadingDirection, // order in which the sequence is built
+    pub sorted_reading: bool, // read the pixels by absolute position, not zone by zone
+    pub brightness_min: u8, // minimum brightness threshold (0-127)
+    pub brightness_max: u8, // maximum brightness threshold (0-127)
+    pub velocity_min: u8, // floor of the velocity range (0-126)
+    pub velocity_max: u8, // ceiling of the velocity range (1-127)
+    pub velocity_relative: bool, // true: saturation rescaled onto [min, max]
+    pub volume: u8,       // channel volume as a raw MIDI value, sent as CC 7
+    pub hue_shift: u16,   // hue shift in degrees (0-360), monophonic mode
+    pub channel_enabled: [bool; 3], // R, G, B enabled/disabled, polyphonic mode
+    pub note_lengths: Vec<NoteLength>, // enabled lengths; empty = all quarter notes
+    pub note_length_reversed: bool, // flip the brightness->length mapping direction
+    pub note_sustain: bool, // true: notes hold their full length; false: pizzicato
+    pub mono_note_range: [bool; 3], // bass/medium/treble for the monophonic note
+    pub voice_note_ranges: [[bool; 3]; 3], // same, per R/G/B voice, polyphonic mode
+    pub scale: Scale,     // scale the derived notes are snapped to (Chromatic = none)
+    pub scale_root: u8,   // scale tonic as a pitch class 0-11 (0 = C)
+}
+
+impl Default for SynthConfig {
+    fn default() -> Self {
+        Self {
+            tempo_ratio: 1.0,
+            channel: 0,
+            midi_port: 0,
+            mode: SynthMode::Monophonic,
+            loop_enabled: true,
+            back_and_forth: false,
+            reading_direction: ReadingDirection::LeftToRight,
+            sorted_reading: false,
+            brightness_min: 0,
+            brightness_max: 127,
+            velocity_min: 0,
+            velocity_max: 127,
+            velocity_relative: true,
+            volume: 127,
+            hue_shift: 0,
+            channel_enabled: [true, true, true],
+            note_lengths: vec![NoteLength::Quarter],
+            note_length_reversed: false,
+            note_sustain: false,
+            mono_note_range: [false, false, false],
+            voice_note_ranges: [[false, false, false]; 3],
+            scale: Scale::Chromatic,
+            scale_root: 0,
+        }
+    }
+}
+
+impl SynthConfig {
+    /// Builds a synth with this configuration applied, sanitizing the
+    /// hand-editable values (config file / session) as the old template did.
+    pub fn to_synth(&self, id: u32) -> Synth {
+        let mut synth = Synth::new(id);
+        synth.config = self.clone();
+        synth.config.loop_enabled = self.loop_enabled && !self.back_and_forth;
+        synth.config.volume = self.volume.min(127);
+        if self.note_lengths.is_empty() {
+            synth.config.note_lengths = vec![NoteLength::Quarter];
+        }
+        synth.config.scale_root = self.scale_root.min(11);
+        synth
+    }
+
+    /// The configuration of an existing synth.
+    pub fn from_synth(synth: &Synth) -> Self {
+        synth.config.clone()
+    }
+}
+
+/// Volatile playback state of a synth: rebuilt while playing, derived from
+/// the configuration and the image, and never serialized.
+#[derive(Clone)]
+pub struct Playback {
+    pub playing: bool,                           // currently playing
+    pub cursor: usize,                           // index into the zone pixel sequence
+    pub note: u8,                                // current fixed MIDI note (monophonic)
+    pub play_forward: bool,                      // travel direction (flipped by back-and-forth)
+    pub end_pending: bool,                       // end of a non-looping sequence reached
+    pub tempo_accumulator: f64,                  // fractional-tick accumulator for tempo < 1.0
+    pub active_note: bool, // false if the current pixel is out of range (muted)
+    pub note_is_on: bool,  // true if a MIDI note is currently sounding
+    pub velocity: u8,      // current MIDI velocity (1-127)
+    pub poly_voices: [ChannelVoice; 3], // independent MIDI state per R/G/B channel
+    pub note_generation: u32, // bumped on each articulation (stale Note Off guard)
+    pub cached_sequence: Option<CachedSequence>, // derived pixel sequence cache
+}
+
+impl Default for Playback {
+    fn default() -> Self {
+        Self {
+            playing: false,
+            cursor: 0,
+            note: 69, // A4
+            play_forward: true,
+            end_pending: false,
+            tempo_accumulator: 0.0,
+            active_note: true,
+            note_is_on: false,
+            velocity: 100,
+            poly_voices: [
+                ChannelVoice::new(),
+                ChannelVoice::new(),
+                ChannelVoice::new(),
+            ],
+            note_generation: 0,
+            cached_sequence: None,
+        }
+    }
+}
+
+/// Serializable view of a synth for the UI: identity, selection and the
+/// configuration flattened — the same shape as a session's synth entry.
+/// `Synth` itself is internal state and is never sent as-is.
+#[derive(Serialize)]
+pub struct SynthView {
+    pub id: u32,
+    pub display_number: u32,
+    pub name: Option<String>,
+    pub zones: Vec<Zone>,
+    pub mute_zones: Vec<Zone>,
+    #[serde(flatten)]
+    pub config: SynthConfig,
+}
+
+impl From<&Synth> for SynthView {
+    fn from(synth: &Synth) -> Self {
+        Self {
+            id: synth.id,
+            display_number: synth.display_number,
+            name: synth.name.clone(),
+            zones: synth.zones.clone(),
+            mute_zones: synth.mute_zones.clone(),
+            config: synth.config.clone(),
+        }
     }
 }
 
@@ -334,28 +387,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cached_sequence_is_not_serialized() {
-        // Derived state: it must never leak into the `add_synth` payload.
+    fn synth_view_flattens_config_and_omits_playback() {
+        // The UI payload (SynthView) must keep the historical flat shape:
+        // config fields at the top level, no playback/derived state.
         let mut synth = Synth::new(1);
-        synth.cached_sequence = Some(CachedSequence {
+        synth.playback.cached_sequence = Some(CachedSequence {
             width: 2,
             height: 1,
             sequence: vec![0, 1],
         });
-        let json = serde_json::to_value(&synth).unwrap();
+        let json = serde_json::to_value(SynthView::from(&synth)).unwrap();
+        assert!(json.get("config").is_none()); // flattened, not nested
+        assert!(json.get("tempo_ratio").is_some());
+        assert!(json.get("playback").is_none());
         assert!(json.get("cached_sequence").is_none());
-        assert!(json.get("zones").is_some()); // the rest is still sent
+        assert!(json.get("zones").is_some());
     }
 
     #[test]
     fn invalidate_sequence_clears_the_cache() {
         let mut synth = Synth::new(1);
-        synth.cached_sequence = Some(CachedSequence {
+        synth.playback.cached_sequence = Some(CachedSequence {
             width: 2,
             height: 1,
             sequence: vec![],
         });
         synth.invalidate_sequence();
-        assert!(synth.cached_sequence.is_none());
+        assert!(synth.playback.cached_sequence.is_none());
     }
 }

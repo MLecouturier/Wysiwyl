@@ -3,7 +3,7 @@ use crate::error::{err, AppError};
 use crate::metronome::remapped_cursor;
 use crate::state::{
     ImageState, MidiState, NoteLength, ProgramState, ReadingDirection, Scale, Synth, SynthMode,
-    SynthState, Zone,
+    SynthState, SynthView, Zone,
 };
 use std::collections::{HashMap, HashSet};
 use tauri::State;
@@ -42,7 +42,7 @@ pub fn set_synth_name(id: u32, name: String, state: State<SynthState>) -> Result
 pub fn add_synth(
     config_state: State<ConfigState>,
     state: State<SynthState>,
-) -> Result<Synth, AppError> {
+) -> Result<SynthView, AppError> {
     let template = config_state.config.lock().unwrap().default_synth.clone();
 
     let mut next_id = state.next_id.lock().unwrap();
@@ -64,7 +64,7 @@ pub fn add_synth(
     synth.display_number = display_number;
     state.synths.lock().unwrap().insert(id, synth.clone());
 
-    Ok(synth)
+    Ok(SynthView::from(&synth))
 }
 
 #[tauri::command]
@@ -117,9 +117,9 @@ pub fn reset_synth_cursor(id: u32, state: State<SynthState>) -> Result<(), AppEr
     let mut synths = state.synths.lock().unwrap();
     match synths.get_mut(&id) {
         Some(synth) => {
-            synth.cursor = 0;
-            synth.end_pending = false;
-            synth.tempo_accumulator = 0.0;
+            synth.playback.cursor = 0;
+            synth.playback.end_pending = false;
+            synth.playback.tempo_accumulator = 0.0;
             Ok(())
         }
         None => Err(synth_not_found(id)),
@@ -135,13 +135,17 @@ pub fn start_synth(
     let mut synths = state.synths.lock().unwrap();
     match synths.get_mut(&id) {
         Some(synth) => {
-            synth.playing = true;
+            synth.playback.playing = true;
             // A fresh start always replays from the beginning of the sequence
             // (e.g. after manually stepping to the end while paused)
-            synth.end_pending = false;
+            synth.playback.end_pending = false;
             // Reassert the channel volume so the instrument matches the
             // synth's setting even if it was reconnected or reset meanwhile
-            midi_state.send_channel_volume(synth.midi_port, synth.channel, synth.volume);
+            midi_state.send_channel_volume(
+                synth.config.midi_port,
+                synth.config.channel,
+                synth.config.volume,
+            );
             Ok(())
         }
         None => Err(synth_not_found(id)),
@@ -157,20 +161,24 @@ pub fn stop_synth(
     let mut synths = state.synths.lock().unwrap();
     match synths.get_mut(&id) {
         Some(synth) => {
-            synth.playing = false;
-            synth.end_pending = false;
-            synth.tempo_accumulator = 0.0;
+            synth.playback.playing = false;
+            synth.playback.end_pending = false;
+            synth.playback.tempo_accumulator = 0.0;
 
             // Immediately turn off the current mono note, if it is still sounding
-            if synth.note_is_on {
-                midi_state.note_off(synth.midi_port, synth.channel, synth.note);
-                synth.note_is_on = false;
+            if synth.playback.note_is_on {
+                midi_state.note_off(
+                    synth.config.midi_port,
+                    synth.config.channel,
+                    synth.playback.note,
+                );
+                synth.playback.note_is_on = false;
             }
 
             // Turn off any currently sounding polyphonic voices
-            for voice in synth.poly_voices.iter_mut() {
+            for voice in synth.playback.poly_voices.iter_mut() {
                 if voice.note_is_on {
-                    midi_state.note_off(synth.midi_port, synth.channel, voice.note);
+                    midi_state.note_off(synth.config.midi_port, synth.config.channel, voice.note);
                     voice.note_is_on = false;
                 }
             }
@@ -187,18 +195,22 @@ pub fn stop_synth(
 pub fn panic_all(state: State<SynthState>, midi_state: State<MidiState>) {
     let mut synths = state.synths.lock().unwrap();
     for synth in synths.values_mut() {
-        synth.playing = false;
-        synth.end_pending = false;
-        synth.tempo_accumulator = 0.0;
-        synth.note_generation += 1;
+        synth.playback.playing = false;
+        synth.playback.end_pending = false;
+        synth.playback.tempo_accumulator = 0.0;
+        synth.playback.note_generation += 1;
 
-        if synth.note_is_on {
-            midi_state.note_off(synth.midi_port, synth.channel, synth.note);
-            synth.note_is_on = false;
+        if synth.playback.note_is_on {
+            midi_state.note_off(
+                synth.config.midi_port,
+                synth.config.channel,
+                synth.playback.note,
+            );
+            synth.playback.note_is_on = false;
         }
-        for voice in synth.poly_voices.iter_mut() {
+        for voice in synth.playback.poly_voices.iter_mut() {
             if voice.note_is_on {
-                midi_state.note_off(synth.midi_port, synth.channel, voice.note);
+                midi_state.note_off(synth.config.midi_port, synth.config.channel, voice.note);
                 voice.note_is_on = false;
             }
         }
@@ -212,7 +224,7 @@ pub fn is_synth_playing(id: u32, state: State<SynthState>) -> bool {
         .lock()
         .unwrap()
         .get(&id)
-        .map(|s| s.playing)
+        .map(|s| s.playback.playing)
         .unwrap_or(false)
 }
 
@@ -222,7 +234,7 @@ pub fn set_synth_channel(id: u32, channel: u8, state: State<SynthState>) -> Resu
     let mut synths = state.synths.lock().unwrap();
     match synths.get_mut(&id) {
         Some(synth) => {
-            synth.channel = clamped;
+            synth.config.channel = clamped;
             Ok(())
         }
         None => Err(synth_not_found(id)),
@@ -241,20 +253,28 @@ pub fn set_synth_midi_port(
     let mut synths = state.synths.lock().unwrap();
     match synths.get_mut(&id) {
         Some(synth) => {
-            if synth.midi_port != port {
+            if synth.config.midi_port != port {
                 // Turn off any sounding note on the old port first, to
                 // avoid a stuck note on the device it is connected to.
-                if synth.note_is_on {
-                    midi_state.note_off(synth.midi_port, synth.channel, synth.note);
-                    synth.note_is_on = false;
+                if synth.playback.note_is_on {
+                    midi_state.note_off(
+                        synth.config.midi_port,
+                        synth.config.channel,
+                        synth.playback.note,
+                    );
+                    synth.playback.note_is_on = false;
                 }
-                for voice in synth.poly_voices.iter_mut() {
+                for voice in synth.playback.poly_voices.iter_mut() {
                     if voice.note_is_on {
-                        midi_state.note_off(synth.midi_port, synth.channel, voice.note);
+                        midi_state.note_off(
+                            synth.config.midi_port,
+                            synth.config.channel,
+                            voice.note,
+                        );
                         voice.note_is_on = false;
                     }
                 }
-                synth.midi_port = port;
+                synth.config.midi_port = port;
             }
             Ok(())
         }
@@ -279,7 +299,7 @@ pub fn set_synth_program(
     let (port, channel) = {
         let synths = state.synths.lock().unwrap();
         let synth = synths.get(&id).ok_or_else(|| synth_not_found(id))?;
-        (synth.midi_port, synth.channel)
+        (synth.config.midi_port, synth.config.channel)
     };
     Ok(midi.send_program_change(port, channel, program, bank_msb, bank_lsb))
 }
@@ -299,8 +319,8 @@ pub fn set_synth_volume(
         let mut synths = state.synths.lock().unwrap();
         match synths.get_mut(&id) {
             Some(synth) => {
-                synth.volume = volume.min(127);
-                (synth.midi_port, synth.channel)
+                synth.config.volume = volume.min(127);
+                (synth.config.midi_port, synth.config.channel)
             }
             None => return Err(synth_not_found(id)),
         }
@@ -321,7 +341,7 @@ pub fn set_synth_velocity_relative(
     let mut synths = state.synths.lock().unwrap();
     match synths.get_mut(&id) {
         Some(synth) => {
-            synth.velocity_relative = enabled;
+            synth.config.velocity_relative = enabled;
             Ok(())
         }
         None => Err(synth_not_found(id)),
@@ -339,8 +359,8 @@ pub fn set_synth_velocity_range(
     match synths.get_mut(&id) {
         Some(synth) => {
             // Keep a usable range: min below 127, max between min and 127
-            synth.velocity_min = velocity_min.min(126);
-            synth.velocity_max = velocity_max.clamp(synth.velocity_min, 127);
+            synth.config.velocity_min = velocity_min.min(126);
+            synth.config.velocity_max = velocity_max.clamp(synth.config.velocity_min, 127);
             Ok(())
         }
         None => Err(synth_not_found(id)),
@@ -357,8 +377,8 @@ pub fn set_synth_brightness_range(
     let mut synths = state.synths.lock().unwrap();
     match synths.get_mut(&id) {
         Some(synth) => {
-            synth.brightness_min = brightness_min.min(127);
-            synth.brightness_max = brightness_max.min(127);
+            synth.config.brightness_min = brightness_min.min(127);
+            synth.config.brightness_max = brightness_max.min(127);
             Ok(())
         }
         None => Err(synth_not_found(id)),
@@ -370,7 +390,7 @@ pub fn set_synth_tempo(id: u32, tempo: f64, state: State<SynthState>) -> Result<
     let mut synths = state.synths.lock().unwrap();
     match synths.get_mut(&id) {
         Some(synth) => {
-            synth.tempo_ratio = tempo.clamp(0.05, 4.0);
+            synth.config.tempo_ratio = tempo.clamp(0.05, 4.0);
             Ok(())
         }
         None => Err(synth_not_found(id)),
@@ -386,11 +406,11 @@ pub fn set_synth_loop(
     let mut synths = state.synths.lock().unwrap();
     match synths.get_mut(&id) {
         Some(synth) => {
-            synth.loop_enabled = loop_enabled;
+            synth.config.loop_enabled = loop_enabled;
             // Loop and back-and-forth are mutually exclusive
             if loop_enabled {
-                synth.back_and_forth = false;
-                synth.end_pending = false;
+                synth.config.back_and_forth = false;
+                synth.playback.end_pending = false;
             }
             Ok(())
         }
@@ -410,10 +430,10 @@ pub fn set_synth_back_n_forth(
     let mut synths = state.synths.lock().unwrap();
     match synths.get_mut(&id) {
         Some(synth) => {
-            synth.back_and_forth = enabled;
+            synth.config.back_and_forth = enabled;
             if enabled {
-                synth.loop_enabled = false;
-                synth.end_pending = false;
+                synth.config.loop_enabled = false;
+                synth.playback.end_pending = false;
             }
             Ok(())
         }
@@ -442,21 +462,21 @@ pub fn set_synth_reading_direction(
                 synth,
                 &synth.zones,
                 &synth.zones,
-                synth.sorted_reading,
-                synth.sorted_reading,
-                synth.reading_direction,
+                synth.config.sorted_reading,
+                synth.config.sorted_reading,
+                synth.config.reading_direction,
                 direction,
                 img.width() as usize,
                 img.height() as usize,
             );
         }
 
-        synth.reading_direction = direction;
+        synth.config.reading_direction = direction;
         synth.invalidate_sequence();
-        synth.cursor = cursor;
+        synth.playback.cursor = cursor;
         // A stale end_pending from the old sequence would stop a playing
         // synth on its next tick
-        synth.end_pending = false;
+        synth.playback.end_pending = false;
     })
 }
 
@@ -470,22 +490,26 @@ pub fn set_synth_mode(
     let mut synths = state.synths.lock().unwrap();
     match synths.get_mut(&id) {
         Some(synth) => {
-            if synth.mode == mode {
+            if synth.config.mode == mode {
                 return Ok(());
             }
             // Turn off all currently sounding notes before switching modes,
             // to avoid stuck notes when toggling.
-            if synth.note_is_on {
-                midi_state.note_off(synth.midi_port, synth.channel, synth.note);
-                synth.note_is_on = false;
+            if synth.playback.note_is_on {
+                midi_state.note_off(
+                    synth.config.midi_port,
+                    synth.config.channel,
+                    synth.playback.note,
+                );
+                synth.playback.note_is_on = false;
             }
-            for voice in synth.poly_voices.iter_mut() {
+            for voice in synth.playback.poly_voices.iter_mut() {
                 if voice.note_is_on {
-                    midi_state.note_off(synth.midi_port, synth.channel, voice.note);
+                    midi_state.note_off(synth.config.midi_port, synth.config.channel, voice.note);
                     voice.note_is_on = false;
                 }
             }
-            synth.mode = mode;
+            synth.config.mode = mode;
             Ok(())
         }
         None => Err(synth_not_found(id)),
@@ -501,7 +525,7 @@ pub fn set_synth_note_lengths(
     let mut synths = state.synths.lock().unwrap();
     match synths.get_mut(&id) {
         Some(synth) => {
-            synth.note_lengths = lengths;
+            synth.config.note_lengths = lengths;
             Ok(())
         }
         None => Err(synth_not_found(id)),
@@ -517,7 +541,7 @@ pub fn set_synth_note_length_reversed(
     let mut synths = state.synths.lock().unwrap();
     match synths.get_mut(&id) {
         Some(synth) => {
-            synth.note_length_reversed = reversed;
+            synth.config.note_length_reversed = reversed;
             Ok(())
         }
         None => Err(synth_not_found(id)),
@@ -540,19 +564,27 @@ pub fn set_synth_note_sustain(
     let mut synths = state.synths.lock().unwrap();
     match synths.get_mut(&id) {
         Some(synth) => {
-            if synth.note_sustain && !sustain {
-                if synth.note_is_on {
-                    midi_state.note_off(synth.midi_port, synth.channel, synth.note);
-                    synth.note_is_on = false;
+            if synth.config.note_sustain && !sustain {
+                if synth.playback.note_is_on {
+                    midi_state.note_off(
+                        synth.config.midi_port,
+                        synth.config.channel,
+                        synth.playback.note,
+                    );
+                    synth.playback.note_is_on = false;
                 }
-                for voice in synth.poly_voices.iter_mut() {
+                for voice in synth.playback.poly_voices.iter_mut() {
                     if voice.note_is_on {
-                        midi_state.note_off(synth.midi_port, synth.channel, voice.note);
+                        midi_state.note_off(
+                            synth.config.midi_port,
+                            synth.config.channel,
+                            voice.note,
+                        );
                         voice.note_is_on = false;
                     }
                 }
             }
-            synth.note_sustain = sustain;
+            synth.config.note_sustain = sustain;
             Ok(())
         }
         None => Err(synth_not_found(id)),
@@ -572,8 +604,8 @@ pub fn set_synth_note_ranges(
     let mut synths = state.synths.lock().unwrap();
     match synths.get_mut(&id) {
         Some(synth) => {
-            synth.mono_note_range = mono;
-            synth.voice_note_ranges = voices;
+            synth.config.mono_note_range = mono;
+            synth.config.voice_note_ranges = voices;
             Ok(())
         }
         None => Err(synth_not_found(id)),
@@ -593,8 +625,8 @@ pub fn set_synth_scale(
     let mut synths = state.synths.lock().unwrap();
     match synths.get_mut(&id) {
         Some(synth) => {
-            synth.scale = scale;
-            synth.scale_root = root.min(11);
+            synth.config.scale = scale;
+            synth.config.scale_root = root.min(11);
             Ok(())
         }
         None => Err(synth_not_found(id)),
@@ -610,7 +642,7 @@ pub fn set_synth_hue_shift(
     let mut synths = state.synths.lock().unwrap();
     match synths.get_mut(&id) {
         Some(synth) => {
-            synth.hue_shift = hue_shift.min(360);
+            synth.config.hue_shift = hue_shift.min(360);
             Ok(())
         }
         None => Err(synth_not_found(id)),
@@ -631,12 +663,12 @@ pub fn set_synth_channel_enabled(
     let mut synths = state.synths.lock().unwrap();
     match synths.get_mut(&id) {
         Some(synth) => {
-            synth.channel_enabled[channel_index] = enabled;
+            synth.config.channel_enabled[channel_index] = enabled;
             // If disabling a channel whose voice is still sounding, turn it off immediately.
             if !enabled {
-                let voice = &mut synth.poly_voices[channel_index];
+                let voice = &mut synth.playback.poly_voices[channel_index];
                 if voice.note_is_on {
-                    midi_state.note_off(synth.midi_port, synth.channel, voice.note);
+                    midi_state.note_off(synth.config.midi_port, synth.config.channel, voice.note);
                     voice.note_is_on = false;
                 }
             }
@@ -668,10 +700,10 @@ pub fn set_synth_zones(
                 synth,
                 &synth.zones,
                 &zones,
-                synth.sorted_reading,
-                synth.sorted_reading,
-                synth.reading_direction,
-                synth.reading_direction,
+                synth.config.sorted_reading,
+                synth.config.sorted_reading,
+                synth.config.reading_direction,
+                synth.config.reading_direction,
                 img.width() as usize,
                 img.height() as usize,
             );
@@ -679,10 +711,10 @@ pub fn set_synth_zones(
 
         synth.zones = zones;
         synth.invalidate_sequence();
-        synth.cursor = cursor;
+        synth.playback.cursor = cursor;
         // A stale end_pending from the old sequence would stop a playing
         // synth on its next tick
-        synth.end_pending = false;
+        synth.playback.end_pending = false;
     })
 }
 
@@ -728,19 +760,19 @@ pub fn set_synth_sorted_reading(
                 synth,
                 &synth.zones,
                 &synth.zones,
-                synth.sorted_reading,
+                synth.config.sorted_reading,
                 enabled,
-                synth.reading_direction,
-                synth.reading_direction,
+                synth.config.reading_direction,
+                synth.config.reading_direction,
                 img.width() as usize,
                 img.height() as usize,
             );
         }
 
-        synth.sorted_reading = enabled;
+        synth.config.sorted_reading = enabled;
         synth.invalidate_sequence();
-        synth.cursor = cursor;
-        synth.end_pending = false;
+        synth.playback.cursor = cursor;
+        synth.playback.end_pending = false;
     })
 }
 
@@ -759,7 +791,7 @@ mod tests {
         // are renumbered 1..N following the display order
         let mut synths = state_with_ids(&[1, 3, 4]);
         for (&id, synth) in synths.iter_mut() {
-            synth.channel = id as u8; // mark each synth to track the moves
+            synth.config.channel = id as u8; // mark each synth to track the moves
         }
         let mut next_id = 5;
 
@@ -770,9 +802,9 @@ mod tests {
         ids.sort(); // HashMap iteration order is arbitrary
         assert_eq!(ids, vec![1, 2, 3]);
         // The synths themselves moved with their state
-        assert_eq!(synths.get(&1).unwrap().channel, 3);
-        assert_eq!(synths.get(&2).unwrap().channel, 1);
-        assert_eq!(synths.get(&3).unwrap().channel, 4);
+        assert_eq!(synths.get(&1).unwrap().config.channel, 3);
+        assert_eq!(synths.get(&2).unwrap().config.channel, 1);
+        assert_eq!(synths.get(&3).unwrap().config.channel, 4);
         // The id field follows the renumbering
         assert_eq!(synths.get(&2).unwrap().id, 2);
         // The next created synth continues right after the stack

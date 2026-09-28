@@ -5,9 +5,9 @@ use std::fs;
 use std::io::Cursor;
 use tauri::{AppHandle, State};
 
-use crate::config::SynthTemplate;
 use crate::error::{err, AppError};
 use crate::image_processing::encode_to_base64_png;
+use crate::state::SynthConfig;
 use crate::state::{ImageState, MidiState, ProgramState, SynthState, Zone};
 
 /// Frontend-owned state passed on save: metronome tempo, image processing
@@ -116,7 +116,7 @@ pub struct SessionImageSettings {
 
 /// A synthesizer as stored in a session file: its identity, display color,
 /// pixel zones as exact connected components (empty = nothing selected),
-/// settings (flattened SynthTemplate), and the channel's program at save
+/// settings (flattened SynthConfig), and the channel's program at save
 /// time so loading the session can reconfigure the instruments to the
 /// same sounds.
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -137,7 +137,7 @@ pub struct SessionSynth {
     #[serde(default)]
     pub program: Option<ProgramState>,
     #[serde(flatten)]
-    pub settings: SynthTemplate,
+    pub settings: SynthConfig,
 }
 
 /// A self-contained work session: the original image (base64 PNG) plus
@@ -241,10 +241,10 @@ pub async fn save_session(
                 // Snapshot of the channel state, so the session restores the
                 // same sounds even if the synths changed channels since
                 program: known_programs
-                    .get(&(synth.midi_port, synth.channel))
+                    .get(&(synth.config.midi_port, synth.config.channel))
                     .copied()
                     .filter(|p| p.is_known()),
-                settings: SynthTemplate::from_synth(synth),
+                settings: SynthConfig::from_synth(synth),
             })
         })
         .collect();
@@ -340,13 +340,17 @@ pub async fn load_session(
         let mut synths = synth_state.synths.lock().unwrap();
         // Turn off any sounding note before dropping the old synths
         for synth in synths.values_mut() {
-            if synth.note_is_on {
-                midi_state.note_off(synth.midi_port, synth.channel, synth.note);
-                synth.note_is_on = false;
+            if synth.playback.note_is_on {
+                midi_state.note_off(
+                    synth.config.midi_port,
+                    synth.config.channel,
+                    synth.playback.note,
+                );
+                synth.playback.note_is_on = false;
             }
-            for voice in synth.poly_voices.iter_mut() {
+            for voice in synth.playback.poly_voices.iter_mut() {
                 if voice.note_is_on {
-                    midi_state.note_off(synth.midi_port, synth.channel, voice.note);
+                    midi_state.note_off(synth.config.midi_port, synth.config.channel, voice.note);
                     voice.note_is_on = false;
                 }
             }
@@ -390,7 +394,7 @@ pub async fn load_session(
                 let Some(synth) = synths.get(&entry.id) else {
                     continue;
                 };
-                (synth.midi_port, synth.channel)
+                (synth.config.midi_port, synth.config.channel)
             };
             to_send.insert((port, channel), program);
         }
@@ -554,34 +558,34 @@ mod tests {
     #[test]
     fn session_synth_round_trip() {
         // A synth with every parameter away from its default
-        let mut synth = SynthTemplate::default().to_synth(7);
-        synth.tempo_ratio = 0.5;
-        synth.channel = 9;
-        synth.midi_port = 2;
-        synth.mode = SynthMode::Polyphonic;
-        synth.loop_enabled = false;
-        synth.back_and_forth = true;
-        synth.reading_direction = ReadingDirection::BottomToTop;
-        synth.sorted_reading = true;
-        synth.brightness_min = 12;
-        synth.brightness_max = 100;
-        synth.velocity_min = 40;
-        synth.velocity_max = 110;
-        synth.velocity_relative = false;
-        synth.volume = 55;
-        synth.hue_shift = 180;
-        synth.channel_enabled = [true, false, true];
-        synth.note_lengths = vec![NoteLength::Whole, NoteLength::Eighth];
-        synth.note_length_reversed = true;
-        synth.note_sustain = false;
-        synth.mono_note_range = [true, false, true];
-        synth.voice_note_ranges = [
+        let mut synth = SynthConfig::default().to_synth(7);
+        synth.config.tempo_ratio = 0.5;
+        synth.config.channel = 9;
+        synth.config.midi_port = 2;
+        synth.config.mode = SynthMode::Polyphonic;
+        synth.config.loop_enabled = false;
+        synth.config.back_and_forth = true;
+        synth.config.reading_direction = ReadingDirection::BottomToTop;
+        synth.config.sorted_reading = true;
+        synth.config.brightness_min = 12;
+        synth.config.brightness_max = 100;
+        synth.config.velocity_min = 40;
+        synth.config.velocity_max = 110;
+        synth.config.velocity_relative = false;
+        synth.config.volume = 55;
+        synth.config.hue_shift = 180;
+        synth.config.channel_enabled = [true, false, true];
+        synth.config.note_lengths = vec![NoteLength::Whole, NoteLength::Eighth];
+        synth.config.note_length_reversed = true;
+        synth.config.note_sustain = false;
+        synth.config.mono_note_range = [true, false, true];
+        synth.config.voice_note_ranges = [
             [true, false, false],
             [false, true, false],
             [false, false, true],
         ];
-        synth.scale = Scale::Blues;
-        synth.scale_root = 9;
+        synth.config.scale = Scale::Blues;
+        synth.config.scale_root = 9;
 
         let original = SessionSynth {
             id: 7,
@@ -595,7 +599,7 @@ mod tests {
                 bank_lsb: Some(32),
                 program: Some(41),
             }),
-            settings: SynthTemplate::from_synth(&synth),
+            settings: SynthConfig::from_synth(&synth),
         };
 
         // Serialize to the session-file format, then back
@@ -611,28 +615,31 @@ mod tests {
         assert_eq!(restored.mute_zones, original.mute_zones);
         assert_eq!(restored.program, original.program);
         let s = restored.settings.to_synth(7);
-        assert_eq!(s.tempo_ratio, synth.tempo_ratio);
-        assert_eq!(s.channel, synth.channel);
-        assert_eq!(s.midi_port, synth.midi_port);
-        assert_eq!(s.mode, synth.mode);
-        assert_eq!(s.loop_enabled, synth.loop_enabled);
-        assert_eq!(s.back_and_forth, synth.back_and_forth);
-        assert_eq!(s.reading_direction, synth.reading_direction);
-        assert_eq!(s.sorted_reading, synth.sorted_reading);
-        assert_eq!(s.brightness_min, synth.brightness_min);
-        assert_eq!(s.brightness_max, synth.brightness_max);
-        assert_eq!(s.velocity_min, synth.velocity_min);
-        assert_eq!(s.velocity_max, synth.velocity_max);
-        assert_eq!(s.velocity_relative, synth.velocity_relative);
-        assert_eq!(s.volume, synth.volume);
-        assert_eq!(s.hue_shift, synth.hue_shift);
-        assert_eq!(s.channel_enabled, synth.channel_enabled);
-        assert_eq!(s.note_lengths, synth.note_lengths);
-        assert_eq!(s.note_length_reversed, synth.note_length_reversed);
-        assert_eq!(s.note_sustain, synth.note_sustain);
-        assert_eq!(s.mono_note_range, synth.mono_note_range);
-        assert_eq!(s.voice_note_ranges, synth.voice_note_ranges);
-        assert_eq!(s.scale, synth.scale);
-        assert_eq!(s.scale_root, synth.scale_root);
+        assert_eq!(s.config.tempo_ratio, synth.config.tempo_ratio);
+        assert_eq!(s.config.channel, synth.config.channel);
+        assert_eq!(s.config.midi_port, synth.config.midi_port);
+        assert_eq!(s.config.mode, synth.config.mode);
+        assert_eq!(s.config.loop_enabled, synth.config.loop_enabled);
+        assert_eq!(s.config.back_and_forth, synth.config.back_and_forth);
+        assert_eq!(s.config.reading_direction, synth.config.reading_direction);
+        assert_eq!(s.config.sorted_reading, synth.config.sorted_reading);
+        assert_eq!(s.config.brightness_min, synth.config.brightness_min);
+        assert_eq!(s.config.brightness_max, synth.config.brightness_max);
+        assert_eq!(s.config.velocity_min, synth.config.velocity_min);
+        assert_eq!(s.config.velocity_max, synth.config.velocity_max);
+        assert_eq!(s.config.velocity_relative, synth.config.velocity_relative);
+        assert_eq!(s.config.volume, synth.config.volume);
+        assert_eq!(s.config.hue_shift, synth.config.hue_shift);
+        assert_eq!(s.config.channel_enabled, synth.config.channel_enabled);
+        assert_eq!(s.config.note_lengths, synth.config.note_lengths);
+        assert_eq!(
+            s.config.note_length_reversed,
+            synth.config.note_length_reversed
+        );
+        assert_eq!(s.config.note_sustain, synth.config.note_sustain);
+        assert_eq!(s.config.mono_note_range, synth.config.mono_note_range);
+        assert_eq!(s.config.voice_note_ranges, synth.config.voice_note_ranges);
+        assert_eq!(s.config.scale, synth.config.scale);
+        assert_eq!(s.config.scale_root, synth.config.scale_root);
     }
 }

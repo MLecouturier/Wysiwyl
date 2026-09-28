@@ -176,7 +176,7 @@ fn saturation_to_velocity(
 /// distinct note of a fixed duration, disabling the legato sustain).
 /// `manual_mute` silences the pixel by hand (rest): no note is sounded,
 /// exactly like a pixel outside the brightness window.
-#[allow(clippy::too_many_arguments)] // folded into a context struct by the Phase 2 refactor
+#[allow(clippy::too_many_arguments)] // flat by design: the pixel context is threaded explicitly
 fn process_monophonic(
     synth: &mut Synth,
     midi: &MidiState,
@@ -191,7 +191,7 @@ fn process_monophonic(
     manual_mute: bool,
 ) {
     let hue = pixel_hue(r, g, b);
-    let shifted_hue = (hue + synth.hue_shift as f32) % 360.0;
+    let shifted_hue = (hue + synth.config.hue_shift as f32) % 360.0;
     let raw_note = hue_to_midi_note(shifted_hue);
     // Rescale the hue proportionally across the enabled MIDI range filters,
     // then quantize to the synth's scale: the pitch rises gradually from
@@ -201,32 +201,41 @@ fn process_monophonic(
         synth,
         shifted_hue / 360.0,
         note_range_bounds,
-        &synth.mono_note_range,
+        &synth.config.mono_note_range,
     );
 
     let in_range = !manual_mute
-        && brightness_level >= synth.brightness_min
-        && brightness_level <= synth.brightness_max;
+        && brightness_level >= synth.config.brightness_min
+        && brightness_level <= synth.config.brightness_max;
 
     // We only (re)trigger MIDI if the note actually changes or if its
     // audible status (muted / not muted) changes. Otherwise we let the
     // current note keep sounding without interruption (legato).
-    let note_changed = effective_note != synth.note || retrigger;
-    let needs_off = synth.note_is_on && (note_changed || !in_range);
-    let needs_on = in_range && (!synth.note_is_on || note_changed);
+    let note_changed = effective_note != synth.playback.note || retrigger;
+    let needs_off = synth.playback.note_is_on && (note_changed || !in_range);
+    let needs_on = in_range && (!synth.playback.note_is_on || note_changed);
 
     if needs_off {
-        midi.note_off(synth.midi_port, synth.channel, synth.note);
-        synth.note_is_on = false;
+        midi.note_off(
+            synth.config.midi_port,
+            synth.config.channel,
+            synth.playback.note,
+        );
+        synth.playback.note_is_on = false;
     }
 
-    synth.note = effective_note;
-    synth.active_note = in_range;
+    synth.playback.note = effective_note;
+    synth.playback.active_note = in_range;
 
     if needs_on {
-        midi.note_on(synth.midi_port, synth.channel, effective_note, velocity);
-        synth.note_is_on = true;
-        synth.note_generation = synth.note_generation.wrapping_add(1);
+        midi.note_on(
+            synth.config.midi_port,
+            synth.config.channel,
+            effective_note,
+            velocity,
+        );
+        synth.playback.note_is_on = true;
+        synth.playback.note_generation = synth.playback.note_generation.wrapping_add(1);
     }
 
     payload.note = Some(effective_note);
@@ -241,7 +250,7 @@ fn process_monophonic(
 /// note lengths are enabled, see process_monophonic). `manual_mute` silences
 /// the pixel by hand (rest): no voice is sounded, exactly like a pixel
 /// outside the brightness window.
-#[allow(clippy::too_many_arguments)] // folded into a context struct by the Phase 2 refactor
+#[allow(clippy::too_many_arguments)] // flat by design: the pixel context is threaded explicitly
 fn process_polyphonic(
     synth: &mut Synth,
     midi: &MidiState,
@@ -256,15 +265,15 @@ fn process_polyphonic(
     manual_mute: bool,
 ) {
     let channel_values = [r, g, b];
-    let channel_midi = synth.channel;
+    let channel_midi = synth.config.channel;
     let global_in_range = !manual_mute
-        && brightness_level >= synth.brightness_min
-        && brightness_level <= synth.brightness_max;
+        && brightness_level >= synth.config.brightness_min
+        && brightness_level <= synth.config.brightness_max;
 
     let mut voices_payload = Vec::with_capacity(3);
 
     for (i, &value) in channel_values.iter().enumerate() {
-        let enabled = synth.channel_enabled[i];
+        let enabled = synth.config.channel_enabled[i];
         let raw_note = channel_to_midi_note(value);
         // Rescale the channel value proportionally across this voice's
         // enabled range filters, then quantize to the synth's scale: the
@@ -275,9 +284,9 @@ fn process_polyphonic(
             synth,
             value as f32 / 255.0,
             note_range_bounds,
-            &synth.voice_note_ranges[i],
+            &synth.config.voice_note_ranges[i],
         );
-        let voice = &mut synth.poly_voices[i];
+        let voice = &mut synth.playback.poly_voices[i];
 
         let in_range = enabled && global_in_range;
 
@@ -286,16 +295,21 @@ fn process_polyphonic(
         let needs_on = in_range && (!voice.note_is_on || note_changed);
 
         if needs_off {
-            midi.note_off(synth.midi_port, channel_midi, voice.note);
+            midi.note_off(synth.config.midi_port, channel_midi, voice.note);
             voice.note_is_on = false;
         }
 
         voice.note = effective_note;
 
         if needs_on {
-            midi.note_on(synth.midi_port, channel_midi, effective_note, velocity);
+            midi.note_on(
+                synth.config.midi_port,
+                channel_midi,
+                effective_note,
+                velocity,
+            );
             voice.note_is_on = true;
-            synth.note_generation = synth.note_generation.wrapping_add(1);
+            synth.playback.note_generation = synth.playback.note_generation.wrapping_add(1);
         }
 
         voices_payload.push(VoiceTick {
@@ -307,11 +321,12 @@ fn process_polyphonic(
     }
 
     // global active_note: true if at least one voice is sounding (useful for the highlight/UI)
-    synth.active_note = synth
+    synth.playback.active_note = synth
+        .playback
         .poly_voices
         .iter()
         .enumerate()
-        .any(|(i, v)| v.note_is_on && synth.channel_enabled[i]);
+        .any(|(i, v)| v.note_is_on && synth.config.channel_enabled[i]);
 
     payload.voices = Some(voices_payload);
     payload.muted = !global_in_range;
@@ -591,7 +606,7 @@ pub(crate) fn build_pixel_sequence(
 /// the old reading order (in its travel direction, wrapping around), and
 /// only restarts at the beginning when nothing of the old sequence
 /// survives (or when either sequence is empty).
-#[allow(clippy::too_many_arguments)] // folded into a context struct by the Phase 2 refactor
+#[allow(clippy::too_many_arguments)] // flat by design: the pixel context is threaded explicitly
 pub(crate) fn remapped_cursor(
     synth: &Synth,
     old_zones: &[Zone],
@@ -616,7 +631,7 @@ pub(crate) fn remapped_cursor(
     let index_of: HashMap<usize, usize> =
         new_seq.iter().enumerate().map(|(i, &p)| (p, i)).collect();
     let len = old_seq.len();
-    let pos = synth.cursor % len;
+    let pos = synth.playback.cursor % len;
     // Same pixel still selected: the playhead stays exactly where it is
     if let Some(&idx) = index_of.get(&old_seq[pos]) {
         return idx;
@@ -625,7 +640,11 @@ pub(crate) fn remapped_cursor(
     // travel direction (a back-and-forth synth may be travelling
     // backwards) and land on the first still-selected pixel, wrapping
     // around like the looping playhead
-    let step = if synth.play_forward { 1 } else { len - 1 };
+    let step = if synth.playback.play_forward {
+        1
+    } else {
+        len - 1
+    };
     let mut i = (pos + step) % len;
     for _ in 0..len - 1 {
         if let Some(&idx) = index_of.get(&old_seq[i]) {
@@ -667,6 +686,7 @@ fn step_synth_once(
     // dominated large selections. Zone/direction/sorted edits invalidate
     // the cache explicitly (Synth::invalidate_sequence).
     if synth
+        .playback
         .cached_sequence
         .as_ref()
         .is_none_or(|c| c.width != width || c.height != height)
@@ -675,16 +695,21 @@ fn step_synth_once(
             &synth.zones,
             width,
             height,
-            synth.reading_direction,
-            synth.sorted_reading,
+            synth.config.reading_direction,
+            synth.config.sorted_reading,
         );
-        synth.cached_sequence = Some(CachedSequence {
+        synth.playback.cached_sequence = Some(CachedSequence {
             width,
             height,
             sequence,
         });
     }
-    let sequence = &synth.cached_sequence.as_ref().expect("just built").sequence;
+    let sequence = &synth
+        .playback
+        .cached_sequence
+        .as_ref()
+        .expect("just built")
+        .sequence;
     let seq_len = sequence.len();
 
     // Deferred end of a non-looping sequence: end_pending means the last
@@ -693,20 +718,24 @@ fn step_synth_once(
     // were emptied (or fully clipped away) mid-playback stops the same
     // way: without this the tick would silently stall, leaving the
     // sounding note on forever and the UI in its playing state.
-    if seq_len == 0 || (synth.end_pending && !synth.loop_enabled) {
-        if synth.playing {
-            synth.playing = false;
-            synth.cursor = 0;
-            synth.tempo_accumulator = 0.0;
+    if seq_len == 0 || (synth.playback.end_pending && !synth.config.loop_enabled) {
+        if synth.playback.playing {
+            synth.playback.playing = false;
+            synth.playback.cursor = 0;
+            synth.playback.tempo_accumulator = 0.0;
             // Turn off the current mono note if it is still sounding
-            if synth.note_is_on {
-                midi.note_off(synth.midi_port, synth.channel, synth.note);
-                synth.note_is_on = false;
+            if synth.playback.note_is_on {
+                midi.note_off(
+                    synth.config.midi_port,
+                    synth.config.channel,
+                    synth.playback.note,
+                );
+                synth.playback.note_is_on = false;
             }
             // Turn off any currently sounding polyphonic voices
-            for voice in synth.poly_voices.iter_mut() {
+            for voice in synth.playback.poly_voices.iter_mut() {
                 if voice.note_is_on {
-                    midi.note_off(synth.midi_port, synth.channel, voice.note);
+                    midi.note_off(synth.config.midi_port, synth.config.channel, voice.note);
                     voice.note_is_on = false;
                 }
             }
@@ -715,7 +744,7 @@ fn step_synth_once(
         return None;
     }
 
-    let pos = synth.cursor % seq_len;
+    let pos = synth.playback.cursor % seq_len;
 
     // Read the pixel at the current playhead position (the payload reports
     // the absolute pixel index, not the sequence index)
@@ -733,18 +762,18 @@ fn step_synth_once(
     let saturation = pixel_saturation(r, g, b);
     let velocity = saturation_to_velocity(
         saturation,
-        synth.velocity_min,
-        synth.velocity_max,
-        synth.velocity_relative,
+        synth.config.velocity_min,
+        synth.config.velocity_max,
+        synth.config.velocity_relative,
     );
-    synth.velocity = velocity;
+    synth.playback.velocity = velocity;
 
     // Note lengths: when enabled, the pixel's brightness picks a duration
     // among the enabled lengths and each pixel is played as a distinct
     // note of that fixed duration (no legato). Empty list = all quarter
     // notes, i.e. the historical legato behavior. The duration applies
     // even to muted pixels, so the rhythm structure stays consistent.
-    let note_length = if synth.note_lengths.is_empty() {
+    let note_length = if synth.config.note_lengths.is_empty() {
         None
     } else {
         Some(pick_note_length(synth, brightness_level))
@@ -774,7 +803,7 @@ fn step_synth_once(
         a,
         brightness_level,
         velocity,
-        mode: synth.mode,
+        mode: synth.config.mode,
         note: None,
         raw_note: None,
         hue: None,
@@ -782,7 +811,7 @@ fn step_synth_once(
         muted: false,
     };
 
-    match synth.mode {
+    match synth.config.mode {
         SynthMode::Monophonic => {
             process_monophonic(
                 synth,
@@ -824,14 +853,18 @@ fn step_synth_once(
     // also makes every following pixel re-articulate, so a run of
     // identical pixels becomes a series of plucks rather than one
     // held note.
-    if !synth.note_sustain {
-        if synth.note_is_on {
-            midi.note_off(synth.midi_port, synth.channel, synth.note);
-            synth.note_is_on = false;
+    if !synth.config.note_sustain {
+        if synth.playback.note_is_on {
+            midi.note_off(
+                synth.config.midi_port,
+                synth.config.channel,
+                synth.playback.note,
+            );
+            synth.playback.note_is_on = false;
         }
-        for voice in synth.poly_voices.iter_mut() {
+        for voice in synth.playback.poly_voices.iter_mut() {
             if voice.note_is_on {
-                midi.note_off(synth.midi_port, synth.channel, voice.note);
+                midi.note_off(synth.config.midi_port, synth.config.channel, voice.note);
                 voice.note_is_on = false;
             }
         }
@@ -844,18 +877,18 @@ fn step_synth_once(
     // loop wraps around (in the travel direction), and a one-shot sequence
     // raises end_pending so the next tick stops the synth after the final
     // note has rung for a full step.
-    let mut forward = synth.play_forward;
+    let mut forward = synth.playback.play_forward;
     let at_end = forward && pos + 1 >= seq_len;
     let at_start = !forward && pos == 0;
 
     let next = if at_end || at_start {
-        if synth.loop_enabled {
+        if synth.config.loop_enabled {
             if at_end {
                 0
             } else {
                 seq_len - 1
             }
-        } else if synth.back_and_forth {
+        } else if synth.config.back_and_forth {
             forward = !forward;
             if at_end {
                 if seq_len > 1 {
@@ -879,9 +912,10 @@ fn step_synth_once(
         pos - 1
     };
 
-    synth.play_forward = forward;
-    synth.cursor = next;
-    synth.end_pending = (at_end || at_start) && !synth.loop_enabled && !synth.back_and_forth;
+    synth.playback.play_forward = forward;
+    synth.playback.cursor = next;
+    synth.playback.end_pending =
+        (at_end || at_start) && !synth.config.loop_enabled && !synth.config.back_and_forth;
 
     note_length
 }
@@ -904,11 +938,12 @@ fn length_beats(length: NoteLength) -> f64 {
 /// flips the direction.
 fn pick_note_length(synth: &Synth, brightness_level: u8) -> f64 {
     let mut lengths: Vec<f64> = synth
+        .config
         .note_lengths
         .iter()
         .map(|&l| length_beats(l))
         .collect();
-    if synth.note_length_reversed {
+    if synth.config.note_length_reversed {
         lengths.sort_by(|a, b| b.partial_cmp(a).unwrap());
     } else {
         lengths.sort_by(|a, b| a.partial_cmp(b).unwrap());
@@ -1004,7 +1039,7 @@ fn scale_intervals(scale: Scale) -> &'static [u8] {
 /// The result is sorted ascending; it can be empty when the ranges are
 /// too narrow to contain any degree of the scale.
 fn allowed_pitches(synth: &Synth, bounds: &[(u8, u8); 3], toggles: &[bool; 3]) -> Vec<u8> {
-    let intervals = scale_intervals(synth.scale);
+    let intervals = scale_intervals(synth.config.scale);
     let ranges = merged_note_ranges(bounds, toggles);
     let ranges = if ranges.is_empty() {
         vec![(0u8, 127u8)]
@@ -1014,7 +1049,7 @@ fn allowed_pitches(synth: &Synth, bounds: &[(u8, u8); 3], toggles: &[bool; 3]) -
     let mut out = Vec::new();
     for &(lo, hi) in &ranges {
         for note in lo..=hi {
-            let rel = (note as i16 - synth.scale_root as i16).rem_euclid(12) as u8;
+            let rel = (note as i16 - synth.config.scale_root as i16).rem_euclid(12) as u8;
             if intervals.contains(&rel) {
                 out.push(note);
             }
@@ -1065,7 +1100,7 @@ fn effective_note_for(
     toggles: &[bool; 3],
 ) -> u8 {
     let note = rescale_into_range(normalized, bounds, toggles);
-    if synth.scale == Scale::Chromatic {
+    if synth.config.scale == Scale::Chromatic {
         note
     } else {
         snap_to_allowed(note, &allowed_pitches(synth, bounds, toggles))
@@ -1390,7 +1425,7 @@ pub fn start_metronome(app: AppHandle, state: tauri::State<MetronomeState>) {
                 let mut synths = synth_state.synths.lock().unwrap();
 
                 for synth in synths.values_mut() {
-                    if !synth.playing {
+                    if !synth.playback.playing {
                         continue;
                     }
 
@@ -1398,11 +1433,11 @@ pub fn start_metronome(app: AppHandle, state: tauri::State<MetronomeState>) {
                     // quarter of the synth's tempo ratio to its accumulator;
                     // the synth advances when at least one full step has
                     // accumulated (e.g. ratio 0.5 = one pixel every two beats).
-                    synth.tempo_accumulator += synth.tempo_ratio * 0.25;
-                    if synth.tempo_accumulator < 1.0 {
+                    synth.playback.tempo_accumulator += synth.config.tempo_ratio * 0.25;
+                    if synth.playback.tempo_accumulator < 1.0 {
                         continue;
                     }
-                    synth.tempo_accumulator -= 1.0;
+                    synth.playback.tempo_accumulator -= 1.0;
 
                     let played_length = step_synth_once(&app, synth, image, &midi_state);
                     if let Some(length_beats) = played_length {
@@ -1411,7 +1446,7 @@ pub fn start_metronome(app: AppHandle, state: tauri::State<MetronomeState>) {
                         // so the next pixel is due after `length_beats` beats
                         // of the synth's own tempo (i.e. length_beats / ratio
                         // metronome beats).
-                        synth.tempo_accumulator = 1.0 - length_beats;
+                        synth.playback.tempo_accumulator = 1.0 - length_beats;
                     }
                 }
             }
@@ -1602,7 +1637,7 @@ pub fn step_synth(
             None => return Err(err("synth_not_found").with_param("id", id)),
         };
 
-        if synth.playing {
+        if synth.playback.playing {
             return Err(err("synth_is_playing").with_param("id", id));
         }
 
@@ -1612,8 +1647,8 @@ pub fn step_synth(
         // note lengths are enabled, otherwise the synth's regular step
         // period. Both are scaled by the tempo ratio (e.g. ratio 0.5 =
         // twice the metronome period).
-        let ratio = if synth.tempo_ratio > 0.0 {
-            synth.tempo_ratio
+        let ratio = if synth.config.tempo_ratio > 0.0 {
+            synth.config.tempo_ratio
         } else {
             1.0
         };
@@ -1622,19 +1657,19 @@ pub fn step_synth(
 
         // Capture the notes that are now sounding, to schedule their Note Off
         let mut scheduled = Vec::new();
-        if synth.note_is_on {
-            scheduled.push(synth.note);
+        if synth.playback.note_is_on {
+            scheduled.push(synth.playback.note);
         }
-        for voice in &synth.poly_voices {
+        for voice in &synth.playback.poly_voices {
             if voice.note_is_on {
                 scheduled.push(voice.note);
             }
         }
         (
-            synth.midi_port,
-            synth.channel,
+            synth.config.midi_port,
+            synth.config.channel,
             scheduled,
-            synth.note_generation,
+            synth.playback.note_generation,
             step_duration,
         )
     };
@@ -1659,17 +1694,20 @@ pub fn step_synth(
             Some(s) => s,
             None => return,
         };
-        if synth.playing || synth.channel != channel || synth.note_generation != generation {
+        if synth.playback.playing
+            || synth.config.channel != channel
+            || synth.playback.note_generation != generation
+        {
             return;
         }
 
         // The notes were sent on the captured port: even if the synth has
         // since changed ports, turn them off where they are sounding.
-        if synth.note_is_on && scheduled.contains(&synth.note) {
-            midi_state.note_off(port, channel, synth.note);
-            synth.note_is_on = false;
+        if synth.playback.note_is_on && scheduled.contains(&synth.playback.note) {
+            midi_state.note_off(port, channel, synth.playback.note);
+            synth.playback.note_is_on = false;
         }
-        for voice in synth.poly_voices.iter_mut() {
+        for voice in synth.playback.poly_voices.iter_mut() {
             if voice.note_is_on && scheduled.contains(&voice.note) {
                 midi_state.note_off(port, channel, voice.note);
                 voice.note_is_on = false;
@@ -1772,8 +1810,8 @@ mod tests {
     /// A synth configured for a scale (used by the quantization tests).
     fn scaled_synth(scale: Scale, root: u8) -> Synth {
         let mut synth = Synth::new(1);
-        synth.scale = scale;
-        synth.scale_root = root;
+        synth.config.scale = scale;
+        synth.config.scale_root = root;
         synth
     }
 
@@ -1995,7 +2033,7 @@ mod tests {
 
         // Toggling back off: the playhead returns to index 0
         let mut synth = synth;
-        synth.cursor = 1;
+        synth.playback.cursor = 1;
         let cursor = remapped_cursor(
             &synth,
             &zones,
@@ -2016,7 +2054,7 @@ mod tests {
         // sequence's last pixel in left→right order
         let zones = [Zone::from_rect(0, 0, 0, 4, 1)];
         let mut synth = Synth::new(1);
-        synth.cursor = 3;
+        synth.playback.cursor = 3;
         let (width, height) = (4usize, 2usize);
 
         // Same pixel (3) becomes index 0 when reading right→left
@@ -2055,7 +2093,7 @@ mod tests {
         // A full row selected, playhead on its third pixel (pixel 2)
         let zones = [Zone::from_rect(0, 0, 0, 5, 1)];
         let mut synth = Synth::new(1);
-        synth.cursor = 2;
+        synth.playback.cursor = 2;
         let (width, height) = (5usize, 2usize);
 
         // The playhead's pixel is deselected: the two runs flanking it
@@ -2086,7 +2124,7 @@ mod tests {
         // the first still-selected pixel (pixel 0, index 0)
         let zones = [Zone::from_rect(0, 0, 0, 4, 1)];
         let mut synth = Synth::new(1);
-        synth.cursor = 3;
+        synth.playback.cursor = 3;
         let (width, height) = (4usize, 2usize);
 
         let zones_after = [Zone::from_rect(0, 0, 0, 3, 1)];
@@ -2110,7 +2148,7 @@ mod tests {
         // old pixel survives, the new reading starts at its beginning
         let zones = [Zone::from_rect(0, 0, 0, 2, 1)];
         let mut synth = Synth::new(1);
-        synth.cursor = 1;
+        synth.playback.cursor = 1;
         let (width, height) = (4usize, 2usize);
 
         let zones_after = [Zone::from_rect(0, 2, 1, 2, 1)];
@@ -2137,8 +2175,8 @@ mod tests {
         // (index 2)
         let zones = [Zone::from_rect(0, 0, 0, 4, 1)];
         let mut synth = Synth::new(1);
-        synth.cursor = 2;
-        synth.play_forward = false;
+        synth.playback.cursor = 2;
+        synth.playback.play_forward = false;
         let (width, height) = (4usize, 2usize);
 
         let zones_after = [

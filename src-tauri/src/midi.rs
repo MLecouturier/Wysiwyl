@@ -530,8 +530,8 @@ fn handle_input_message(app: &AppHandle, input_name: &str, data: &[u8]) {
             .lock()
             .unwrap()
             .values_mut()
-            .filter(|synth| synth.midi_port == port && synth.channel == channel)
-            .for_each(|synth| synth.volume = value);
+            .filter(|synth| synth.config.midi_port == port && synth.config.channel == channel)
+            .for_each(|synth| synth.config.volume = value);
         let _ = app.emit(
             "midi-volume",
             VolumeEvent {
