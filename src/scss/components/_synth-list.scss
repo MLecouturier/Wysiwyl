@@ -34,8 +34,9 @@
 }
 
 // Compact pill buttons of the list header: add synth \ play all \ panic.
-// Base look shared by the three; the color variants carry the meaning 
-// (green = play, red = global stop affordance). 
+// Base look shared by the three; the color variants carry the meaning
+// (play all: green = none playing, orange = some, red = all; panic = red
+// global stop affordance).
 .synth-list-action {
     background: none;
     border: 1px solid $color-border;
@@ -77,6 +78,26 @@
 
     &:hover {
         background-color: $color-accent-alt-hover;
+    }
+
+    // Some synths are playing but not all: the button still starts the
+    // remaining ones, the orange marks the in-between state (same semantic
+    // as the mirror zones toggle).
+    &.selective {
+        background-color: $color-selective;
+
+        &:hover {
+            background-color: $color-selective-hover;
+        }
+    }
+
+    // Every synth is playing: the button becomes the stop-all affordance.
+    &.active {
+        background-color: $color-stop;
+
+        &:hover {
+            background-color: $color-stop-hover;
+        }
     }
 }
 

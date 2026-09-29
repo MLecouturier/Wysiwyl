@@ -132,3 +132,14 @@ export function decodePixelResponse(buf) {
         rgba: new Uint8ClampedArray(bytes.buffer, bytes.byteOffset + 8, width * height * 4),
     };
 }
+
+// Three-state summary of the synthesizer list for the "play all" button:
+//   'idle'      no synth playing         -> green, "play all"
+//   'selective' some, but not all playing -> orange, "play all" (finishes)
+//   'active'    every synth playing       -> red, "stop all"
+// Pure so it can be unit-tested without a DOM.
+export function playAllStatus(total, playing) {
+    if (total <= 0 || playing <= 0) return 'idle';
+    if (playing >= total) return 'active';
+    return 'selective';
+}

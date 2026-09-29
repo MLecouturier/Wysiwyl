@@ -202,7 +202,7 @@
     "session.save": "Saves the whole working session: the image and its adjustments, every synth with its zones and settings.",
     "session.load": "Reloads a previously saved working session.",
     "synthList.add": "Adds a new synthesizer. Each synth owns its zones on the image and plays in parallel with the others.",
-    "synthList.playAllStart": "Starts every synth playing at once, or stops everything if at least one is already running.",
+    "synthList.playAllStart": "Starts every synth that is not playing yet; when they are all playing, stops them all. The button's colour follows the state: green = none playing, orange = some, red = all.",
     "synthList.panic": "Immediately cuts all sounding MIDI notes. Useful if an external synthesizer is stuck on a note.",
     "synth.midiPort": "MIDI output port used by this synth: pick here the hardware or software instrument to drive. The \"Wysiwyl (virtual — DAW)\" port shows up as a MIDI input in your DAW (Ableton Live on macOS can't see virtual ports: use the IAC bus instead, see the README): select it as the MIDI source of an instrument track to drive a software instrument of the project.",
     "synth.channel": "MIDI channel (1–16) this synth plays on. All the synth's messages — notes, volume (CC 7), program changes — address this channel: two synths sharing the same port and channel are heard as one, and each overrides the other's channel-wide settings. In that case the channel and volume fields are outlined in amber.",

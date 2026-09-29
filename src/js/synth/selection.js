@@ -4,6 +4,7 @@
 import { cellSetFromZones, computeLayout, drawCursorCell, drawZones, rebuildZones, zoneCellSet, zoneIntersectsRect } from '../core/geometry.js';
 import { appEvents, synthBrightnessBounds, synthColors, synthCursorGrid, synthCursorMuted, synthCursors, synthHighlights, viewer } from '../core/state.js';
 import { syncEyeButton, synthElementById, updateZonesLabel } from './model.js';
+import { registerEscape } from '../core/shortcuts.js';
 
 // Synth zone editing and persistence: adding/removing selection
 // rectangles, the manual silences (rests), and the commands that push
@@ -542,6 +543,11 @@ export function cancelZonePicking() {
     zoneState.lasso = null;
     if (hadDrag) redrawAllHighlights();
 }
+
+// Escape cancels an armed zone-picking mode. Priority 30: above help (10),
+// below the crop/transform panels and the color pickers (40/50) — see the
+// Escape chain in core/shortcuts.js.
+registerEscape(30, () => !!zoneState.pick, () => cancelZonePicking());
 
 // Live preview of the rectangle being dragged: filled with the synth's
 // color while it overlaps no zone, "erasing" the highlights beneath it

@@ -19,6 +19,8 @@ import { sendSynthZones, sendSynthMuteZones } from '../synth/selection.js';
 import { updateZonesLabel } from '../synth/model.js';
 import { updateAllSynthZones } from '../synth/cards.js';
 import { cancelZonePicking } from '../synth/selection.js';
+import { registerShortcut, registerEscape, SCOPE } from '../core/shortcuts.js';
+import { enterConsumed } from '../core/focus.js';
 
 // Deferred so importing this module does not touch the Tauri globals.
 const invoke = (...args) => window.__TAURI__.core.invoke(...args);
@@ -473,7 +475,7 @@ export function enterCropMode() {
     // Each session starts free-form: predictable behavior across sessions
     cropState.ratio = null;
     cropRatioGroup.querySelectorAll('.ratio-btn').forEach(btn => {
-        btn.classList.toggle('active', !btn.dataset.cropState.ratio);
+        btn.classList.toggle('active', !btn.dataset.cropRatio);
     });
     cropBtn.classList.add('active');
     pixelOverlay.classList.add('picking');
@@ -512,7 +514,7 @@ export function parseCropRatio(str) {
 cropRatioGroup.addEventListener('click', (e) => {
     const btn = e.target.closest('.ratio-btn');
     if (!btn) return;
-    const ratio = parseCropRatio(btn.dataset.cropState.ratio);
+    const ratio = parseCropRatio(btn.dataset.cropRatio);
     if (ratio === cropState.ratio) return;
     cropState.ratio = ratio;
     cropRatioGroup.querySelectorAll('.ratio-btn').forEach(b => b.classList.toggle('active', b === btn));
@@ -732,36 +734,42 @@ transformGridBtn.addEventListener('click', () => {
 });
 
 // Keyboard control while the transform panel is open: arrows adjust the
-// perspective, Shift+up/down the fine rotation. Skipped when the focus is
-// already in a form field or button, since the focused widget handles the
-// keys itself (native slider behavior).
-window.addEventListener('keydown', (e) => {
-    if (!transformActive) return;
-    const tag = e.target.tagName;
-    if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || tag === 'BUTTON') return;
-
-    let slider = null;
-    let delta  = 0;
-    if (e.shiftKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
-        slider = transformRotation;
-        delta  = e.key === 'ArrowUp' ? 0.1 : -0.1;
-    } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
-        slider = transformPerspV;
-        delta  = e.key === 'ArrowUp' ? 1 : -1;
-    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
-        slider = transformPerspH;
-        delta  = e.key === 'ArrowRight' ? 1 : -1;
-    }
-    if (!slider) return;
-
-    e.preventDefault(); // the arrows must not scroll the page
+// perspective, Shift+up/down the fine rotation. Registered as global-scope
+// bindings that stand down when the focus is already in a form field or
+// button (the focused widget handles the keys itself). Auto-repeat is
+// allowed so holding an arrow keeps adjusting.
+function adjustTransformSlider(slider, delta) {
     const next = Math.min(Number(slider.max), Math.max(Number(slider.min), Number(slider.value) + delta));
     // Rounded to one decimal: the rotation accumulates 0.1 steps and the
     // float sum would drift (0.1 + 0.2 = 0.30000000000000004)
     slider.value = Math.round(next * 10) / 10;
     syncTransformLabels();
     scheduleTransformPreview();
+}
+
+const transformKeysApply = () => transformActive && !enterConsumed(document.activeElement);
+
+registerShortcut({
+    id: 'transform-rotation', key: /^Arrow(Up|Down)$/, shift: true, primary: false, alt: false,
+    scope: SCOPE.GLOBAL, repeat: true, when: transformKeysApply,
+    run: e => adjustTransformSlider(transformRotation, e.key === 'ArrowUp' ? 0.1 : -0.1),
 });
+
+registerShortcut({
+    id: 'transform-perspective', key: /^Arrow(Up|Down|Left|Right)$/, shift: false, primary: false, alt: false,
+    scope: SCOPE.GLOBAL, repeat: true, when: transformKeysApply,
+    run: e => {
+        if (e.key === 'ArrowUp') adjustTransformSlider(transformPerspV, 1);
+        else if (e.key === 'ArrowDown') adjustTransformSlider(transformPerspV, -1);
+        else if (e.key === 'ArrowLeft') adjustTransformSlider(transformPerspH, -1);
+        else adjustTransformSlider(transformPerspH, 1);
+    },
+});
+
+// Escape targets: the crop frame and the transform panel, each ownable by
+// this module. Priority 40 sits above zone picking (30) and help (10).
+registerEscape(40, () => cropState.mode, () => exitCropMode());
+registerEscape(40, () => transformActive, () => closeTransformPanel());
 
 // Double-click on a slider resets it to zero
 [transformRotation, transformPerspV, transformPerspH].forEach(el => {

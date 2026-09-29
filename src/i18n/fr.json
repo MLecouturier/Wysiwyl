@@ -202,7 +202,7 @@
     "session.save": "Enregistre la session de travail complète : l'image et ses réglages, tous les synthés avec leurs zones et paramètres.",
     "session.load": "Recharge une session de travail précédemment enregistrée.",
     "synthList.add": "Ajoute un nouveau synthétiseur. Chaque synthé possède ses propres zones sur l'image et joue en parallèle des autres.",
-    "synthList.playAllStart": "Démarre la lecture de tous les synthés en même temps, ou arrête tout si au moins un tourne déjà.",
+    "synthList.playAllStart": "Démarre les synthés qui ne jouent pas encore ; quand ils jouent tous, les arrête tous. La couleur du bouton suit l'état : vert = aucun, orange = certains, rouge = tous.",
     "synthList.panic": "Coupe immédiatement toutes les notes MIDI en cours. Utile si un synthétiseur externe reste bloqué sur une note.",
     "synth.midiPort": "Port MIDI de sortie utilisé par ce synthé : choisissez ici l'instrument matériel ou logiciel à piloter. Le port virtuel « Wysiwyl (virtuel — DAW) » apparaît comme entrée MIDI dans votre DAW (Ableton Live sur Mac ne voit pas les ports virtuels : passez par le bus IAC, voir le README) : sélectionnez-le comme source MIDI d'une piste instrument pour jouer un synthé logiciel du projet.",
     "synth.channel": "Canal MIDI (1–16) sur lequel joue ce synthé. Tous ses messages — notes, volume (CC 7), changements de programme — s'adressent à ce canal : deux synthés partageant le même port et le même canal sont entendus comme un seul, et chacun remplace les réglages de canal de l'autre. Dans ce cas, les champs canal et volume sont cerclés d'ambre.",

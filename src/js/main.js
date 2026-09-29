@@ -7,6 +7,8 @@ import { midiNoteToName } from './core/utils.js';
 import { createChrono } from './core/timing.js';
 import { appEvents } from './core/state.js';
 import { viewer } from './core/state.js';
+import { registerShortcut, registerEscape, runEscapeChain, digitIndex, SCOPE } from './core/shortcuts.js';
+import { installFocusPolicy, enterConsumed, spaceConsumed, digitConsumed } from './core/focus.js';
 import {
     synthNames, synthColors, synthHighlights,
     synthCursors, synthCursorGrid, synthCursorMuted,
@@ -41,6 +43,7 @@ import {
     createSynthElement, onSynthPlayClick, syncPlayAllButton,
     setSynthControlsLocked, startSynthPlayback, stopSynthPlayback,
     scrollSynthCardIntoView, renumberSynthIds, configureSynthCards,
+    toggleSynthMute, cancelTransientTools,
 } from './synth/cards.js';
 import {
     syncLabels, updatePreviewSrc, refresh, exitCropMode, closeTransformPanel,
@@ -218,9 +221,9 @@ document.addEventListener('mouseover', (e) => {
     else hideHelpPopup();
 });
 
-window.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && helpModeEnabled) setHelpMode(false);
-});
+// Leaving help mode is the lowest-priority Escape target (see the shortcut
+// registry): momentary popovers and active modes are cancelled first.
+registerEscape(10, () => helpModeEnabled, () => setHelpMode(false));
 
 // ---------- Elements ----------
 const loadBtn         = document.querySelector('#load-btn');
@@ -283,63 +286,107 @@ const chrono = createChrono({
     isPlaying: anySynthPlaying,
 });
 appEvents.on('play-state-changed', () => chrono.sync());
+// Every play-state transition (start/stop, play all, panic, end of sequence,
+// removal, session load) flows through updateImageControlsLockState, which
+// emits this event: keeping the play-all button on the same hook guarantees
+// its colour never lags the actual state.
+appEvents.on('play-state-changed', () => syncPlayAllButton());
 
 
-window.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
-        exitCropMode();
-        closeTransformPanel();
-        cancelZonePicking();
-        document.querySelectorAll('.synth-color-picker').forEach(p => p.classList.add('hidden'));
-    }
-});
+// Escape cancels the topmost transient UI only — press it again to go
+// deeper. The other targets (crop, transform, zone picking) register their
+// own handlers from their modules; this file owns the popovers and the
+// single global Escape binding that runs the chain.
+registerEscape(50,
+    () => !!document.querySelector('.synth-color-picker:not(.hidden)'),
+    () => document.querySelectorAll('.synth-color-picker').forEach(p => p.classList.add('hidden')));
 
 // ---------- Global shortcuts ----------
-// Enter commits the pending crop or perspective correction (the buttons'
-// own guards make it a no-op when nothing is pending), Space toggles
-// every synth (Shift+Space is the panic kill switch), 1-8 toggle the
-// N-th synth card in display order, Cmd/Ctrl+M toggles the projection
-// mirror. Space and 1-8 are only skipped where the focused widget
-// actually consumes the key: Space types in text fields, presses a
-// focused button and opens a focused select; digits are typed in
-// text/number fields and type-ahead in selects. They stay active on
-// sliders and number inputs (Space), and on sliders and buttons
-// (digits). Cmd/Ctrl+1-8 toggle the N-th synth from any focus, even
-// from a text-entry field.
-// Note: Cmd+M would be reserved by a standard macOS menu (minimize) if
-// one is ever added.
-window.addEventListener('keydown', (e) => {
-    // The unsaved-session modal is modal: no shortcut fires behind it
-    if (sessionState.isModalOpen()) return;
-    const tag = e.target.tagName;
-    const inFormField = tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || tag === 'BUTTON';
-    const spaceBlocked = tag === 'BUTTON' || tag === 'SELECT' || tag === 'TEXTAREA'
-        || (tag === 'INPUT' && e.target.type !== 'number' && e.target.type !== 'range');
-    const digitsBlocked = tag === 'SELECT' || tag === 'TEXTAREA'
-        || (tag === 'INPUT' && e.target.type !== 'range');
-    const bare = !e.metaKey && !e.ctrlKey && !e.altKey;
+// Declarative bindings handled by core/shortcuts.js (single listener, modal
+// scope, auto-repeat ignored). Enter commits the pending crop or perspective
+// correction (the buttons' own guards make it a no-op when nothing is
+// pending). Space toggles every synth, Shift+Space is the panic kill switch.
+// Bare 1-8 bring the N-th synth's card into view (like releasing its tab);
+// Cmd/Ctrl+1-8 toggle its playback from any focus (even a text field);
+// Alt+1-8 mute/unmute it. The digit is resolved by digitIndex (core/
+// shortcuts.js), robust to the keyboard layout and to Option rewriting
+// `event.key`; Space and the bare digits yield to widgets that consume them
+// (see core/focus.js).
+// Note: Cmd+M would be reserved by a standard macOS menu (minimize) if one
+// is ever added.
+// Physical digit pressed (1-8) is resolved by digitIndex (core/shortcuts.js),
+// which is layout- and modifier-independent (see its comment).
+function nthSynthBlock(index) {
+    if (!index) return null;
+    const blocks = Array.from(synthListBody.querySelectorAll('.synth-block'));
+    return blocks[index - 1] || null;
+}
 
-    if (e.key === 'Enter' && !inFormField) {
+registerShortcut({
+    id: 'commit-crop-transform', key: 'Enter', scope: SCOPE.GLOBAL,
+    when: e => !enterConsumed(e.target),
+    run: () => {
         if (cropState.mode) cropApplyBtn.click();
         else if (isTransformActive()) transformApplyBtn.click();
-    } else if (e.key === ' ' && !spaceBlocked && bare) {
-        e.preventDefault();
-        if (e.shiftKey) panicBtn.click();
-        else playAllBtn.click();
-    } else if (!digitsBlocked && bare && e.key >= '1' && e.key <= '8') {
-        const blocks = Array.from(synthListBody.querySelectorAll('.synth-block'));
-        const el = blocks[Number(e.key) - 1];
-        if (el) onSynthPlayClick(Number(el.dataset.synthId), el);
-    } else if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key >= '1' && e.key <= '8') {
-        // Universal variant: fires even from a focused text-entry field
-        const blocks = Array.from(synthListBody.querySelectorAll('.synth-block'));
-        const el = blocks[Number(e.key) - 1];
-        if (el) onSynthPlayClick(Number(el.dataset.synthId), el);
-    } else if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === 'm') {
-        e.preventDefault();
-        document.querySelector('#fullscreen-btn').click();
-    }
+    },
 });
+
+registerShortcut({
+    id: 'play-all', key: ' ', scope: SCOPE.GLOBAL, primary: false, alt: false, shift: false,
+    when: e => !spaceConsumed(e.target),
+    run: () => playAllBtn.click(),
+});
+
+registerShortcut({
+    id: 'panic', key: ' ', scope: SCOPE.GLOBAL, primary: false, alt: false, shift: true,
+    when: e => !spaceConsumed(e.target),
+    run: () => panicBtn.click(),
+});
+
+registerShortcut({
+    id: 'synth-reveal', match: e => digitIndex(e) > 0, scope: SCOPE.GLOBAL, primary: false, alt: false,
+    when: e => !digitConsumed(e.target),
+    run: e => {
+        const el = nthSynthBlock(digitIndex(e));
+        if (el) scrollSynthCardIntoView(el);
+    },
+});
+
+registerShortcut({
+    id: 'synth-toggle', match: e => digitIndex(e) > 0, scope: SCOPE.GLOBAL, primary: true, alt: false,
+    run: e => {
+        const el = nthSynthBlock(digitIndex(e));
+        if (el) onSynthPlayClick(Number(el.dataset.synthId), el);
+    },
+});
+
+registerShortcut({
+    id: 'synth-mute', match: e => digitIndex(e) > 0, scope: SCOPE.GLOBAL, primary: false, alt: true,
+    run: e => {
+        const el = nthSynthBlock(digitIndex(e));
+        if (el) toggleSynthMute(Number(el.dataset.synthId));
+    },
+});
+
+registerShortcut({
+    id: 'toggle-mirror', key: 'm', scope: SCOPE.GLOBAL, primary: true, alt: false,
+    run: () => document.querySelector('#fullscreen-btn').click(),
+});
+
+// Escape runs the topmost-only cancellation chain (see core/shortcuts.js).
+// `preventDefault: false`: when the chain has nothing to cancel, Escape must
+// keep its native meaning (closing a focused select popup, exiting the OS
+// fullscreen…).
+registerShortcut({
+    id: 'escape', key: 'Escape', scope: SCOPE.GLOBAL, preventDefault: false,
+    run: () => runEscapeChain(),
+});
+
+// A window that loses focus must not keep a tool armed (zone picking, remove
+// confirmation, help mode): the user comes back to a clean state.
+window.addEventListener('blur', () => cancelTransientTools());
+
+installFocusPolicy();
 
 pixelOverlay.addEventListener('mousedown', (e) => {
     if (cropState.mode) {
@@ -656,16 +703,15 @@ async function openSession() {
 loadSessionBtn.addEventListener('click', () => openSession());
 
 // ---------- Session shortcuts (Cmd/Ctrl+S, Cmd/Ctrl+O) ----------
-window.addEventListener('keydown', (e) => {
-    if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
-    const key = e.key.toLowerCase();
-    if (key === 's') {
-        e.preventDefault();
-        saveCurrentSession();
-    } else if (key === 'o') {
-        e.preventDefault();
-        openSession();
-    }
+// Global-scope bindings: the modal scope blocks them while the unsaved
+// prompt is open (formerly they fired behind it).
+registerShortcut({
+    id: 'session-save', key: 's', scope: SCOPE.GLOBAL, primary: true, alt: false,
+    run: () => saveCurrentSession(),
+});
+registerShortcut({
+    id: 'session-open', key: 'o', scope: SCOPE.GLOBAL, primary: true, alt: false,
+    run: () => openSession(),
 });
 
 
@@ -788,6 +834,10 @@ syncPlayAllButton();
 
 addSynthBtn.addEventListener('click', async () => {
     try {
+        // A tool armed on an existing synth (zone picking, pending removal)
+        // must not survive the creation of a new element — it could then act
+        // on the wrong card by accident.
+        cancelTransientTools();
         const synth = await invoke('add_synth');
         sessionState.markDirty();
         placeholder.classList.add('hidden');
@@ -806,23 +856,19 @@ addSynthBtn.addEventListener('click', async () => {
 playAllBtn.addEventListener('click', async () => {
     const blocks = Array.from(synthListBody.querySelectorAll('.synth-block'));
     if (blocks.length === 0) return;
+    const isPlaying = el => el.querySelector('.synth-play').classList.contains('active');
+    const playing = blocks.filter(isPlaying);
 
-    // We consider the whole set "playing" if at least one synth is already playing.
-    const anyPlaying = blocks.some(el => el.querySelector('.synth-play').classList.contains('active'));
-
-    if (anyPlaying) {
-        // Stop everything
-        for (const el of blocks) {
-            const id = Number(el.dataset.synthId);
-            if (el.querySelector('.synth-play').classList.contains('active')) {
-                await stopSynthPlayback(id, el);
-            }
+    if (playing.length === blocks.length) {
+        // Every synth is running: the button is the stop-all affordance (red)
+        for (const el of playing) {
+            await stopSynthPlayback(Number(el.dataset.synthId), el);
         }
     } else {
-        // Start everything
+        // Idle or partial: start every synth that is not running yet
+        // (green starts them all, orange finishes the set)
         for (const el of blocks) {
-            const id = Number(el.dataset.synthId);
-            await startSynthPlayback(id, el);
+            if (!isPlaying(el)) await startSynthPlayback(Number(el.dataset.synthId), el);
         }
     }
     syncPlayAllButton();

@@ -63,6 +63,14 @@ h2 {
   color: #ccc;
 }
 
+:focus-visible {
+  box-shadow: 0 0 0 0.125rem #3a7bd5;
+}
+
+#image-viewer-container:focus {
+  outline: none;
+}
+
 .app-container {
   display: flex;
   flex-direction: row;
@@ -639,6 +647,18 @@ button.toggle-btn.active.selective:hover {
 }
 .synth-list-action-play:hover {
   background-color: #1d8446;
+}
+.synth-list-action-play.selective {
+  background-color: #e67e22;
+}
+.synth-list-action-play.selective:hover {
+  background-color: #d35400;
+}
+.synth-list-action-play.active {
+  background-color: #c0392b;
+}
+.synth-list-action-play.active:hover {
+  background-color: #a5281b;
 }
 
 .synth-list-action-stop {

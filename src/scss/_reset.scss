@@ -24,3 +24,17 @@ h2 {
     margin-bottom: .25rem;
     color: $color-text-secondary;
 }
+
+// Keyboard focus ring. Uses box-shadow rather than outline so it survives
+// the per-component `outline: none` resets, and :focus-visible keeps it
+// away from plain mouse clicks (a mouse click that restores focus to the
+// viewer, or a clicked button the focus policy has just blurred).
+:focus-visible {
+    box-shadow: 0 0 0 .125rem $color-accent;
+}
+
+// The viewer is a programmatic focus sink (tabindex="-1"), never a real
+// keyboard stop: it must not draw a ring.
+#image-viewer-container:focus {
+    outline: none;
+}

@@ -2,6 +2,7 @@
 // title, the unsaved-changes modal and the close confirmation.
 
 import { t } from '../core/i18n.js';
+import { registerShortcut, activateScope, deactivateScope, SCOPE } from '../core/shortcuts.js';
 
 // Session lifecycle state: the current file path/name, the dirty flag and
 // the window title, the unsaved-changes modal, the delegated dirty
@@ -90,16 +91,63 @@ export function createSessionState({
         refreshTitle();
     }
 
+    // ---- Focus management ----
+    // The modal is modal for the keyboard too: focus moves into it, Tab is
+    // trapped inside, and the previously focused element is restored on
+    // close. Its own Escape binding lives in the modal scope, which blocks
+    // every global shortcut (Cmd+S/O included) while it is open.
+    let focusBeforeModal = null;
+
+    function modalFocusables() {
+        return Array.from(unsavedModal.querySelectorAll(
+            'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+        ));
+    }
+
+    function trapModalFocus(e) {
+        if (e.key !== 'Tab') return;
+        const focusables = modalFocusables();
+        if (focusables.length === 0) return;
+        const first = focusables[0];
+        const last = focusables[focusables.length - 1];
+        if (!unsavedModal.contains(document.activeElement)) {
+            e.preventDefault();
+            first.focus();
+        } else if (e.shiftKey && document.activeElement === first) {
+            e.preventDefault();
+            last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+            e.preventDefault();
+            first.focus();
+        }
+    }
+
     function showModal() {
         unsavedModalMessage.textContent = currentName
             ? t('session.unsavedMessage', { name: currentName })
             : t('session.unsavedMessageUntitled');
+        focusBeforeModal = document.activeElement;
         unsavedModal.classList.remove('hidden');
+        activateScope(SCOPE.MODAL);
+        // Initial focus on Cancel: the safe, non-committing choice.
+        unsavedCancelBtn.focus();
+        document.addEventListener('keydown', trapModalFocus, true);
     }
 
     function hideModal() {
         unsavedModal.classList.add('hidden');
+        deactivateScope(SCOPE.MODAL);
+        document.removeEventListener('keydown', trapModalFocus, true);
+        if (focusBeforeModal && typeof focusBeforeModal.focus === 'function') {
+            focusBeforeModal.focus();
+        }
+        focusBeforeModal = null;
     }
+
+    registerShortcut({
+        id: 'modal-escape', key: 'Escape', scope: SCOPE.MODAL, preventDefault: false,
+        run: () => hideModal(),
+    });
 
     const isModalOpen = () => !unsavedModal.classList.contains('hidden');
 
@@ -159,12 +207,6 @@ export function createSessionState({
     });
     unsavedDiscardBtn.addEventListener('click', () => proceedWithClose());
     unsavedCancelBtn.addEventListener('click', hideModal);
-
-    window.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && isModalOpen()) {
-            hideModal();
-        }
-    });
 
     // ---- Close confirmation ----
     // Closing the main window closes the projection too: without this the

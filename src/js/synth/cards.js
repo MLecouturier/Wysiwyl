@@ -5,7 +5,7 @@
 
 import { t, applyTranslations } from '../core/i18n.js';
 import { getTemplate } from '../core/templates.js';
-import { NOTE_NAMES } from '../core/utils.js';
+import { NOTE_NAMES, playAllStatus } from '../core/utils.js';
 import { rectZone, zoneCellSet, rebuildZones } from '../core/geometry.js';
 import { viewer } from '../core/state.js';
 import {
@@ -897,17 +897,44 @@ export async function onSynthPlayClick(id, el) {
     syncPlayAllButton();
 }
 
-// Updates the "play all" button's label based on the synths' current state
+// Updates the "play all" button's colour, icon and label from the synths'
+// current state: green = none playing, orange = some, red = all. The click
+// behaviour follows (see the play-all handler in main.js): green/orange
+// start (or finish) the playback, red stops everything.
 export function syncPlayAllButton() {
     const blocks = Array.from(synthListBody.querySelectorAll('.synth-block'));
-    const anyPlaying = blocks.some(el => el.querySelector('.synth-play').classList.contains('active'));
-    playAllBtn.querySelector('.material-symbols-outlined').textContent = anyPlaying ? 'pause' : 'play_arrow';
-    playAllBtn.querySelector('.play-all-label').textContent = anyPlaying
+    const playing = blocks
+        .filter(el => el.querySelector('.synth-play').classList.contains('active')).length;
+    const state = playAllStatus(blocks.length, playing);
+    const allPlaying = state === 'active';
+
+    playAllBtn.classList.toggle('active', allPlaying);
+    playAllBtn.classList.toggle('selective', state === 'selective');
+    playAllBtn.querySelector('.material-symbols-outlined').textContent = allPlaying ? 'pause' : 'play_arrow';
+    playAllBtn.querySelector('.play-all-label').textContent = allPlaying
         ? t('synthList.stopAllLabel')
         : t('synthList.playAllLabel');
-    playAllBtn.title = anyPlaying
+    playAllBtn.title = allPlaying
         ? t('synthList.playAllStop')
         : t('synthList.playAllStart');
+    reservePlayAllWidth();
+}
+
+// Pins the button's width to its widest possible label so the pill no longer
+// resizes when the state (and therefore the label) flips. Measured on the
+// live button — same font, padding and icon — by swapping the two candidate
+// strings synchronously, so nothing is painted in between. Re-run on every
+// sync, which also picks up a locale change.
+function reservePlayAllWidth() {
+    const label = playAllBtn.querySelector('.play-all-label');
+    const current = label.textContent;
+    let widest = 0;
+    for (const text of [t('synthList.playAllLabel'), t('synthList.stopAllLabel')]) {
+        label.textContent = text;
+        widest = Math.max(widest, playAllBtn.getBoundingClientRect().width);
+    }
+    label.textContent = current;
+    if (widest > 0) playAllBtn.style.minWidth = `${Math.ceil(widest)}px`;
 }
 
 // CC 7 addresses the MIDI channel, not the synth: several synths sharing
@@ -977,7 +1004,35 @@ export function setSynthControlsLocked(el, locked) {
     el.querySelector('.synth-step-forward').disabled = locked;
 }
 
+// Volume restored when unmuting a synth that was already at 0 (nothing was
+// memorised): the usual value for a freshly created synth.
+const DEFAULT_UNMUTE_VOLUME = 100;
+
+// Toggles a synth's channel volume between zero and its previous value.
+// Backs the Alt+1-8 shortcut: muting instantly sets the volume to 0, and
+// unmuting returns to the memorised value (or DEFAULT_UNMUTE_VOLUME when
+// the synth was already at 0). Reuses the card's own volume path by
+// dispatching a `change` event, so the field, the tab's volume bar and the
+// backend (set_synth_volume → MIDI CC 7) all stay in sync.
+export function toggleSynthMute(id) {
+    const el = synthElementById(id);
+    const input = el?.querySelector('.synth-volume');
+    if (!input) return;
+    const current = Math.round(Number(input.value));
+    if (Number.isFinite(current) && current > 0) {
+        el._preMuteVolume = current; // remember before muting
+        input.value = '0';
+    } else {
+        const restored = (Number.isFinite(el._preMuteVolume) && el._preMuteVolume > 0)
+            ? el._preMuteVolume
+            : DEFAULT_UNMUTE_VOLUME;
+        input.value = String(restored);
+    }
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
 export async function startSynthPlayback(id, el) {
+    cancelTransientTools(); // a running transport must not keep a tool armed
     await hooks.ensureMetronomeStarted();
     await invoke('start_synth', { id });
     setSynthPlaying(id, true);
@@ -1166,6 +1221,15 @@ export function resetSynthRemoveConfirm() {
         armedSynthRemoveBtn.querySelector('.material-symbols-outlined').textContent = 'close';
         armedSynthRemoveBtn = null;
     }
+}
+
+// Cancels every transient tool: an armed zone-picking mode and a pending
+// synth-removal confirmation. Called whenever the context changes (new
+// synth, modal, Escape, window blur, playback start, session load) so a
+// tool left armed on one element can never act on another by accident.
+export function cancelTransientTools() {
+    cancelZonePicking();
+    resetSynthRemoveConfirm();
 }
 
 export async function onSynthRemoveClick(id, el) {
