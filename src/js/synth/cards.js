@@ -5,7 +5,7 @@
 
 import { t, applyTranslations } from '../core/i18n.js';
 import { getTemplate } from '../core/templates.js';
-import { NOTE_NAMES, playAllStatus } from '../core/utils.js';
+import { NOTE_NAMES, playAllStatus, mutedVolume } from '../core/utils.js';
 import { rectZone, zoneCellSet, rebuildZones } from '../core/geometry.js';
 import { viewer } from '../core/state.js';
 import {
@@ -114,6 +114,7 @@ export function applySynthConfig(el, cfg) {
     const volume = Number.isFinite(cfg.volume) ? cfg.volume : 127;
     el.querySelector('.synth-volume').value = volume;
     setTabVolumeBar(el._tab, volume);
+    syncSynthMuteButton(el);
     // Hue shift (monophonic panel)
     const hueInput = el.querySelector('.synth-hue-shift');
     hueInput.value = cfg.hue_shift;
@@ -321,6 +322,7 @@ export function createSynthElement(id, cfg = null) {
         volume = Math.max(0, Math.min(127, volume));
         volumeInput.value = String(volume);
         setTabVolumeBar(tab, volume);
+        syncSynthMuteButton(el);
         invoke('set_synth_volume', { id, volume })
             .catch(err => console.error('Error in set_synth_volume:', err));
     };
@@ -364,6 +366,8 @@ export function createSynthElement(id, cfg = null) {
     };
     volumeInput.addEventListener('change', sendSynthVolume);
     tab.addEventListener('wheel', onVolumeWheel, { passive: false });
+    // Mute button (the speaker icon): same toggle as the Alt+1-8 shortcut
+    el.querySelector('.synth-mute').addEventListener('click', () => toggleSynthMute(id));
 
     // ---- Program: bank (A–P) + program (1–128) sent to the instrument ----
     // Both inputs are always visible; each change sends the current
@@ -987,6 +991,7 @@ window.__TAURI__.event.listen('midi-volume', (event) => {
         if (input && document.activeElement !== input) {
             input.value = String(volume);
         }
+        syncSynthMuteButton(block);
         // The tab's volume bar reflects the learned volume even while
         // the field is being edited: it mirrors the backend state
         setTabVolumeBar(block._tab, volume);
@@ -1008,12 +1013,32 @@ export function setSynthControlsLocked(el, locked) {
 // memorised): the usual value for a freshly created synth.
 const DEFAULT_UNMUTE_VOLUME = 100;
 
+// Reflects the mute state (volume 0) on the card's mute button: glyph,
+// aria-pressed/aria-label and tooltip. The state is derived from the volume
+// value, so it stays correct whatever set it — the button, the Alt+1-8
+// shortcut, a manual edit, a CC 7 learned from the instrument, or a session
+// load.
+function syncSynthMuteButton(el) {
+    const input = el?.querySelector('.synth-volume');
+    const btn = el?.querySelector('.synth-mute');
+    if (!input || !btn) return;
+    const muted = input.value !== '' && Math.round(Number(input.value)) === 0;
+    btn.querySelector('.material-symbols-outlined').textContent = muted ? 'volume_off' : 'volume_up';
+    btn.setAttribute('aria-pressed', String(muted));
+    const key = muted ? 'synth.unmute' : 'synth.mute';
+    btn.dataset.i18nTitle = key;
+    const label = t(key);
+    btn.title = label;
+    btn.setAttribute('aria-label', label);
+}
+
 // Toggles a synth's channel volume between zero and its previous value.
-// Backs the Alt+1-8 shortcut: muting instantly sets the volume to 0, and
-// unmuting returns to the memorised value (or DEFAULT_UNMUTE_VOLUME when
-// the synth was already at 0). Reuses the card's own volume path by
-// dispatching a `change` event, so the field, the tab's volume bar and the
-// backend (set_synth_volume → MIDI CC 7) all stay in sync.
+// Backs both the card's mute button and the Alt+1-8 shortcut: muting
+// instantly sets the volume to 0, and unmuting returns to the memorised
+// value (or DEFAULT_UNMUTE_VOLUME when the synth was already at 0). Reuses
+// the card's own volume path by dispatching a `change` event, so the field,
+// the tab's volume bar, the mute button and the backend (set_synth_volume →
+// MIDI CC 7) all stay in sync.
 export function toggleSynthMute(id) {
     const el = synthElementById(id);
     const input = el?.querySelector('.synth-volume');
@@ -1021,13 +1046,8 @@ export function toggleSynthMute(id) {
     const current = Math.round(Number(input.value));
     if (Number.isFinite(current) && current > 0) {
         el._preMuteVolume = current; // remember before muting
-        input.value = '0';
-    } else {
-        const restored = (Number.isFinite(el._preMuteVolume) && el._preMuteVolume > 0)
-            ? el._preMuteVolume
-            : DEFAULT_UNMUTE_VOLUME;
-        input.value = String(restored);
     }
+    input.value = String(mutedVolume(current, el._preMuteVolume, DEFAULT_UNMUTE_VOLUME));
     input.dispatchEvent(new Event('change', { bubbles: true }));
 }
 

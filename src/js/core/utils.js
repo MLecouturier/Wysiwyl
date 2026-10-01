@@ -143,3 +143,13 @@ export function playAllStatus(total, playing) {
     if (playing >= total) return 'active';
     return 'selective';
 }
+
+// Value the mute toggle should apply. `current` is the synth's volume:
+// a positive value is muted (returns 0), a zero value is unmuted (returns
+// the memorised `previous`, or `fallback` when there is none). Pure so it
+// can be unit-tested without a DOM; shared by the mute button and the
+// Alt+1-8 shortcut.
+export function mutedVolume(current, previous, fallback = 100) {
+    if (Number.isFinite(current) && current > 0) return 0;
+    return (Number.isFinite(previous) && previous > 0) ? previous : fallback;
+}
