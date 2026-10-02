@@ -1047,6 +1047,33 @@ button.toggle-btn.active.selective:hover {
 .synth-block .synth-body .synth-volume.shared-channel:hover, .synth-block .synth-body .synth-volume.shared-channel:focus {
   border-color: #e0a016;
 }
+.synth-block .synth-body .synth-quantize-tempo {
+  width: 3rem;
+  height: 1.75rem;
+  padding: 0.25rem 0.375rem;
+  font-size: 0.78rem;
+  background-color: #232323;
+  color: #e0e0e0;
+  border: 1px solid #333;
+  border-radius: 0.25rem;
+  outline: none;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  cursor: ns-resize;
+}
+.synth-block .synth-body .synth-quantize-tempo::-webkit-inner-spin-button, .synth-block .synth-body .synth-quantize-tempo::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.synth-block .synth-body .synth-quantize-tempo:hover {
+  border-color: #3a7bd5;
+}
+.synth-block .synth-body .synth-quantize-tempo:focus {
+  border-color: #3a7bd5;
+}
+.synth-block .synth-body .synth-quantize-tempo.inactive {
+  opacity: 0.45;
+}
 .synth-block .synth-body .synth-play {
   display: flex;
   align-items: center;

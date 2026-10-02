@@ -120,6 +120,7 @@ pub fn reset_synth_cursor(id: u32, state: State<SynthState>) -> Result<(), AppEr
             synth.playback.cursor = 0;
             synth.playback.end_pending = false;
             synth.playback.tempo_accumulator = 0.0;
+            synth.playback.wakes_since_step = 0;
             Ok(())
         }
         None => Err(synth_not_found(id)),
@@ -136,6 +137,10 @@ pub fn start_synth(
     match synths.get_mut(&id) {
         Some(synth) => {
             synth.playback.playing = true;
+            // The first note waits for the next master beat so playback
+            // starts in phase with the metronome (see the metronome thread)
+            synth.playback.start_pending = true;
+            synth.playback.wakes_since_step = 0;
             // A fresh start always replays from the beginning of the sequence
             // (e.g. after manually stepping to the end while paused)
             synth.playback.end_pending = false;
@@ -164,6 +169,8 @@ pub fn stop_synth(
             synth.playback.playing = false;
             synth.playback.end_pending = false;
             synth.playback.tempo_accumulator = 0.0;
+            synth.playback.start_pending = false;
+            synth.playback.wakes_since_step = 0;
 
             // Immediately turn off the current mono note, if it is still sounding
             if synth.playback.note_is_on {
@@ -198,6 +205,8 @@ pub fn panic_all(state: State<SynthState>, midi_state: State<MidiState>) {
         synth.playback.playing = false;
         synth.playback.end_pending = false;
         synth.playback.tempo_accumulator = 0.0;
+        synth.playback.start_pending = false;
+        synth.playback.wakes_since_step = 0;
         synth.playback.note_generation += 1;
 
         if synth.playback.note_is_on {
@@ -391,6 +400,41 @@ pub fn set_synth_tempo(id: u32, tempo: f64, state: State<SynthState>) -> Result<
     match synths.get_mut(&id) {
         Some(synth) => {
             synth.config.tempo_ratio = tempo.clamp(0.05, 4.0);
+            Ok(())
+        }
+        None => Err(synth_not_found(id)),
+    }
+}
+
+/// Enables the master-tempo quantize: the synth's step grid is realigned on
+/// every `quantize_beats` beats, delaying steps only so no note is ever cut.
+#[tauri::command]
+pub fn set_synth_quantize(
+    id: u32,
+    enabled: bool,
+    state: State<SynthState>,
+) -> Result<(), AppError> {
+    let mut synths = state.synths.lock().unwrap();
+    match synths.get_mut(&id) {
+        Some(synth) => {
+            synth.config.quantize = enabled;
+            Ok(())
+        }
+        None => Err(synth_not_found(id)),
+    }
+}
+
+/// Sets the resync period of the master-tempo quantize, in beats (1-8).
+#[tauri::command]
+pub fn set_synth_quantize_beats(
+    id: u32,
+    beats: u8,
+    state: State<SynthState>,
+) -> Result<(), AppError> {
+    let mut synths = state.synths.lock().unwrap();
+    match synths.get_mut(&id) {
+        Some(synth) => {
+            synth.config.quantize_beats = beats.clamp(1, 8);
             Ok(())
         }
         None => Err(synth_not_found(id)),

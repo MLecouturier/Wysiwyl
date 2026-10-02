@@ -208,6 +208,8 @@ pub struct SynthConfig {
     pub voice_note_ranges: [[bool; 3]; 3], // same, per R/G/B voice, polyphonic mode
     pub scale: Scale,     // scale the derived notes are snapped to (Chromatic = none)
     pub scale_root: u8,   // scale tonic as a pitch class 0-11 (0 = C)
+    pub quantize: bool,   // realign the step grid on the master beats (delay-only)
+    pub quantize_beats: u8, // resync period in master beats (1-8) when quantize is on
 }
 
 impl Default for SynthConfig {
@@ -236,6 +238,8 @@ impl Default for SynthConfig {
             voice_note_ranges: [[false, false, false]; 3],
             scale: Scale::Chromatic,
             scale_root: 0,
+            quantize: false,
+            quantize_beats: 4,
         }
     }
 }
@@ -252,6 +256,7 @@ impl SynthConfig {
             synth.config.note_lengths = vec![NoteLength::Quarter];
         }
         synth.config.scale_root = self.scale_root.min(11);
+        synth.config.quantize_beats = self.quantize_beats.clamp(1, 8);
         synth
     }
 
@@ -277,6 +282,8 @@ pub struct Playback {
     pub poly_voices: [ChannelVoice; 3], // independent MIDI state per R/G/B channel
     pub note_generation: u32, // bumped on each articulation (stale Note Off guard)
     pub cached_sequence: Option<CachedSequence>, // derived pixel sequence cache
+    pub start_pending: bool, // first note waits for the next master beat (start sync)
+    pub wakes_since_step: u32, // quarter-beat wakes elapsed since the last step
 }
 
 impl Default for Playback {
@@ -298,6 +305,8 @@ impl Default for Playback {
             ],
             note_generation: 0,
             cached_sequence: None,
+            start_pending: false,
+            wakes_since_step: 0,
         }
     }
 }

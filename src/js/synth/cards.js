@@ -137,6 +137,17 @@ export function applySynthConfig(el, cfg) {
     // Sustain: false by default (pizzicato) — also the backend's default
     // for sessions saved before the option existed
     el.querySelector('.synth-note-sustain').classList.toggle('active', !!cfg.note_sustain);
+    // Master-tempo quantize: toggle + resync period (1-8 beats, default 4
+    // for sessions saved before the option existed)
+    const quantizeBtn = el.querySelector('.synth-quantize');
+    const quantizeTempoInput = el.querySelector('.synth-quantize-tempo');
+    quantizeBtn.classList.toggle('active', !!cfg.quantize);
+    quantizeBtn.setAttribute('aria-pressed', String(!!cfg.quantize));
+    quantizeTempoInput.classList.toggle('inactive', !cfg.quantize);
+    const quantizeBeats = Number.isFinite(cfg.quantize_beats)
+        ? Math.min(8, Math.max(1, Math.round(cfg.quantize_beats)))
+        : 4;
+    quantizeTempoInput.value = String(quantizeBeats);
     // Note ranges (mono + one per voice)
     const setRange = (group, toggles) => ['bass', 'medium', 'treble'].forEach((kind, i) => {
         group.querySelector(`.synth-${kind}`).classList.toggle('active', !!(toggles && toggles[i]));
@@ -624,6 +635,28 @@ export function createSynthElement(id, cfg = null) {
         btn.classList.toggle('active', sustain);
         invoke('set_synth_note_sustain', { id, sustain })
             .catch(err => console.error('Error in set_synth_note_sustain:', err));
+    });
+
+    // ---- Master-tempo quantize: realign the step grid on the beat ----
+    // The toggle enables the resync; the number input sets its period in
+    // beats (1-8). Both are safe to change while playing: the metronome
+    // thread reads them live.
+    const quantizeBtn = el.querySelector('.synth-quantize');
+    const quantizeTempoInput = el.querySelector('.synth-quantize-tempo');
+    quantizeBtn.addEventListener('click', () => {
+        const enabled = !quantizeBtn.classList.contains('active');
+        quantizeBtn.classList.toggle('active', enabled);
+        quantizeBtn.setAttribute('aria-pressed', String(enabled));
+        quantizeTempoInput.classList.toggle('inactive', !enabled);
+        invoke('set_synth_quantize', { id, enabled })
+            .catch(err => console.error('Error in set_synth_quantize:', err));
+    });
+    quantizeTempoInput.addEventListener('change', () => {
+        const raw = Math.round(Number(quantizeTempoInput.value));
+        const beats = Number.isFinite(raw) ? Math.min(8, Math.max(1, raw)) : 4;
+        quantizeTempoInput.value = String(beats);
+        invoke('set_synth_quantize_beats', { id, beats })
+            .catch(err => console.error('Error in set_synth_quantize_beats:', err));
     });
 
     // ---- R/G/B channel toggles (polyphonic mode) ----

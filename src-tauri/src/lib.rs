@@ -93,6 +93,8 @@ pub fn run() {
             synth::set_synth_program,
             synth::set_synth_name,
             synth::set_synth_tempo,
+            synth::set_synth_quantize,
+            synth::set_synth_quantize_beats,
             synth::set_synth_brightness_range,
             synth::set_synth_velocity_range,
             synth::set_synth_velocity_relative,

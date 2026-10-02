@@ -920,6 +920,48 @@ fn step_synth_once(
     note_length
 }
 
+/// Smallest resync boundary strictly after `wake`: a multiple of
+/// `beats * 4` wakes (one beat = 4 quarter-beat wakes). `beats` is the
+/// quantize period in master beats (1-8).
+fn next_resync_boundary(wake: u64, beats: u8) -> u64 {
+    let period = beats.max(1) as u64 * 4;
+    (wake / period + 1) * period
+}
+
+/// Whether a due step must be held until the next resync boundary: true
+/// when the boundary falls before the following step (closer than the
+/// interval of the step that just completed). A step landing exactly on a
+/// boundary is never held. Delay-only: a step is never advanced, so a
+/// sounding note is never cut by the quantize.
+fn should_hold_for_quantize(wake: u64, beats: u8, interval_wakes: u32) -> bool {
+    let period = beats.max(1) as u64 * 4;
+    if wake.is_multiple_of(period) {
+        return false;
+    }
+    next_resync_boundary(wake, beats) - wake < interval_wakes.max(1) as u64
+}
+
+/// Turns off every sounding note of a synth (mono + polyphonic voices) and
+/// clears their `note_is_on` flags. Used when the quantize holds a step:
+/// the note that just finished its duration is released instead of being
+/// extended until the boundary.
+fn release_sounding_notes(synth: &mut Synth, midi: &MidiState) {
+    if synth.playback.note_is_on {
+        midi.note_off(
+            synth.config.midi_port,
+            synth.config.channel,
+            synth.playback.note,
+        );
+        synth.playback.note_is_on = false;
+    }
+    for voice in synth.playback.poly_voices.iter_mut() {
+        if voice.note_is_on {
+            midi.note_off(synth.config.midi_port, synth.config.channel, voice.note);
+            voice.note_is_on = false;
+        }
+    }
+}
+
 /// Duration of a note length, in beats of the synth's own tempo.
 fn length_beats(length: NoteLength) -> f64 {
     match length {
@@ -1429,6 +1471,30 @@ pub fn start_metronome(app: AppHandle, state: tauri::State<MetronomeState>) {
                         continue;
                     }
 
+                    // Start sync: the very first note waits for the next
+                    // master beat (wake % 4 == 0) so playback begins in phase
+                    // with the metronome. Nothing is accumulated while
+                    // waiting; the beat wake then plays the first pixel.
+                    if synth.playback.start_pending {
+                        if !wake.is_multiple_of(4) {
+                            continue;
+                        }
+                        synth.playback.start_pending = false;
+                        synth.playback.tempo_accumulator = 0.0;
+                        synth.playback.wakes_since_step = 0;
+                        let played_length = step_synth_once(&app, synth, image, &midi_state);
+                        if let Some(length_beats) = played_length {
+                            synth.playback.tempo_accumulator = 1.0 - length_beats;
+                        }
+                        continue;
+                    }
+
+                    // Interval of the step being completed, in quarter-beat
+                    // wakes: incremented on every wake, reset when the synth
+                    // steps. Used by the quantize look-ahead below.
+                    synth.playback.wakes_since_step =
+                        synth.playback.wakes_since_step.saturating_add(1);
+
                     // Tempo desynchronization: each quarter-beat wake adds a
                     // quarter of the synth's tempo ratio to its accumulator;
                     // the synth advances when at least one full step has
@@ -1437,7 +1503,35 @@ pub fn start_metronome(app: AppHandle, state: tauri::State<MetronomeState>) {
                     if synth.playback.tempo_accumulator < 1.0 {
                         continue;
                     }
-                    synth.playback.tempo_accumulator -= 1.0;
+
+                    // Master-tempo quantize: hold a due step until the next
+                    // resync boundary when that boundary falls before the
+                    // following step. Delay-only — a step is never advanced,
+                    // so a sounding note is never cut. With note lengths
+                    // enabled the note that just elapsed is released instead
+                    // of being extended until the boundary.
+                    if synth.config.quantize
+                        && should_hold_for_quantize(
+                            wake,
+                            synth.config.quantize_beats,
+                            synth.playback.wakes_since_step,
+                        )
+                    {
+                        if !synth.config.note_lengths.is_empty() {
+                            release_sounding_notes(synth, &midi_state);
+                        }
+                        continue;
+                    }
+
+                    // On a resync boundary the accumulator is reset cleanly
+                    // (a fresh phase anchor) instead of subtracting the step.
+                    let on_boundary = synth.config.quantize
+                        && wake.is_multiple_of(synth.config.quantize_beats.max(1) as u64 * 4);
+                    if on_boundary {
+                        synth.playback.tempo_accumulator = 0.0;
+                    } else {
+                        synth.playback.tempo_accumulator -= 1.0;
+                    }
 
                     let played_length = step_synth_once(&app, synth, image, &midi_state);
                     if let Some(length_beats) = played_length {
@@ -1448,6 +1542,7 @@ pub fn start_metronome(app: AppHandle, state: tauri::State<MetronomeState>) {
                         // metronome beats).
                         synth.playback.tempo_accumulator = 1.0 - length_beats;
                     }
+                    synth.playback.wakes_since_step = 0;
                 }
             }
 
@@ -2407,5 +2502,56 @@ mod tests {
         let seq =
             build_pixel_sequence(&[out_of_bounds], 8, 4, ReadingDirection::LeftToRight, false);
         assert!(seq.is_empty());
+    }
+
+    // --- Master-tempo quantize ---
+
+    #[test]
+    fn next_resync_boundary_is_strictly_after_the_wake() {
+        // N = 4 beats → one boundary every 16 wakes
+        assert_eq!(next_resync_boundary(0, 4), 16);
+        assert_eq!(next_resync_boundary(15, 4), 16);
+        assert_eq!(next_resync_boundary(16, 4), 32);
+        assert_eq!(next_resync_boundary(17, 4), 32);
+        // N = 1 beat → every 4 wakes
+        assert_eq!(next_resync_boundary(0, 1), 4);
+        assert_eq!(next_resync_boundary(3, 1), 4);
+        // Out-of-range periods are clamped to at least one beat
+        assert_eq!(next_resync_boundary(3, 0), 4);
+    }
+
+    #[test]
+    fn quantize_never_holds_a_step_landing_on_a_boundary() {
+        // wake 16 is a boundary for N = 4: the step must fire, not be held
+        assert!(!should_hold_for_quantize(16, 4, 4));
+        assert!(!should_hold_for_quantize(0, 4, 1));
+    }
+
+    #[test]
+    fn quantize_holds_when_the_boundary_is_closer_than_the_next_step() {
+        // N = 4 → boundary at wake 16. A step due at wake 15 has an interval
+        // of 4 wakes (the following step would be at 19, past the boundary):
+        // hold it to 16.
+        assert!(should_hold_for_quantize(15, 4, 4));
+        // A step due at wake 12 (interval 4) would step again at 16, exactly
+        // on the boundary: no hold.
+        assert!(!should_hold_for_quantize(12, 4, 4));
+        // A slower synth (interval 8) is held as soon as it is within a full
+        // step of the boundary.
+        assert!(should_hold_for_quantize(9, 4, 8));
+        // A zero interval is treated as one wake: a step due one wake before
+        // the boundary would step exactly on it, so it is not held.
+        assert!(!should_hold_for_quantize(15, 4, 0));
+        assert!(should_hold_for_quantize(15, 4, 2));
+    }
+
+    #[test]
+    fn quantize_hold_adapts_to_the_period() {
+        // N = 1 → boundary at wake 4; a step due at 3 (interval 4) is held
+        assert!(should_hold_for_quantize(3, 1, 4));
+        // N = 8 → boundary at wake 32; wake 20 is more than one interval (8)
+        // away: no hold yet
+        assert!(!should_hold_for_quantize(20, 8, 8));
+        assert!(should_hold_for_quantize(25, 8, 8));
     }
 }

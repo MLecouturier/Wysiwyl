@@ -294,6 +294,37 @@
             }
         }
 
+        // Quantize resync period, next to its toggle on the play row:
+        // greyed out while the quantize is disabled (the value is kept).
+        .synth-quantize-tempo {
+            width: 3rem;
+            height: 1.75rem;
+            padding: .25rem .375rem;
+            font-size: .78rem;
+            background-color: $color-bg-medium;
+            color: $color-text-primary;
+            border: 1px solid $color-border;
+            border-radius: $border-radius-base;
+            outline: none;
+            text-align: center;
+            font-variant-numeric: tabular-nums;
+            cursor: ns-resize;
+
+            &::-webkit-inner-spin-button,
+            &::-webkit-outer-spin-button {
+                -webkit-appearance: none;
+                margin: 0;
+            }
+
+            &:hover { border-color: $color-accent; }
+            &:focus { border-color: $color-accent; }
+
+            // Greyed while the quantize toggle is off (the value is kept)
+            &.inactive {
+                opacity: .45;
+            }
+        }
+
         // Play button: icon + label. Red while playing — the documented
         // exception to "active = accent": red reads as "stop".
         .synth-play {
