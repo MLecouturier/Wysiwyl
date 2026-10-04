@@ -45,6 +45,7 @@ import {
     scrollSynthCardIntoView, renumberSynthIds, configureSynthCards,
     toggleSynthMute, cancelTransientTools,
 } from './synth/cards.js';
+import { initSynthMenu } from './synth/menu.js';
 import {
     syncLabels, updatePreviewSrc, refresh, exitCropMode, closeTransformPanel,
     isTransformActive, redrawTransformOverlay,
@@ -791,6 +792,7 @@ configureSynthCards({
     ensureMetronomeStarted: metronome.ensureStarted,
     stopMetronomeIfIdle: metronome.stopIfIdle,
     updateImageControlsLockState,
+    initSynthMenu,
 });
 
 // Mouse-wheel / trackpad stepper for hovered numeric inputs (BPM,

@@ -16,16 +16,21 @@
     <div class="synth-color-picker hidden">
         <div class="color-swatches"></div>
     </div>
+    <div class="synth-menu hidden">
+        <button class="synth-menu-item synth-menu-save-template" type="button" data-i18n="synth.menuSaveTemplate" data-i18n-title="synth.menuSaveTemplate"></button>
+        <button class="synth-menu-item synth-menu-copy-params" type="button" data-i18n="synth.menuCopyParams" data-i18n-title="synth.menuCopyParams"></button>
+        <button class="synth-menu-item synth-menu-copy-zones" type="button" data-i18n="synth.menuCopyZones" data-i18n-title="synth.menuCopyZones"></button>
+    </div>
     <div class="synth-header">
         <div class="synth-header-row">
             <select class="synth-midi-port" data-i18n-title="synth.midiPort"></select>
             <select class="synth-channel"></select>
             <div class="flex-fill"></div>
-            <button class="synth-save-template icon-btn" data-i18n-title="synth.saveAsTemplate">
-                <span class="material-symbols-outlined" aria-hidden="true">bookmark_add</span>
-            </button>
             <button class="synth-toggle-full-options icon-btn" data-i18n-title="synth.toggleFullOptions">
                 <span class="material-symbols-outlined" aria-hidden="true">collapse_all</span>
+            </button>
+            <button class="synth-toggle-menu icon-btn" data-i18n-title="synth.toggleMenu">
+                <span class="material-symbols-outlined" aria-hidden="true">more_vert</span>
             </button>
             <button class="synth-remove icon-btn" data-i18n-title="synth.remove">
                 <span class="material-symbols-outlined" aria-hidden="true">close</span>

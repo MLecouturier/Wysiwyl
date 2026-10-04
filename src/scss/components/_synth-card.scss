@@ -115,6 +115,48 @@
         }
     }
 
+    // Per-synth actions menu (save as template, copy parameters/zones),
+    // opened by the "more" button of the header.
+    .synth-menu {
+        position: absolute;
+        right: .5rem;
+        top: 2.5rem;
+        z-index: 120;
+        min-width: 12rem;
+        display: flex;
+        flex-direction: column;
+        gap: .125rem;
+        padding: .25rem;
+        background-color: $color-bg-dark;
+        border: 1px solid $color-border;
+        border-radius: $border-radius-base;
+        box-shadow: 0 .25rem 1rem rgba(0, 0, 0, 0.5);
+
+        .synth-menu-item {
+            display: flex;
+            align-items: center;
+            gap: .5rem;
+            width: 100%;
+            padding: .375rem .5rem;
+            border: none;
+            border-radius: $border-radius-base;
+            background: none;
+            color: $color-text-primary;
+            font-size: .82rem;
+            text-align: left;
+            cursor: pointer;
+            transition: background-color $transition-fast, color $transition-fast;
+
+            &:hover:not(:disabled) { background-color: $color-bg-light; }
+
+            &:disabled {
+                color: $color-text-muted;
+                opacity: .6;
+                cursor: not-allowed;
+            }
+        }
+    }
+
     .synth-header {
         display: flex;
         flex-direction: column;
@@ -160,14 +202,6 @@
             text-align: center;
             width: 100%;
             outline: none;
-        }
-
-        // Template saved: transient green confirmation (~800 ms) — one of
-        // the two documented exceptions to the "active = accent" rule
-        .synth-save-template.active {
-            background-color: transparent;
-            border-color: $color-accent-alt;
-            color: $color-accent-alt;
         }
 
         // Remove: destructive action guarded by a confirmation click.

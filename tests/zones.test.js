@@ -15,6 +15,7 @@ import {
     zonesPixelCount,
     zonesEqual,
     rebuildZones,
+    mergeZones,
 } from '../src/js/core/geometry.js';
 
 const sortedCells = (set) => [...set].sort();
@@ -125,4 +126,37 @@ test('rebuildZones returns an empty list for an empty cell set', () => {
 test('seedZoneOrder resumes past every order already in use', () => {
     seedZoneOrder([{ order: 2, runs: [] }, { order: 7, runs: [] }]);
     assert.equal(nextZoneOrder(), 8);
+});
+
+test('mergeZones fuses touching zones keeping the base order', () => {
+    const base = [rectZone(0, 0, 2, 1, 10)];   // (0,0),(1,0)
+    const added = [rectZone(0, 1, 2, 1, 99)];  // (0,1),(1,1), touches the base
+    const merged = mergeZones(base, added);
+    assert.equal(merged.length, 1);            // one connected component
+    assert.equal(merged[0].order, 10);         // the base order survives
+    assert.deepEqual(sortedCells(zoneCellSet(merged)), ['0,0', '0,1', '1,0', '1,1']);
+});
+
+test('mergeZones keeps the base order when zones overlap', () => {
+    const base = [rectZone(0, 0, 2, 2, 5)];
+    const added = [rectZone(1, 1, 2, 2, 7)];
+    const merged = mergeZones(base, added);
+    assert.equal(merged.length, 1);
+    assert.equal(merged[0].order, 5);
+    assert.deepEqual(sortedCells(zoneCellSet(merged)),
+        ['0,0', '0,1', '1,0', '1,1', '1,2', '2,1', '2,2']);
+});
+
+test('mergeZones keeps disjoint zones distinct', () => {
+    const base = [rectZone(0, 0, 1, 1, 1)];
+    const added = [rectZone(5, 5, 1, 1, 2)];
+    const merged = mergeZones(base, added);
+    assert.equal(merged.length, 2);
+    assert.deepEqual(merged.map(z => z.order).sort((a, b) => a - b), [1, 2]);
+});
+
+test('mergeZones with an empty side is a no-op', () => {
+    const base = [rectZone(0, 0, 2, 1, 3)];
+    assert.deepEqual(zoneCellSet(mergeZones(base, [])), zoneCellSet(base));
+    assert.deepEqual(zoneCellSet(mergeZones([], base)), zoneCellSet(base));
 });

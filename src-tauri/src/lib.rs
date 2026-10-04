@@ -81,6 +81,7 @@ pub fn run() {
             metronome::step_synth,
             // --- Synthesizers (synth.rs) ---
             synth::add_synth,
+            synth::copy_synth_params,
             synth::remove_synth,
             synth::set_synth_order,
             synth::start_synth,

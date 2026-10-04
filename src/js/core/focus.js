@@ -78,8 +78,8 @@ export function installFocusPolicy() {
         if (event.detail === 0) return;
         const active = document.activeElement;
         if (!active || active.tagName !== 'BUTTON') return;
-        // The unsaved-session modal owns its own focus (trap + restore).
-        if (active.closest('#session-unsaved-modal')) return;
+        // An open modal owns its own focus (trap + restore).
+        if (active.closest('.modal-overlay')) return;
         restoreFocusToViewer();
     }, true);
 }

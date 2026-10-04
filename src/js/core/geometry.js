@@ -168,6 +168,17 @@ export function rebuildZones(oldZones, cells) {
     return zones;
 }
 
+// Merges `addedZones` into `baseZones`: the union of their cells is rebuilt
+// into connected components. Both sides count as "old" zones, so a component
+// keeps the eldest creation order it touches (a fused base+added component
+// keeps the earlier of the two) and a disjoint added zone keeps its own
+// order. Backs the "Copy zones → Merge" action.
+export function mergeZones(baseZones, addedZones) {
+    const cells = cellSetFromZones(baseZones);
+    for (const key of cellSetFromZones(addedZones)) cells.add(key);
+    return rebuildZones([...baseZones, ...addedZones], cells);
+}
+
 // Shared zone rendering for the main viewer and the projection mirror
 // window. Pure drawing helpers only: no app state, no event handling —
 // both windows own their own state and canvases, and feed them to these

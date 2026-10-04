@@ -269,6 +269,22 @@
         </div>
     </div>
 
+    <!-- Copy another synth's parameters or zones onto a synth -->
+    <div id="synth-copy-modal" class="modal-overlay hidden">
+        <div class="modal-box">
+            <h3 id="synth-copy-title"></h3>
+            <p id="synth-copy-hint" class="text-muted"></p>
+            <select id="synth-copy-source" class="synth-copy-source-select"></select>
+            <div class="modal-actions">
+                <div class="flex-fill"></div>
+                <button id="synth-copy-merge" class="primary" data-i18n="synth.copyModeMerge"></button>
+                <button id="synth-copy-replace" class="secondary" data-i18n="synth.copyModeReplace"></button>
+                <button id="synth-copy-confirm" class="primary" data-i18n="synth.copyActionCopy"></button>
+                <button id="synth-copy-cancel" class="secondary" data-i18n="synth.copyCancel"></button>
+            </div>
+        </div>
+    </div>
+
     <script type="module" src="js/main.js"></script>
 </body>
 </html>

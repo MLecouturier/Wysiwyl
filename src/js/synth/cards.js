@@ -37,6 +37,7 @@ let hooks = {
     ensureMetronomeStarted: async () => {},
     stopMetronomeIfIdle: async () => {},
     updateImageControlsLockState: () => {},
+    initSynthMenu: () => {},
 };
 export function configureSynthCards(injected) {
     hooks = { ...hooks, ...injected };
@@ -258,17 +259,6 @@ export function createSynthElement(id, cfg = null) {
     if (cfg) applySynthConfig(el, cfg);
 
     el.querySelector('.synth-play').addEventListener('click', () => onSynthPlayClick(id, el));
-
-    // ---- Save this synth's settings as the default template ----
-    const saveTemplateBtn = el.querySelector('.synth-save-template');
-    saveTemplateBtn.addEventListener('click', () => {
-        invoke('set_default_synth_from', { id })
-            .then(() => {
-                saveTemplateBtn.classList.add('active');
-                setTimeout(() => saveTemplateBtn.classList.remove('active'), 800);
-            })
-            .catch(err => console.error('Error in set_default_synth_from:', err));
-    });
 
     // ---- Custom name: double-click the title to rename it ----
     const titleLabel = el.querySelector('.synth-title-label');
@@ -785,6 +775,10 @@ export function createSynthElement(id, cfg = null) {
         invoke('set_synth_velocity_relative', { id, enabled })
             .catch(err => console.error('Error in set_synth_velocity_relative:', err));
     });
+
+    // The per-card actions menu (save as template, copy parameters/zones):
+    // wired by synth/menu.js through this hook, so cards.js never imports it.
+    hooks.initSynthMenu(el);
 
     return el;
 }

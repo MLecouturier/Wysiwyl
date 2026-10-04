@@ -67,6 +67,47 @@ pub fn add_synth(
     Ok(SynthView::from(&synth))
 }
 
+/// Copies `from`'s configuration onto `to`, keeping `to`'s MIDI routing
+/// (`midi_port` and `channel`): the target keeps driving the same instrument
+/// on the same channel, only its sound/behaviour parameters are replaced.
+/// The cached pixel sequence is dropped (the reading direction and the
+/// sorted-reading flag are part of the configuration). Pure over the synth
+/// map, so it is unit-tested without the Tauri state.
+pub fn copy_config_between(
+    synths: &mut HashMap<u32, Synth>,
+    from: u32,
+    to: u32,
+) -> Result<(), AppError> {
+    let mut config = synths
+        .get(&from)
+        .ok_or_else(|| synth_not_found(from))?
+        .config
+        .clone();
+    let target = synths.get_mut(&to).ok_or_else(|| synth_not_found(to))?;
+    config.midi_port = target.config.midi_port;
+    config.channel = target.config.channel;
+    target.config = config;
+    target.invalidate_sequence();
+    Ok(())
+}
+
+/// Copies another synthesizer's parameters onto this one (the "Copy
+/// parameters from…" menu action). The target's MIDI port and channel are
+/// preserved; everything else (mode, ranges, thresholds, note lengths,
+/// loop, direction, scale, volume, quantize…) is taken from the source.
+/// Returns the updated view so the UI can reflect it.
+#[tauri::command]
+pub fn copy_synth_params(
+    from_id: u32,
+    to_id: u32,
+    state: State<SynthState>,
+) -> Result<SynthView, AppError> {
+    let mut synths = state.synths.lock().unwrap();
+    copy_config_between(&mut synths, from_id, to_id)?;
+    let target = synths.get(&to_id).ok_or_else(|| synth_not_found(to_id))?;
+    Ok(SynthView::from(target))
+}
+
 #[tauri::command]
 pub fn remove_synth(id: u32, state: State<SynthState>) {
     state.synths.lock().unwrap().remove(&id);
@@ -911,5 +952,59 @@ mod tests {
         assert!(renumber_synths(&mut synths, &mut next_id, &[2, 2]).is_err());
         assert_eq!(synths.len(), 2);
         assert_eq!(next_id, 3);
+    }
+
+    #[test]
+    fn copy_config_between_replaces_params_but_keeps_routing() {
+        let mut synths = state_with_ids(&[1, 2]);
+        {
+            let src = synths.get_mut(&1).unwrap();
+            src.config.tempo_ratio = 0.5;
+            src.config.mode = SynthMode::Polyphonic;
+            src.config.volume = 64;
+            src.config.hue_shift = 200;
+            src.config.midi_port = 3;
+            src.config.channel = 5;
+        }
+        {
+            let dst = synths.get_mut(&2).unwrap();
+            dst.config.midi_port = 9;
+            dst.config.channel = 2;
+            dst.playback.cached_sequence = Some(crate::state::CachedSequence {
+                width: 1,
+                height: 1,
+                sequence: vec![],
+            });
+        }
+
+        copy_config_between(&mut synths, 1, 2).unwrap();
+
+        let dst = synths.get(&2).unwrap();
+        assert_eq!(dst.config.tempo_ratio, 0.5);
+        assert!(matches!(dst.config.mode, SynthMode::Polyphonic));
+        assert_eq!(dst.config.volume, 64);
+        assert_eq!(dst.config.hue_shift, 200);
+        // Routing preserved on the target
+        assert_eq!(dst.config.midi_port, 9);
+        assert_eq!(dst.config.channel, 2);
+        // The derived pixel sequence is dropped
+        assert!(dst.playback.cached_sequence.is_none());
+    }
+
+    #[test]
+    fn copy_config_between_self_is_a_no_op() {
+        let mut synths = state_with_ids(&[1]);
+        synths.get_mut(&1).unwrap().config.tempo_ratio = 0.75;
+        copy_config_between(&mut synths, 1, 1).unwrap();
+        assert_eq!(synths.get(&1).unwrap().config.tempo_ratio, 0.75);
+    }
+
+    #[test]
+    fn copy_config_between_reports_missing_ids() {
+        let mut synths = state_with_ids(&[1, 2]);
+        assert!(copy_config_between(&mut synths, 9, 2).is_err());
+        assert!(copy_config_between(&mut synths, 1, 9).is_err());
+        // Nothing was mutated
+        assert_eq!(synths.len(), 2);
     }
 }
