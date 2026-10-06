@@ -1,5 +1,6 @@
 pub mod config;
 pub mod error;
+pub mod gate;
 pub mod image_processing;
 pub mod locks;
 pub mod metronome;
@@ -33,6 +34,9 @@ pub fn run() {
             // MIDI clock straight to Wysiwyl (Unix only)
             #[cfg(unix)]
             midi::start_virtual_input_listener(app.handle());
+
+            // Delayed Note Off scheduler for the pizzicato minimum gate
+            app.manage(gate::GateState::start(app.handle().clone()));
 
             // Load the persisted configuration and apply it
             let loaded = config::load_config(app.handle());

@@ -86,6 +86,14 @@ pub struct AppConfig {
     /// one increment, whatever this value. Hand-edited values are
     /// clamped to 1–2000 on load.
     pub wheel_trackpad_threshold: u32,
+    /// Minimum duration (ms) of a note in the pizzicato articulation
+    /// (`note_sustain = false`): the Note Off is delayed by that much
+    /// instead of being sent in the same packet as the Note On. This lets
+    /// instruments whose envelope needs time to rise (most software synths)
+    /// produce an audible pluck. 0 restores the historical behavior (the
+    /// Note Off is immediate and the instrument's release shapes the tail).
+    /// Hand-edited values are clamped to 0–1000 on load.
+    pub pizzicato_gate_ms: u32,
 }
 
 impl Default for AppConfig {
@@ -100,6 +108,7 @@ impl Default for AppConfig {
             synth_colors: default_synth_colors(),
             enabled_scales: default_enabled_scales(),
             wheel_trackpad_threshold: 100,
+            pizzicato_gate_ms: 40,
         }
     }
 }
@@ -146,6 +155,8 @@ impl AppConfig {
         self.enabled_scales = seen;
         // Trackpad scroll feel: keep the threshold in a usable range
         self.wheel_trackpad_threshold = self.wheel_trackpad_threshold.clamp(1, 2000);
+        // Pizzicato gate: at most one second, 0 = immediate Note Off
+        self.pizzicato_gate_ms = self.pizzicato_gate_ms.min(1000);
     }
 }
 
@@ -333,6 +344,27 @@ mod tests {
         config.synth_colors = vec![];
         config.sanitize();
         assert_eq!(config.synth_colors, default_synth_colors());
+    }
+
+    #[test]
+    fn sanitize_clamps_pizzicato_gate() {
+        let mut config = AppConfig {
+            pizzicato_gate_ms: 5000,
+            ..AppConfig::default()
+        };
+        config.sanitize();
+        assert_eq!(config.pizzicato_gate_ms, 1000);
+
+        // 0 is valid: the historical immediate Note Off
+        let mut config = AppConfig {
+            pizzicato_gate_ms: 0,
+            ..AppConfig::default()
+        };
+        config.sanitize();
+        assert_eq!(config.pizzicato_gate_ms, 0);
+
+        // The default is a usable minimum gate
+        assert_eq!(AppConfig::default().pizzicato_gate_ms, 40);
     }
 
     #[test]

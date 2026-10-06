@@ -212,6 +212,8 @@ pub fn stop_synth(
             synth.playback.tempo_accumulator = 0.0;
             synth.playback.start_pending = false;
             synth.playback.wakes_since_step = 0;
+            // Cancel any pizzicato gate scheduled for the notes released below
+            synth.playback.note_generation = synth.playback.note_generation.wrapping_add(1);
 
             // Immediately turn off the current mono note, if it is still sounding
             if synth.playback.note_is_on {
@@ -649,6 +651,12 @@ pub fn set_synth_note_sustain(
     let mut synths = state.synths.lock().unwrap();
     match synths.get_mut(&id) {
         Some(synth) => {
+            if synth.config.note_sustain != sustain {
+                // A pending pizzicato gate is now stale: either the notes
+                // are released below (sustain turned off), or the switch to
+                // sustain must not cut the now-held note.
+                synth.playback.note_generation = synth.playback.note_generation.wrapping_add(1);
+            }
             if synth.config.note_sustain && !sustain {
                 if synth.playback.note_is_on {
                     midi_state.note_off(

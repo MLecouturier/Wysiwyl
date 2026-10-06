@@ -73,6 +73,7 @@ Un fichier de configuration JSON (ouvrable via le bouton engrenage des paramètr
 - **`max_image_size`** — plus grand côté autorisé pour les images importées ; les images plus grandes sont redimensionnées à l'import (0 = illimitée).
 - **`default_bpm`** — tempo du métronome utilisé au démarrage.
 - **`default_synth`** — gabarit appliqué à chaque nouveau synthétiseur ; n'importe quel synthé existant peut être enregistré comme gabarit via son bouton marque-page (« Utiliser ce synthé comme modèle par défaut »).
+- **`pizzicato_gate_ms`** — durée minimale (ms) d'une note en articulation pizzicato (`note_sustain = false`) : le Note Off est différé d'autant au lieu d'être envoyé dans le même paquet que le Note On, pour que les synthés logiciels dont l'enveloppe a besoin de temps pour monter (Vital, etc.) produisent un vrai pluck. `0` restaure le comportement historique (Note Off immédiat, le release de l'instrument façonnant la queue) ; défaut `40`, borné à 0–1000. La durée effective est plafonnée par l'articulation suivante.
 
 ## Stack technique
 

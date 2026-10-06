@@ -9,6 +9,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::config::ConfigState;
 use crate::error::{err, AppError};
+use crate::gate::{GateOff, GateState};
 use crate::midi;
 use crate::state::{
     CachedSequence, ImageState, MidiState, NoteLength, ReadingDirection, RowRun, Scale, Synth,
@@ -657,6 +658,16 @@ pub(crate) fn remapped_cursor(
     0
 }
 
+/// Whether the pixel's articulation must force a re-articulation (Note Off
+/// of the previous note + Note On of the new one) even when the note did not
+/// change. Note lengths already retrigger every pixel. Pizzicato without a
+/// minimum gate retriggers through its immediate Note Off clearing
+/// `note_is_on`; pizzicato with a gate keeps `note_is_on` set until the
+/// scheduled Note Off, so it must force the retrigger explicitly.
+fn pizzicato_retrigger(note_lengths_enabled: bool, note_sustain: bool, gate_ms: u32) -> bool {
+    note_lengths_enabled || (!note_sustain && gate_ms > 0)
+}
+
 /// Plays the pixel at the synth's current playhead position, then advances
 /// the playhead by one pixel in its zone sequence (MIDI notes + UI payload),
 /// exactly like a metronome tick would. Used both by the metronome thread
@@ -723,6 +734,8 @@ fn step_synth_once(
             synth.playback.playing = false;
             synth.playback.cursor = 0;
             synth.playback.tempo_accumulator = 0.0;
+            // Cancel any pizzicato gate scheduled for the notes released below
+            synth.playback.note_generation = synth.playback.note_generation.wrapping_add(1);
             // Turn off the current mono note if it is still sounding
             if synth.playback.note_is_on {
                 midi.note_off(
@@ -778,15 +791,20 @@ fn step_synth_once(
     } else {
         Some(pick_note_length(synth, brightness_level))
     };
-    let retrigger = note_length.is_some();
 
-    // User-configurable note-range bounds (bass, medium, treble)
-    let note_range_bounds = app
-        .state::<ConfigState>()
-        .config
-        .lock()
-        .unwrap()
-        .note_range_bounds;
+    // User-configurable note-range bounds (bass, medium, treble) and the
+    // pizzicato minimum gate, both from the global configuration.
+    let (note_range_bounds, gate_ms) = {
+        let config = app.state::<ConfigState>();
+        let config = config.config.lock().unwrap();
+        (config.note_range_bounds, config.pizzicato_gate_ms)
+    };
+
+    // Pizzicato with a minimum gate keeps `note_is_on` set until the
+    // scheduled Note Off, so it must force a re-articulation on every pixel:
+    // otherwise a run of identical pixels would hold one note instead of
+    // plucking each. With note lengths enabled the retrigger is already on.
+    let retrigger = pizzicato_retrigger(note_length.is_some(), synth.config.note_sustain, gate_ms);
 
     // The grid dimensions travel with the cursor so the frontend and the
     // projection mirror decode the absolute pixel index against the grid
@@ -844,28 +862,52 @@ fn step_synth_once(
         }
     }
 
-    // Pizzicato: with the sustain disabled, release the notes right
-    // after their articulation — the Note Off is sent immediately after
-    // the Note On, and the instrument's natural decay (its release
-    // phase) shapes the tail of the note instead of it holding for the
-    // full duration. The playback rhythm is unchanged: the note lengths
-    // still drive when the next pixel is played. Clearing note_is_on
-    // also makes every following pixel re-articulate, so a run of
-    // identical pixels becomes a series of plucks rather than one
-    // held note.
+    // Pizzicato: with the sustain disabled, release the notes right after
+    // their articulation. Without a minimum gate the Note Off is sent
+    // immediately (historical behavior): the instrument's natural decay
+    // shapes the tail, and clearing note_is_on makes every following pixel
+    // re-articulate. With a minimum gate the Note Off is deferred by
+    // `pizzicato_gate_ms` through the scheduler, so a software synth whose
+    // envelope needs time to rise produces a real pluck; the note_is_on
+    // flags stay set and the forced retrigger above turns the previous note
+    // off (bumping the generation, cancelling the stale gate). The playback
+    // rhythm is unchanged: note lengths still pace the pixels.
     if !synth.config.note_sustain {
-        if synth.playback.note_is_on {
-            midi.note_off(
-                synth.config.midi_port,
-                synth.config.channel,
-                synth.playback.note,
-            );
-            synth.playback.note_is_on = false;
-        }
-        for voice in synth.playback.poly_voices.iter_mut() {
-            if voice.note_is_on {
-                midi.note_off(synth.config.midi_port, synth.config.channel, voice.note);
-                voice.note_is_on = false;
+        if gate_ms == 0 {
+            if synth.playback.note_is_on {
+                midi.note_off(
+                    synth.config.midi_port,
+                    synth.config.channel,
+                    synth.playback.note,
+                );
+                synth.playback.note_is_on = false;
+            }
+            for voice in synth.playback.poly_voices.iter_mut() {
+                if voice.note_is_on {
+                    midi.note_off(synth.config.midi_port, synth.config.channel, voice.note);
+                    voice.note_is_on = false;
+                }
+            }
+        } else {
+            let mono = synth.playback.note_is_on.then_some(synth.playback.note);
+            let poly: Vec<(usize, u8)> = synth
+                .playback
+                .poly_voices
+                .iter()
+                .enumerate()
+                .filter(|(_, voice)| voice.note_is_on)
+                .map(|(index, voice)| (index, voice.note))
+                .collect();
+            if mono.is_some() || !poly.is_empty() {
+                app.state::<GateState>().schedule(GateOff {
+                    synth_id: synth.id,
+                    generation: synth.playback.note_generation,
+                    port: synth.config.midi_port,
+                    channel: synth.config.channel,
+                    mono,
+                    poly,
+                    deadline: Instant::now() + Duration::from_millis(gate_ms as u64),
+                });
             }
         }
     }
@@ -960,6 +1002,9 @@ fn release_sounding_notes(synth: &mut Synth, midi: &MidiState) {
             voice.note_is_on = false;
         }
     }
+    // Any pizzicato gate scheduled for the released notes is now stale:
+    // bump the generation so the scheduler cancels it.
+    synth.playback.note_generation = synth.playback.note_generation.wrapping_add(1);
 }
 
 /// Duration of a note length, in beats of the synth's own tempo.
@@ -1750,14 +1795,19 @@ pub fn step_synth(
         let beats = played_length.unwrap_or(1.0);
         let step_duration = ((interval_ms as f64) * beats / ratio).round().max(1.0) as u64;
 
-        // Capture the notes that are now sounding, to schedule their Note Off
+        // In the sustained articulation the notes are held for their full
+        // duration, so capture the sounding notes to schedule their Note
+        // Off. In pizzicato the gate scheduler (or the immediate Note Off
+        // when the gate is 0) already released them: nothing to schedule.
         let mut scheduled = Vec::new();
-        if synth.playback.note_is_on {
-            scheduled.push(synth.playback.note);
-        }
-        for voice in &synth.playback.poly_voices {
-            if voice.note_is_on {
-                scheduled.push(voice.note);
+        if synth.config.note_sustain {
+            if synth.playback.note_is_on {
+                scheduled.push(synth.playback.note);
+            }
+            for voice in &synth.playback.poly_voices {
+                if voice.note_is_on {
+                    scheduled.push(voice.note);
+                }
             }
         }
         (
@@ -2553,5 +2603,22 @@ mod tests {
         // away: no hold yet
         assert!(!should_hold_for_quantize(20, 8, 8));
         assert!(should_hold_for_quantize(25, 8, 8));
+    }
+
+    #[test]
+    fn pizzicato_retrigger_depends_on_lengths_sustain_and_gate() {
+        // Note lengths always retrigger, whatever the articulation
+        assert!(pizzicato_retrigger(true, false, 0));
+        assert!(pizzicato_retrigger(true, true, 0));
+        assert!(pizzicato_retrigger(true, false, 40));
+
+        // Sustained without note lengths: the next note holds, no retrigger
+        assert!(!pizzicato_retrigger(false, true, 40));
+
+        // Pizzicato without note lengths: a non-zero gate keeps the flags
+        // set, so the retrigger must be forced; a zero gate relies on the
+        // immediate Note Off clearing them
+        assert!(pizzicato_retrigger(false, false, 40));
+        assert!(!pizzicato_retrigger(false, false, 0));
     }
 }
