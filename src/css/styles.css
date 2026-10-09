@@ -1163,6 +1163,9 @@ button.toggle-btn.active.selective:hover {
 .synth-block .synth-body .note-length-btn {
   font-size: 1rem;
 }
+.synth-block .synth-body .synth-note-length-ternary {
+  font-weight: 600;
+}
 .synth-block .synth-body .synth-mode-btn {
   flex-grow: 1;
 }

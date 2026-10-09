@@ -426,6 +426,11 @@
             font-size: 1rem;
         }
 
+        // Binary/ternary toggle: a plain "3" marks the triplet division
+        .synth-note-length-ternary {
+            font-weight: 600;
+        }
+
         // Segmented monophonic/polyphonic control: the look comes from the
         // shared .toggle-btn, this rule only handles the layout
         .synth-mode-btn {

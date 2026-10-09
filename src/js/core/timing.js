@@ -14,6 +14,16 @@ export const NOTE_LENGTH_BEATS = {
     whole: 4,
 };
 
+// Ternary lengths are triplets: 3 in the time of 2, so each nominal
+// value is multiplied by 2/3 (mirror of the backend's length_beats).
+export const TERNARY_FACTOR = 2 / 3;
+
+// Duration in beats of a note-length key, optionally as a triplet.
+export function noteLengthBeats(key, ternary = false) {
+    const base = NOTE_LENGTH_BEATS[key] ?? NOTE_LENGTH_BEATS.quarter;
+    return ternary ? base * TERNARY_FACTOR : base;
+}
+
 // Duration in compact clock form: 0:42, 1:23, 1:02:03 (whole seconds,
 // locale-independent digits).
 export function formatDurationClock(totalSeconds) {

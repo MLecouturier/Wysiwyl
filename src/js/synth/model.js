@@ -5,7 +5,7 @@ import { clampBpm, currentBpm } from '../audio/metronome.js';
 import { zonesPixelCount } from '../core/geometry.js';
 import { applyTranslations, getLocale, t } from '../core/i18n.js';
 import { createStore, synthDisplayNumbers, synthHighlights, synthNames, viewer } from '../core/state.js';
-import { NOTE_LENGTH_BEATS, formatDurationClock, zonesTotalBeats } from '../core/timing.js';
+import { noteLengthBeats, formatDurationClock, zonesTotalBeats } from '../core/timing.js';
 import { midiNoteName } from '../core/utils.js';
 
 // Configurable synth options: the color palette, the note-range bounds
@@ -281,9 +281,10 @@ function synthZonesTotalBeats(id, el) {
     const hi = synthHighlights.get(id);
     if (!hi || !viewer.processedPixels || hi.zones.length === 0) return 0;
 
+    const ternary = el.querySelector('.synth-note-length-ternary').classList.contains('active');
     let lengths = Array.from(el.querySelectorAll('.note-length-btn.active'))
-        .map(btn => NOTE_LENGTH_BEATS[btn.dataset.length] ?? NOTE_LENGTH_BEATS.quarter);
-    if (lengths.length === 0) lengths = [NOTE_LENGTH_BEATS.quarter];
+        .map(btn => noteLengthBeats(btn.dataset.length, ternary));
+    if (lengths.length === 0) lengths = [noteLengthBeats('quarter', ternary)];
     lengths.sort((a, b) => a - b);
     if (el.querySelector('.synth-reverse-note-length').classList.contains('active')) {
         lengths.reverse();

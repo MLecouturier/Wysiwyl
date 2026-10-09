@@ -3,7 +3,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { NOTE_LENGTH_BEATS, formatDurationClock, zonesTotalBeats } from '../src/js/core/timing.js';
+import {
+    NOTE_LENGTH_BEATS,
+    TERNARY_FACTOR,
+    noteLengthBeats,
+    formatDurationClock,
+    zonesTotalBeats,
+} from '../src/js/core/timing.js';
 
 test('NOTE_LENGTH_BEATS mirrors the backend values', () => {
     assert.deepEqual(NOTE_LENGTH_BEATS, {
@@ -13,6 +19,23 @@ test('NOTE_LENGTH_BEATS mirrors the backend values', () => {
         half: 2,
         whole: 4,
     });
+});
+
+test('noteLengthBeats returns nominal values in binary mode', () => {
+    assert.equal(noteLengthBeats('quarter'), 1);
+    assert.equal(noteLengthBeats('eighth', false), 0.5);
+});
+
+test('noteLengthBeats applies the 2/3 triplet factor in ternary mode', () => {
+    assert.equal(TERNARY_FACTOR, 2 / 3);
+    assert.equal(noteLengthBeats('quarter', true), 2 / 3);
+    assert.equal(noteLengthBeats('eighth', true), 1 / 3);
+    assert.equal(noteLengthBeats('sixteenth', true), 1 / 6);
+});
+
+test('noteLengthBeats falls back to the quarter note for unknown keys', () => {
+    assert.equal(noteLengthBeats('nope'), 1);
+    assert.equal(noteLengthBeats('nope', true), 2 / 3);
 });
 
 test('formatDurationClock renders m:ss and h:mm:ss', () => {

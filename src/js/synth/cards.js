@@ -135,6 +135,7 @@ export function applySynthConfig(el, cfg) {
     });
     el.querySelector('.synth-reverse-note-length').classList.toggle('active', !!cfg.note_length_reversed);
     el.querySelector('.synth-note-length-section').classList.toggle('reversed', !!cfg.note_length_reversed);
+    el.querySelector('.synth-note-length-ternary').classList.toggle('active', !!cfg.note_length_ternary);
     // Sustain: false by default (pizzicato) — also the backend's default
     // for sessions saved before the option existed
     el.querySelector('.synth-note-sustain').classList.toggle('active', !!cfg.note_sustain);
@@ -611,6 +612,16 @@ export function createSynthElement(id, cfg = null) {
         el.querySelector('.synth-note-length-section').classList.toggle('reversed', reversed);
         invoke('set_synth_note_length_reversed', { id, reversed })
             .catch(err => console.error('Error in set_synth_note_length_reversed:', err));
+        updateZonesLabel(id);
+    });
+    // Ternary division (triplets): the enabled lengths are reinterpreted
+    // as 3-in-the-time-of-2. Inactive = binary (nominal values).
+    el.querySelector('.synth-note-length-ternary').addEventListener('click', (e) => {
+        const btn = e.currentTarget;
+        const ternary = !btn.classList.contains('active');
+        btn.classList.toggle('active', ternary);
+        invoke('set_synth_note_length_ternary', { id, ternary })
+            .catch(err => console.error('Error in set_synth_note_length_ternary:', err));
         updateZonesLabel(id);
     });
 

@@ -114,6 +114,7 @@ pub fn run() {
             synth::set_synth_hue_shift,
             synth::set_synth_note_lengths,
             synth::set_synth_note_length_reversed,
+            synth::set_synth_note_length_ternary,
             synth::set_synth_note_sustain,
             synth::set_synth_note_ranges,
             synth::set_synth_scale,

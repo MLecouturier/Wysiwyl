@@ -145,6 +145,7 @@
     "noteLengthEighth": "Croche (un demi-temps)",
     "noteLengthSixteenth": "Double croche (un quart de temps)",
     "reverseNoteLength": "Inverser le sens luminosité → longueur",
+    "noteLengthTernary": "Division ternaire (triolets : 3 dans le temps de 2)",
     "noteSustain": "Articulation des notes : tenue / pizzicato",
     "quantize": "Quantize sur le tempo principal (recalage tous les N temps)",
     "quantizeTempo": "Période de resynchronisation, en temps (1–8)",

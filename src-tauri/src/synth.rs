@@ -635,6 +635,25 @@ pub fn set_synth_note_length_reversed(
     }
 }
 
+/// Switches the enabled note lengths between binary subdivisions (their
+/// nominal values) and ternary ones (triplets: 3 in the time of 2, i.e.
+/// each length is multiplied by 2/3).
+#[tauri::command]
+pub fn set_synth_note_length_ternary(
+    id: u32,
+    ternary: bool,
+    state: State<SynthState>,
+) -> Result<(), AppError> {
+    let mut synths = state.synths.lock().unwrap();
+    match synths.get_mut(&id) {
+        Some(synth) => {
+            synth.config.note_length_ternary = ternary;
+            Ok(())
+        }
+        None => Err(synth_not_found(id)),
+    }
+}
+
 /// Toggles the note articulation: sustained (each note holds its full
 /// length, the Note Off arriving with the next note) or pizzicato (the
 /// Note Off is sent right after the Note On, the instrument's natural

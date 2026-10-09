@@ -145,6 +145,7 @@
     "noteLengthEighth": "Eighth note (half a beat)",
     "noteLengthSixteenth": "Sixteenth note (a quarter of a beat)",
     "reverseNoteLength": "Reverse brightness → length mapping",
+    "noteLengthTernary": "Ternary division (triplets: 3 in the time of 2)",
     "noteSustain": "Note articulation: sustained / pizzicato",
     "quantize": "Quantize on the master tempo (realign every N beats)",
     "quantizeTempo": "Resync period, in beats (1–8)",

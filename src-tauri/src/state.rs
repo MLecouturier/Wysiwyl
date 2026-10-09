@@ -203,6 +203,7 @@ pub struct SynthConfig {
     pub channel_enabled: [bool; 3], // R, G, B enabled/disabled, polyphonic mode
     pub note_lengths: Vec<NoteLength>, // enabled lengths; empty = all quarter notes
     pub note_length_reversed: bool, // flip the brightness->length mapping direction
+    pub note_length_ternary: bool, // true: lengths are triplets (3 in the time of 2)
     pub note_sustain: bool, // true: notes hold their full length; false: pizzicato
     pub mono_note_range: [bool; 3], // bass/medium/treble for the monophonic note
     pub voice_note_ranges: [[bool; 3]; 3], // same, per R/G/B voice, polyphonic mode
@@ -233,6 +234,7 @@ impl Default for SynthConfig {
             channel_enabled: [true, true, true],
             note_lengths: vec![NoteLength::Quarter],
             note_length_reversed: false,
+            note_length_ternary: false,
             note_sustain: false,
             mono_note_range: [false, false, false],
             voice_note_ranges: [[false, false, false]; 3],
@@ -275,7 +277,7 @@ pub struct Playback {
     pub note: u8,                                // current fixed MIDI note (monophonic)
     pub play_forward: bool,                      // travel direction (flipped by back-and-forth)
     pub end_pending: bool,                       // end of a non-looping sequence reached
-    pub tempo_accumulator: f64,                  // fractional-tick accumulator for tempo < 1.0
+    pub tempo_accumulator: f64,                  // beats accumulated toward the next step
     pub active_note: bool, // false if the current pixel is out of range (muted)
     pub note_is_on: bool,  // true if a MIDI note is currently sounding
     pub velocity: u8,      // current MIDI velocity (1-127)
@@ -283,7 +285,7 @@ pub struct Playback {
     pub note_generation: u32, // bumped on each articulation (stale Note Off guard)
     pub cached_sequence: Option<CachedSequence>, // derived pixel sequence cache
     pub start_pending: bool, // first note waits for the next master beat (start sync)
-    pub wakes_since_step: u32, // quarter-beat wakes elapsed since the last step
+    pub wakes_since_step: u32, // wakes (1/12 beat) elapsed since the last step
 }
 
 impl Default for Playback {

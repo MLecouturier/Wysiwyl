@@ -963,10 +963,10 @@ fn step_synth_once(
 }
 
 /// Smallest resync boundary strictly after `wake`: a multiple of
-/// `beats * 4` wakes (one beat = 4 quarter-beat wakes). `beats` is the
-/// quantize period in master beats (1-8).
+/// `beats * WAKES_PER_BEAT` wakes. `beats` is the quantize period in
+/// master beats (1-8).
 fn next_resync_boundary(wake: u64, beats: u8) -> u64 {
-    let period = beats.max(1) as u64 * 4;
+    let period = beats.max(1) as u64 * WAKES_PER_BEAT;
     (wake / period + 1) * period
 }
 
@@ -976,7 +976,7 @@ fn next_resync_boundary(wake: u64, beats: u8) -> u64 {
 /// boundary is never held. Delay-only: a step is never advanced, so a
 /// sounding note is never cut by the quantize.
 fn should_hold_for_quantize(wake: u64, beats: u8, interval_wakes: u32) -> bool {
-    let period = beats.max(1) as u64 * 4;
+    let period = beats.max(1) as u64 * WAKES_PER_BEAT;
     if wake.is_multiple_of(period) {
         return false;
     }
@@ -1007,14 +1007,21 @@ fn release_sounding_notes(synth: &mut Synth, midi: &MidiState) {
     synth.playback.note_generation = synth.playback.note_generation.wrapping_add(1);
 }
 
-/// Duration of a note length, in beats of the synth's own tempo.
-fn length_beats(length: NoteLength) -> f64 {
-    match length {
+/// Duration of a note length, in beats of the synth's own tempo. When
+/// `ternary` is set the length is played as a triplet (3 in the time of
+/// 2), i.e. its nominal value is multiplied by 2/3.
+fn length_beats(length: NoteLength, ternary: bool) -> f64 {
+    let base = match length {
         NoteLength::Whole => 4.0,
         NoteLength::Half => 2.0,
         NoteLength::Quarter => 1.0,
         NoteLength::Eighth => 0.5,
         NoteLength::Sixteenth => 0.25,
+    };
+    if ternary {
+        base * 2.0 / 3.0
+    } else {
+        base
     }
 }
 
@@ -1028,7 +1035,7 @@ fn pick_note_length(synth: &Synth, brightness_level: u8) -> f64 {
         .config
         .note_lengths
         .iter()
-        .map(|&l| length_beats(l))
+        .map(|&l| length_beats(l, synth.config.note_length_ternary))
         .collect();
     if synth.config.note_length_reversed {
         lengths.sort_by(|a, b| b.partial_cmp(a).unwrap());
@@ -1243,8 +1250,8 @@ impl ClockMode {
 pub struct ClockState {
     /// Total number of clock pulses seen since launch (monotonic).
     pub pulses: Arc<AtomicU64>,
-    /// Pulse count at the last quarter-beat boundary: the metronome wakes
-    /// every 6 pulses past the anchor (24 ppqn → 6 per sixteenth note).
+    /// Pulse count at the last boundary: the metronome wakes every
+    /// PULSES_PER_WAKE pulses past the anchor (24 ppqn → one wake).
     /// Re-anchored by a Start/Continue message so the grid aligns with the
     /// sender's beats.
     pub anchor: Arc<AtomicU64>,
@@ -1262,6 +1269,20 @@ pub struct ClockState {
     /// timeout. Cleared by a pulse or a Start/Continue message.
     pub stopped: Arc<AtomicBool>,
 }
+
+/// Internal timing resolution: one "wake" is 1/12 of a beat (a
+/// triplet-sixteenth note), the coarsest grid that represents both the
+/// binary note lengths (1/2, 1/4, 1/8, 1/16 of a beat) and the ternary
+/// ones (triplets: 1/3, 2/3, 1/6 of a beat) exactly.
+const WAKES_PER_BEAT: u64 = 12;
+
+/// MIDI clock pulses per wake (24 ppqn ÷ 12 wakes per beat).
+const PULSES_PER_WAKE: u64 = 2;
+
+/// Tolerance for the tempo accumulator comparison: a twelfth of a beat is
+/// not exactly representable in f64, so without it a step could slip by
+/// one wake when the sum lands just below 1.0.
+const ACC_EPSILON: f64 = 1e-9;
 
 /// A clock pulse older than this means the clock stopped: the metronome
 /// falls back to its internal tempo, keeping the last synced BPM.
@@ -1453,12 +1474,13 @@ pub fn start_metronome(app: AppHandle, state: tauri::State<MetronomeState>) {
     let mode = state.mode.clone();
 
     thread::spawn(move || {
-        // One "wake" is a quarter-beat (a sixteenth note): wakes with
-        // wake % 4 == 0 are beat boundaries, reported to the UI as
-        // metronome ticks. While a MIDI clock streams (clock_mode), the
-        // wakes are driven by its pulses (6 per sixteenth); in master
-        // mode the thread broadcasts its own pulses (24 per quarter
-        // note); otherwise it sleeps on its own BPM.
+        // One "wake" is 1/12 of a beat (a triplet-sixteenth note): wakes
+        // with wake % WAKES_PER_BEAT == 0 are beat boundaries, reported to
+        // the UI as metronome ticks. While a MIDI clock streams
+        // (clock_mode), the wakes are driven by its pulses
+        // (PULSES_PER_WAKE per wake); in master mode the thread broadcasts
+        // its own pulses (24 per quarter note); otherwise it sleeps on its
+        // own BPM.
         let mut wake: u64 = 0;
         let mut clock_mode = false;
         let mut last_pulses: u64 = 0;
@@ -1496,9 +1518,9 @@ pub fn start_metronome(app: AppHandle, state: tauri::State<MetronomeState>) {
                 was_master = master;
             }
 
-            // --- Quarter-beat body (shared by all timing sources) ---
-            if wake.is_multiple_of(4) {
-                let _ = app.emit("metronome-tick", wake / 4);
+            // --- Wake body (shared by all timing sources) ---
+            if wake.is_multiple_of(WAKES_PER_BEAT) {
+                let _ = app.emit("metronome-tick", wake / WAKES_PER_BEAT);
             }
 
             // --- Advancing active synths over the image ---
@@ -1517,11 +1539,12 @@ pub fn start_metronome(app: AppHandle, state: tauri::State<MetronomeState>) {
                     }
 
                     // Start sync: the very first note waits for the next
-                    // master beat (wake % 4 == 0) so playback begins in phase
-                    // with the metronome. Nothing is accumulated while
-                    // waiting; the beat wake then plays the first pixel.
+                    // master beat (wake % WAKES_PER_BEAT == 0) so playback
+                    // begins in phase with the metronome. Nothing is
+                    // accumulated while waiting; the beat wake then plays
+                    // the first pixel.
                     if synth.playback.start_pending {
-                        if !wake.is_multiple_of(4) {
+                        if !wake.is_multiple_of(WAKES_PER_BEAT) {
                             continue;
                         }
                         synth.playback.start_pending = false;
@@ -1540,12 +1563,14 @@ pub fn start_metronome(app: AppHandle, state: tauri::State<MetronomeState>) {
                     synth.playback.wakes_since_step =
                         synth.playback.wakes_since_step.saturating_add(1);
 
-                    // Tempo desynchronization: each quarter-beat wake adds a
-                    // quarter of the synth's tempo ratio to its accumulator;
-                    // the synth advances when at least one full step has
-                    // accumulated (e.g. ratio 0.5 = one pixel every two beats).
-                    synth.playback.tempo_accumulator += synth.config.tempo_ratio * 0.25;
-                    if synth.playback.tempo_accumulator < 1.0 {
+                    // Tempo desynchronization: each wake adds a twelfth of the
+                    // synth's tempo ratio to its accumulator (one beat = 12
+                    // wakes); the synth advances when at least one full step
+                    // has accumulated (e.g. ratio 0.5 = one pixel every two
+                    // beats).
+                    synth.playback.tempo_accumulator +=
+                        synth.config.tempo_ratio / WAKES_PER_BEAT as f64;
+                    if synth.playback.tempo_accumulator < 1.0 - ACC_EPSILON {
                         continue;
                     }
 
@@ -1571,7 +1596,9 @@ pub fn start_metronome(app: AppHandle, state: tauri::State<MetronomeState>) {
                     // On a resync boundary the accumulator is reset cleanly
                     // (a fresh phase anchor) instead of subtracting the step.
                     let on_boundary = synth.config.quantize
-                        && wake.is_multiple_of(synth.config.quantize_beats.max(1) as u64 * 4);
+                        && wake.is_multiple_of(
+                            synth.config.quantize_beats.max(1) as u64 * WAKES_PER_BEAT,
+                        );
                     if on_boundary {
                         synth.playback.tempo_accumulator = 0.0;
                     } else {
@@ -1609,19 +1636,19 @@ pub fn start_metronome(app: AppHandle, state: tauri::State<MetronomeState>) {
             // --- Timing source: master broadcast, external MIDI clock,
             // or internal sleep ---
             if master {
-                // 24 pulses per quarter note = 6 per quarter-beat wake.
+                // 24 pulses per quarter note = PULSES_PER_WAKE per wake.
                 // The BPM is re-read on every pulse so tempo changes
                 // apply live; nanosecond periods avoid the drift an
                 // integer-milliseconds division would introduce.
-                for _ in 0..6 {
+                for _ in 0..PULSES_PER_WAKE {
                     let current_bpm = bpm.load(Ordering::Relaxed).max(1);
                     let pulse_ns = 60_000_000_000u64 / (current_bpm as u64 * 24);
                     thread::sleep(Duration::from_nanos(pulse_ns));
                     midi::broadcast_realtime(&midi_state, midi::MIDI_CLOCK);
                 }
             } else if clock_mode {
-                // Wait for 6 pulses past the anchor (24 ppqn → one
-                // sixteenth note)
+                // Wait for PULSES_PER_WAKE pulses past the anchor
+                // (24 ppqn → one wake)
                 if clock.started.swap(false, Ordering::Relaxed) {
                     // Start/Continue received: realign the grid with the
                     // sender's beats
@@ -1629,7 +1656,7 @@ pub fn start_metronome(app: AppHandle, state: tauri::State<MetronomeState>) {
                     clock.anchor.store(pulses, Ordering::Relaxed);
                     wake = 0;
                 }
-                let target = clock.anchor.load(Ordering::Relaxed) + 6;
+                let target = clock.anchor.load(Ordering::Relaxed) + PULSES_PER_WAKE;
                 let deadline = Instant::now() + CLOCK_FALLBACK;
                 let mut collected = false;
                 while Instant::now() < deadline {
@@ -1647,8 +1674,8 @@ pub fn start_metronome(app: AppHandle, state: tauri::State<MetronomeState>) {
                 }
                 if !collected {
                     // Clock stopped: fall back to the internal tempo, keeping
-                    // the last synced BPM, and wait a regular quarter-beat
-                    // before the next wake
+                    // the last synced BPM, and wait a regular wake before the
+                    // next one
                     clock_mode = false;
                     last_synced_bpm = 0;
                     let _ = app.emit(
@@ -1660,7 +1687,7 @@ pub fn start_metronome(app: AppHandle, state: tauri::State<MetronomeState>) {
                     );
                     let current_bpm = bpm.load(Ordering::Relaxed).max(1);
                     let beat_ms = 60_000u64 / current_bpm as u64;
-                    thread::sleep(Duration::from_millis(beat_ms / 4));
+                    thread::sleep(Duration::from_millis(beat_ms / WAKES_PER_BEAT));
                 } else {
                     // Tempo learned from the clock: propagate it to the
                     // metronome's BPM so the UI display and an eventual
@@ -1686,7 +1713,7 @@ pub fn start_metronome(app: AppHandle, state: tauri::State<MetronomeState>) {
             } else {
                 let current_bpm = bpm.load(Ordering::Relaxed).max(1);
                 let beat_ms = 60_000u64 / current_bpm as u64;
-                thread::sleep(Duration::from_millis(beat_ms / 4));
+                thread::sleep(Duration::from_millis(beat_ms / WAKES_PER_BEAT));
 
                 // Opportunistic engagement (Auto and Input modes: in Input
                 // mode the pulses of non-selected ports are already
@@ -2558,51 +2585,51 @@ mod tests {
 
     #[test]
     fn next_resync_boundary_is_strictly_after_the_wake() {
-        // N = 4 beats → one boundary every 16 wakes
-        assert_eq!(next_resync_boundary(0, 4), 16);
-        assert_eq!(next_resync_boundary(15, 4), 16);
-        assert_eq!(next_resync_boundary(16, 4), 32);
-        assert_eq!(next_resync_boundary(17, 4), 32);
-        // N = 1 beat → every 4 wakes
-        assert_eq!(next_resync_boundary(0, 1), 4);
-        assert_eq!(next_resync_boundary(3, 1), 4);
+        // N = 4 beats → one boundary every 48 wakes (12 per beat)
+        assert_eq!(next_resync_boundary(0, 4), 48);
+        assert_eq!(next_resync_boundary(47, 4), 48);
+        assert_eq!(next_resync_boundary(48, 4), 96);
+        assert_eq!(next_resync_boundary(49, 4), 96);
+        // N = 1 beat → every 12 wakes
+        assert_eq!(next_resync_boundary(0, 1), 12);
+        assert_eq!(next_resync_boundary(11, 1), 12);
         // Out-of-range periods are clamped to at least one beat
-        assert_eq!(next_resync_boundary(3, 0), 4);
+        assert_eq!(next_resync_boundary(3, 0), 12);
     }
 
     #[test]
     fn quantize_never_holds_a_step_landing_on_a_boundary() {
-        // wake 16 is a boundary for N = 4: the step must fire, not be held
-        assert!(!should_hold_for_quantize(16, 4, 4));
+        // wake 48 is a boundary for N = 4: the step must fire, not be held
+        assert!(!should_hold_for_quantize(48, 4, 4));
         assert!(!should_hold_for_quantize(0, 4, 1));
     }
 
     #[test]
     fn quantize_holds_when_the_boundary_is_closer_than_the_next_step() {
-        // N = 4 → boundary at wake 16. A step due at wake 15 has an interval
-        // of 4 wakes (the following step would be at 19, past the boundary):
-        // hold it to 16.
-        assert!(should_hold_for_quantize(15, 4, 4));
-        // A step due at wake 12 (interval 4) would step again at 16, exactly
+        // N = 4 → boundary at wake 48. A step due at wake 47 has an interval
+        // of 4 wakes (the following step would be at 51, past the boundary):
+        // hold it to 48.
+        assert!(should_hold_for_quantize(47, 4, 4));
+        // A step due at wake 44 (interval 4) would step again at 48, exactly
         // on the boundary: no hold.
-        assert!(!should_hold_for_quantize(12, 4, 4));
+        assert!(!should_hold_for_quantize(44, 4, 4));
         // A slower synth (interval 8) is held as soon as it is within a full
         // step of the boundary.
-        assert!(should_hold_for_quantize(9, 4, 8));
+        assert!(should_hold_for_quantize(41, 4, 8));
         // A zero interval is treated as one wake: a step due one wake before
         // the boundary would step exactly on it, so it is not held.
-        assert!(!should_hold_for_quantize(15, 4, 0));
-        assert!(should_hold_for_quantize(15, 4, 2));
+        assert!(!should_hold_for_quantize(47, 4, 0));
+        assert!(should_hold_for_quantize(47, 4, 2));
     }
 
     #[test]
     fn quantize_hold_adapts_to_the_period() {
-        // N = 1 → boundary at wake 4; a step due at 3 (interval 4) is held
-        assert!(should_hold_for_quantize(3, 1, 4));
-        // N = 8 → boundary at wake 32; wake 20 is more than one interval (8)
+        // N = 1 → boundary at wake 12; a step due at 11 (interval 4) is held
+        assert!(should_hold_for_quantize(11, 1, 4));
+        // N = 8 → boundary at wake 96; wake 20 is more than one interval (8)
         // away: no hold yet
         assert!(!should_hold_for_quantize(20, 8, 8));
-        assert!(should_hold_for_quantize(25, 8, 8));
+        assert!(should_hold_for_quantize(89, 8, 8));
     }
 
     #[test]
@@ -2620,5 +2647,40 @@ mod tests {
         // immediate Note Off clearing them
         assert!(pizzicato_retrigger(false, false, 40));
         assert!(!pizzicato_retrigger(false, false, 0));
+    }
+
+    // --- Note lengths: binary vs ternary ---
+
+    const ALL_LENGTHS: [NoteLength; 5] = [
+        NoteLength::Whole,
+        NoteLength::Half,
+        NoteLength::Quarter,
+        NoteLength::Eighth,
+        NoteLength::Sixteenth,
+    ];
+
+    #[test]
+    fn length_beats_applies_the_ternary_factor() {
+        assert_eq!(length_beats(NoteLength::Quarter, false), 1.0);
+        assert_eq!(length_beats(NoteLength::Quarter, true), 2.0 / 3.0);
+        assert_eq!(length_beats(NoteLength::Eighth, true), 1.0 / 3.0);
+        assert_eq!(length_beats(NoteLength::Sixteenth, true), 1.0 / 6.0);
+        assert_eq!(length_beats(NoteLength::Whole, true), 8.0 / 3.0);
+    }
+
+    #[test]
+    fn every_note_length_lands_on_the_wake_grid() {
+        // The 1/12-beat wake grid represents every binary length and every
+        // triplet exactly: each duration is an integer number of wakes.
+        for ternary in [false, true] {
+            for length in ALL_LENGTHS {
+                let wakes = length_beats(length, ternary) * WAKES_PER_BEAT as f64;
+                assert_eq!(
+                    wakes,
+                    wakes.round(),
+                    "{length:?} (ternary={ternary}) is off the wake grid"
+                );
+            }
+        }
     }
 }
