@@ -45,6 +45,18 @@
             border-color: $color-text-muted;
         }
     }
+
+    // In-between state of a three-state icon toggle (the magic wand's
+    // non-adjacent mode): orange marks the middle state, like the mirror
+    // zones toggle's .selective
+    &.active.selective {
+        color: $color-selective;
+        border-color: $color-selective;
+
+        &:hover {
+            border-color: $color-text-muted;
+        }
+    }
 }
 
 button.primary {

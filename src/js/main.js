@@ -24,8 +24,7 @@ import { setSynthColors, setNoteRangeBounds, setEnabledScales, refreshScaleSelec
 import { synthElementById } from './synth/model.js';
 import { updateZonesLabel, updateAllSynthZonesLabels } from './synth/model.js';
 import {
-    addSynthZone, removeSynthZoneRect,
-    rectOverlapsMuteZones, addSynthMuteRect, removeSynthMuteRect,
+    addSynthZone, removeSynthZoneRect, toggleSynthMuteRect, removeSynthMuteRect,
 } from './synth/selection.js';
 import { programMap, programKey, refreshProgramDisplays } from './synth/model.js';
 import { setSynthPlaying, retranslateSynthElement, syncEyeButton } from './synth/model.js';
@@ -36,8 +35,9 @@ import {
 import {
     zoneState, cancelZonePicking, zoneDragRect,
     cellFromClientPoint, imagePointFromClient, drawZonePreview, drawLassoPreview,
-    wandTogglePixels, wandToggleMutePixels, lassoTogglePixels, lassoToggleMutePixels,
-    rectOverlapsZones,
+    wandAddPixels, wandRemovePixels, wandToggleMutePixels, wandRemoveMutePixels,
+    lassoAddPixels, lassoRemovePixels, lassoToggleMutePixels, lassoRemoveMutePixels,
+    selectionMode, syncPickingUi,
 } from './synth/selection.js';
 import {
     createSynthElement, onSynthPlayClick, syncPlayAllButton,
@@ -417,9 +417,20 @@ pixelOverlay.addEventListener('mousedown', (e) => {
     const cell = cellFromClientPoint(e.clientX, e.clientY);
     if (!cell) return;
     e.preventDefault(); // prevents image dragging during selection
+    // The modifiers decide the editing mode (add / remove / toggle
+    // silences / remove silences); capture them now, they can still change
+    // mid-drag (the key listeners update the drag state live).
+    const alt = e.altKey || zoneState.altHeld;
+    const shift = e.shiftKey || zoneState.shiftHeld;
+    const mode = selectionMode(alt, shift);
+    // Keep the held-key flags in sync with the physical state, so the
+    // cursor reflects the mode even if a key event was missed.
+    zoneState.altHeld = alt;
+    zoneState.shiftHeld = shift;
+    syncPickingUi();
     if (zoneState.pick.mode === 'lasso') {
         const pt = imagePointFromClient(e.clientX, e.clientY);
-        zoneState.lasso = { id: zoneState.pick.id, points: [pt], start: cell, alt: e.altKey || zoneState.altHeld };
+        zoneState.lasso = { id: zoneState.pick.id, points: [pt], start: cell, alt, shift };
     } else if (zoneState.pick.mode === 'wand') {
         // The wand commits on the click itself — no drag state, so the
         // mousemove/mouseup listeners stay no-ops. The tolerance is read
@@ -427,13 +438,17 @@ pixelOverlay.addEventListener('mousedown', (e) => {
         const card = zoneState.pick.btn.closest('.synth-block');
         const raw = parseInt(card?.querySelector('.magic-wand-tolerance')?.value, 10);
         const tolerance = Math.max(1, Math.min(255, Number.isFinite(raw) ? raw : 32));
-        const toggled = (e.altKey || zoneState.altHeld)
-            ? wandToggleMutePixels(zoneState.pick.id, cell, tolerance)
-            : wandTogglePixels(zoneState.pick.id, cell, tolerance);
-        if (toggled) redrawAllHighlights();
+        const id = zoneState.pick.id;
+        const adjacent = zoneState.pick.adjacent;
+        const changed =
+            mode === 'remove'    ? wandRemovePixels(id, cell, tolerance, adjacent)
+          : mode === 'silence'   ? wandToggleMutePixels(id, cell, tolerance, adjacent)
+          : mode === 'unsilence' ? wandRemoveMutePixels(id, cell, tolerance, adjacent)
+          :                        wandAddPixels(id, cell, tolerance, adjacent);
+        if (changed) redrawAllHighlights();
         return;
     } else {
-        zoneState.drag = { id: zoneState.pick.id, start: cell, cur: cell, alt: e.altKey || zoneState.altHeld };
+        zoneState.drag = { id: zoneState.pick.id, start: cell, cur: cell, alt, shift };
     }
 });
 
@@ -485,34 +500,34 @@ window.addEventListener('mouseup', (e) => {
     }
     if (!zoneState.drag && !zoneState.lasso) return;
     if (zoneState.lasso) {
-        const { id, points, start, alt } = zoneState.lasso;
+        const { id, points, start, alt, shift } = zoneState.lasso;
         zoneState.lasso = null;
         // Close the shape with a straight line back to the start, then
-        // toggle every enclosed pixel (boundary included): the selection,
-        // or the silences when Alt is held
+        // apply the effective mode to every enclosed pixel (boundary
+        // included).
         if (points.length > 0) {
-            const toggled = alt
-                ? lassoToggleMutePixels(id, points, start)
-                : lassoTogglePixels(id, points, start);
-            if (toggled) redrawAllHighlights();
+            const mode = selectionMode(alt, shift);
+            const changed =
+                mode === 'remove'    ? lassoRemovePixels(id, points, start)
+              : mode === 'silence'   ? lassoToggleMutePixels(id, points, start)
+              : mode === 'unsilence' ? lassoRemoveMutePixels(id, points, start)
+              :                        lassoAddPixels(id, points, start);
+            if (changed) redrawAllHighlights();
         }
         return;
     }
-    const { id, alt } = zoneState.drag;
+    const { id, alt, shift } = zoneState.drag;
     const rect = zoneDragRect();
     zoneState.drag = null;
     if (rect) {
-        // A rectangle overlapping an existing zone (even partially) only
-        // removes pixels; it never creates an overlapping zone. A single
-        // pixel works too: a click on a free pixel selects it, a click on
-        // a selected pixel deselects it. Alt mirrors this on the manual
-        // silences: overlap removes silences, free space adds them (the
-        // silences are clipped to the selection).
-        if (alt) {
-            if (rectOverlapsMuteZones(id, rect)) removeSynthMuteRect(id, rect);
-            else                                 addSynthMuteRect(id, rect);
-        } else if (rectOverlapsZones(id, rect)) removeSynthZoneRect(id, rect);
-        else                                    addSynthZone(id, rect);
+        // The mode is explicit: default adds (union), Alt removes,
+        // Shift toggles the silences of the selected pixels covered, and
+        // Alt+Shift removes them. A single pixel works too.
+        const mode = selectionMode(alt, shift);
+        if (mode === 'remove')         removeSynthZoneRect(id, rect);
+        else if (mode === 'silence')   toggleSynthMuteRect(id, rect);
+        else if (mode === 'unsilence') removeSynthMuteRect(id, rect);
+        else                           addSynthZone(id, rect);
     }
     redrawAllHighlights();
 });

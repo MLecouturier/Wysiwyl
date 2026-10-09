@@ -1,7 +1,7 @@
 // Synth selection: the zone/mute editing, the overlay highlights and
 // the mouse-based zone selection tools.
 
-import { cellSetFromZones, computeLayout, drawCursorCell, drawZones, rebuildZones, zoneCellSet, zoneIntersectsRect } from '../core/geometry.js';
+import { cellSetFromZones, computeLayout, drawCursorCell, drawZones, rebuildZones, zoneCellSet } from '../core/geometry.js';
 import { appEvents, synthBrightnessBounds, synthColors, synthCursorGrid, synthCursorMuted, synthCursors, synthHighlights, viewer } from '../core/state.js';
 import { syncEyeButton, synthElementById, updateZonesLabel } from './model.js';
 import { registerEscape } from '../core/shortcuts.js';
@@ -56,7 +56,7 @@ export function sendSynthZones(id) {
         .catch(err => console.error('Error in set_synth_zones:', err));
 }
 
-// ---------- Manual silences (Alt + square/lasso) ----------
+// ---------- Manual silences (Shift + square/lasso/wand) ----------
 // Silent pixels chosen by hand among the selected ones: the playhead
 // still travels over them, but no note is sounded (a rest). They are
 // stored as connected components, like the selection, and always
@@ -68,18 +68,12 @@ export function muteCellSet(hi) {
     return cellSetFromZones(hi.muteZones);
 }
 
-// Does the rectangle overlap (even partially) one of the synth's mute
-// zones? Such an Alt-drag removes silences instead of adding them.
-export function rectOverlapsMuteZones(id, rect) {
-    const hi = synthHighlights.get(id);
-    if (!hi) return false;
-    return hi.muteZones.some(z => zoneIntersectsRect(z, rect));
-}
-
-// Adds a silence rectangle (Alt + square over free space): the dragged
-// rectangle silences the selected pixels it covers; touching silence
-// components fuse, like the selection.
-export function addSynthMuteRect(id, rect) {
+// Toggles the manual silence of every selected pixel covered by the
+// rectangle (Shift + square): each covered selected cell flips — played
+// becomes silent, silent becomes played. Cells outside the selection are
+// ignored (a silence always lives inside the selection). Touching silence
+// components fuse or split as the XOR result requires.
+export function toggleSynthMuteRect(id, rect) {
     const hi = synthHighlights.get(id);
     if (!hi) return;
     const selected = cellSetFromZones(hi.zones);
@@ -87,15 +81,17 @@ export function addSynthMuteRect(id, rect) {
     for (let row = rect.y; row < rect.y + rect.h; row++) {
         for (let col = rect.x; col < rect.x + rect.w; col++) {
             const key = `${col},${row}`;
-            if (selected.has(key)) cells.add(key);
+            if (!selected.has(key)) continue;
+            if (cells.has(key)) cells.delete(key);
+            else                cells.add(key);
         }
     }
     hi.muteZones = rebuildZones(hi.muteZones, cells);
     sendSynthMuteZones(id);
 }
 
-// Subtracts a silence rectangle (Alt + square over an existing silence):
-// exact difference, components recomposed.
+// Subtracts a silence rectangle (Alt+Shift + square): exact difference,
+// components recomposed.
 export function removeSynthMuteRect(id, rect) {
     const hi = synthHighlights.get(id);
     if (!hi) return;
@@ -394,52 +390,66 @@ export function hideChannelOverlay() {
 }
 
 // Mouse-based zone selection on the image: rectangle, lasso and magic
-// wand tools (and their Alt variants for manual silences). Owns the
-// selection state (zoneState); the pixelOverlay mouse listeners live in
-// main.js because they are shared with the crop tool, and drive these
-// helpers.
+// wand tools. Owns the selection state (zoneState); the pixelOverlay
+// mouse listeners live in main.js because they are shared with the crop
+// tool, and drive these helpers.
 
-
-// Selection state: the armed tool, the in-progress drags and the Alt
-// (silence-editing) flag. Exported as a mutable object so main.js's
-// shared mouse listeners can drive it without a large accessor surface.
-export const zoneState = { pick: null, drag: null, lasso: null, altHeld: false };
+// Selection state: the armed tool, the in-progress drags and the held
+// modifier keys. Exported as a mutable object so main.js's shared mouse
+// listeners can drive it without a large accessor surface.
+export const zoneState = { pick: null, drag: null, lasso: null, altHeld: false, shiftHeld: false };
 
 // ---------- Mouse-based zone selection ----------
-// Only one synth can be in zone-drawing mode at a time. Three modes:
-// - rect:  each rectangle dragged on the image either adds a zone (when
-//          it overlaps no existing zone) or removes pixels from the
-//          existing zones (when it overlaps one, even partially).
-// - lasso: free-hand closed shape. Every pixel inside the traced polygon
-//          (boundary included) toggles: unselected becomes selected,
-//          selected becomes deselected — except the pixels of the zone
-//          under the playhead, which never lose their selection while
-//          the synth is playing. Releasing the button closes the shape
-//          with a straight line back to the start point.
-// - wand:  magic-wand click. Every pixel 4-connected to the clicked one
-//          whose color stays within the tolerance (largest per-channel
-//          difference, 1–255 on the per-channel 0–255 scale) is flooded,
-//          with the same positional semantics as the rectangle: a click
-//          on a free pixel adds the flooded region (fusing with any
-//          zone it touches), a click on a selected pixel removes the
-//          flooded pixels instead. Committed on the click itself: no
-//          drag.
-// Holding Alt (Option) while using any of the three tools edits the
-// manual silences instead of the selection: the same positional (rect,
-// wand) / XOR (lasso) semantics apply to the silent pixels among the
-// selected ones. A silent pixel is still travelled by the playhead, it
-// just sounds nothing — a rest. Silences always live within the
-// selection: deselecting a pixel removes its silence.
+// Only one synth can be in zone-drawing mode at a time. Three tools
+// (rect, lasso, wand) share one editing mode chosen by the modifier
+// keys, so every tool behaves the same way:
+// - add (default): the gesture's cells join the selection (union).
+// - remove (Alt): the gesture's cells leave the selection; deselecting a
+//   pixel also drops its silence.
+// - silence (Shift): the gesture toggles the manual silence of each
+//   covered selected cell (XOR) — played becomes silent, silent plays
+//   again.
+// - unsilence (Alt+Shift): the gesture's cells lose their silence.
+// A silent pixel is still travelled by the playhead, it just sounds
+// nothing — a rest. Silences always live within the selection:
+// deselecting a pixel removes its silence. The wand commits on the click
+// itself (no drag); the rect and lasso commit on release. The wand has an
+// extra toggle (its button's 3-state cycle): adjacent (default, a
+// 4-connected flood fill) or non-adjacent (every in-tolerance pixel of
+// the whole image, touching or not).
+
+// Resolves the editing mode from the modifier keys. Alt+Shift is its own
+// mode (removing silences), so the two flags are not independent. Pure,
+// exported for unit tests.
+export function selectionMode(alt, shift) {
+    if (alt && shift) return 'unsilence';
+    if (alt) return 'remove';
+    if (shift) return 'silence';
+    return 'add';
+}
 
 
+// Reflects the armed tool and the effective mode on the overlay (the
+// cursor and the in-progress preview style), and refreshes the preview so
+// it switches the moment a modifier is pressed or released mid-drag.
+export function syncPickingUi() {
+    if (!pixelOverlay) return;
+    const armed = !!zoneState.pick;
+    const tool = armed ? zoneState.pick.mode : null;
+    // During a gesture the live drag state carries the modifiers (they can
+    // change mid-drag); otherwise the held-key flags do.
+    const alt = zoneState.drag ? zoneState.drag.alt : (zoneState.lasso ? zoneState.lasso.alt : zoneState.altHeld);
+    const shift = zoneState.drag ? zoneState.drag.shift : (zoneState.lasso ? zoneState.lasso.shift : zoneState.shiftHeld);
+    const mode = selectionMode(alt, shift);
 
+    pixelOverlay.classList.toggle('picking', armed);
+    pixelOverlay.classList.toggle('picking-rect', armed && tool === 'rect');
+    pixelOverlay.classList.toggle('picking-lasso', armed && tool === 'lasso');
+    pixelOverlay.classList.toggle('picking-wand', armed && tool === 'wand');
+    pixelOverlay.classList.toggle('picking-add', armed && mode === 'add');
+    pixelOverlay.classList.toggle('picking-remove', armed && mode === 'remove');
+    pixelOverlay.classList.toggle('picking-silence', armed && (mode === 'silence' || mode === 'unsilence'));
 
-
-// Reflects the Alt key state on the overlay (distinct cursor while a
-// drawing mode is armed) and refreshes the in-progress preview so it
-// switches style the moment Alt is pressed or released mid-drag.
-export function syncAltPickingUi() {
-    pixelOverlay.classList.toggle('picking-silence', zoneState.altHeld && !!zoneState.pick);
     if (zoneState.drag || zoneState.lasso) {
         redrawAllHighlights();
         if (zoneState.drag) drawZonePreview();
@@ -447,41 +457,36 @@ export function syncAltPickingUi() {
     }
 }
 
-// Alt can be pressed or released at any time — before starting a drag
-// (the mousedown captures it) or in the middle of one (the listeners
-// below update the drag live, so the same gesture can switch mode).
-// Guarded so the module stays importable outside a browser (unit tests).
+// Alt and Shift can be pressed or released at any time — before starting
+// a drag (the mousedown captures it) or in the middle of one (the
+// listeners below update the drag live, so the same gesture can switch
+// mode). Guarded so the module stays importable outside a browser (unit
+// tests).
 if (typeof window !== 'undefined') {
+    const setModifier = (key, value) => {
+        const flag = key === 'Alt' ? 'altHeld' : key === 'Shift' ? 'shiftHeld' : null;
+        if (!flag || zoneState[flag] === value) return false;
+        zoneState[flag] = value;
+        const prop = flag === 'altHeld' ? 'alt' : 'shift';
+        if (zoneState.drag) zoneState.drag[prop] = value;
+        if (zoneState.lasso) zoneState.lasso[prop] = value;
+        return true;
+    };
     window.addEventListener('keydown', (e) => {
-        if (e.key !== 'Alt' || zoneState.altHeld) return;
-        zoneState.altHeld = true;
-        if (zoneState.drag) zoneState.drag.alt = true;
-        if (zoneState.lasso) zoneState.lasso.alt = true;
-        syncAltPickingUi();
+        if (setModifier(e.key, true)) syncPickingUi();
     });
     window.addEventListener('keyup', (e) => {
-        if (e.key !== 'Alt' || !zoneState.altHeld) return;
-        zoneState.altHeld = false;
-        if (zoneState.drag) zoneState.drag.alt = false;
-        if (zoneState.lasso) zoneState.lasso.alt = false;
-        syncAltPickingUi();
+        if (setModifier(e.key, false)) syncPickingUi();
     });
     window.addEventListener('blur', () => {
         // The OS may swallow the keyup when the window loses focus
-        if (!zoneState.altHeld) return;
+        if (!zoneState.altHeld && !zoneState.shiftHeld) return;
         zoneState.altHeld = false;
-        if (zoneState.drag) zoneState.drag.alt = false;
-        if (zoneState.lasso) zoneState.lasso.alt = false;
-        syncAltPickingUi();
+        zoneState.shiftHeld = false;
+        if (zoneState.drag) { zoneState.drag.alt = false; zoneState.drag.shift = false; }
+        if (zoneState.lasso) { zoneState.lasso.alt = false; zoneState.lasso.shift = false; }
+        syncPickingUi();
     });
-}
-
-// Does the rectangle overlap (even partially) one of the synth's zones?
-// Such a drag removes pixels instead of creating an overlapping zone.
-export function rectOverlapsZones(id, rect) {
-    const hi = synthHighlights.get(id);
-    if (!hi) return false;
-    return hi.zones.some(z => zoneIntersectsRect(z, rect));
 }
 
 // Normalized grid rect of the zone drag in progress, or null
@@ -512,13 +517,15 @@ export function startZonePicking(id, btn, mode = 'rect') {
     if (zoneState.pick && (zoneState.pick.id !== id || zoneState.pick.mode !== mode)) {
         cancelZonePicking();
     }
-    zoneState.pick = { id, btn, mode };
+    // `adjacent` only matters for the wand: true = flood fill (pixels must
+    // touch), false = every in-tolerance pixel of the whole image.
+    zoneState.pick = { id, btn, mode, adjacent: true };
     btn.classList.add('active');
+    btn.classList.remove('selective'); // arming always starts in adjacent mode
     // The tolerance input only shows while the magic-wand mode is armed
     // on this card
     if (mode === 'wand') btn.closest('.synth-block')?.classList.add('wand-armed');
-    pixelOverlay.classList.add('picking');
-    syncAltPickingUi(); // reflect the Alt key if it is already held
+    syncPickingUi(); // reflect the armed tool and any held modifier
     // Editing blind is confusing: arming the picking mode reveals this
     // synth's zones (they may be hidden during playback). The eye button
     // reflects it; the user can hide them again at any time.
@@ -534,14 +541,24 @@ export function startZonePicking(id, btn, mode = 'rect') {
 export function cancelZonePicking() {
     if (!zoneState.pick) return;
     zoneState.pick.btn.classList.remove('active');
+    zoneState.pick.btn.classList.remove('selective');
     zoneState.pick.btn.closest('.synth-block')?.classList.remove('wand-armed');
-    pixelOverlay.classList.remove('picking');
-    pixelOverlay.classList.remove('picking-silence');
     zoneState.pick = null;
     const hadDrag = !!zoneState.drag || !!zoneState.lasso;
     zoneState.drag = null;
     zoneState.lasso = null;
+    syncPickingUi(); // clears every picking class
     if (hadDrag) redrawAllHighlights();
+}
+
+// Switches the armed magic wand between its two modes: adjacent (default,
+// the flood fill) and non-adjacent (every in-tolerance pixel of the whole
+// image). The button takes the shared "selective" (orange) intermediate
+// state to mark the non-adjacent mode. No-op unless the wand is armed.
+export function setWandAdjacent(adjacent) {
+    if (!zoneState.pick || zoneState.pick.mode !== 'wand') return;
+    zoneState.pick.adjacent = adjacent;
+    zoneState.pick.btn.classList.toggle('selective', !adjacent);
 }
 
 // Escape cancels an armed zone-picking mode. Priority 30: above help (10),
@@ -549,12 +566,10 @@ export function cancelZonePicking() {
 // Escape chain in core/shortcuts.js.
 registerEscape(30, () => !!zoneState.pick, () => cancelZonePicking());
 
-// Live preview of the rectangle being dragged: filled with the synth's
-// color while it overlaps no zone, "erasing" the highlights beneath it
-// as soon as it touches one — the drag then removes pixels instead. In
-// silence mode (Alt) the preview is a black veil with a dashed outline:
-// same positional semantics as the selection, but it never reads as a
-// zone edit.
+// Live preview of the rectangle being dragged, styled after the effective
+// mode: add fills with the synth's color, remove "erases" the highlights
+// beneath it (destination-out), silence/unsilence draw a black veil with
+// a dashed white outline so the gesture never reads as a zone edit.
 export function drawZonePreview() {
     if (!zoneState.drag) return;
     const layout = getImageLayout();
@@ -565,11 +580,11 @@ export function drawZonePreview() {
     const y = Math.min(start.row, cur.row);
     const w = Math.abs(cur.col - start.col) + 1;
     const h = Math.abs(cur.row - start.row) + 1;
-    const rect = { x, y, w, h };
+    const mode = selectionMode(zoneState.drag.alt, zoneState.drag.shift);
 
     const ctx = pixelOverlay.getContext('2d');
     ctx.save();
-    if (zoneState.drag.alt) {
+    if (mode === 'silence' || mode === 'unsilence') {
         ctx.globalAlpha = 0.4;
         ctx.fillStyle = 'black';
         ctx.fillRect(offsetX + x * cellW, offsetY + y * cellH, w * cellW, h * cellH);
@@ -578,7 +593,7 @@ export function drawZonePreview() {
         ctx.lineWidth = 1.5;
         ctx.setLineDash([4, 3]);
         ctx.strokeRect(offsetX + x * cellW, offsetY + y * cellH, w * cellW, h * cellH);
-    } else if (rectOverlapsZones(zoneState.drag.id, rect)) {
+    } else if (mode === 'remove') {
         ctx.globalCompositeOperation = 'destination-out';
         ctx.fillRect(offsetX + x * cellW, offsetY + y * cellH, w * cellW, h * cellH);
     } else {
@@ -637,8 +652,7 @@ export function addSegmentCells(x0, y0, x1, y1, out) {
 }
 
 // Live preview of the lasso shape: the traced polygon, closed back to
-// its start point, filled with the synth's color — black with a dashed
-// white outline in silence mode (Alt).
+// its start point, styled after the effective mode (see drawZonePreview).
 export function drawLassoPreview() {
     if (!zoneState.lasso || zoneState.lasso.points.length < 1) return;
     const layout = getImageLayout();
@@ -654,7 +668,9 @@ export function drawLassoPreview() {
         else          ctx.lineTo(px, py);
     });
     ctx.closePath(); // straight line back to the start point
-    if (zoneState.lasso.alt) {
+    const mode = selectionMode(zoneState.lasso.alt, zoneState.lasso.shift);
+    const color = synthColors.get(zoneState.lasso.id) || '#ffffff';
+    if (mode === 'silence' || mode === 'unsilence') {
         ctx.globalAlpha = 0.35;
         ctx.fillStyle = 'black';
         ctx.fill();
@@ -663,12 +679,22 @@ export function drawLassoPreview() {
         ctx.lineWidth = 1.5;
         ctx.setLineDash([4, 3]);
         ctx.stroke();
+    } else if (mode === 'remove') {
+        // Erase the highlights under the shape, then outline it
+        ctx.globalCompositeOperation = 'destination-out';
+        ctx.fill();
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.globalAlpha = 0.9;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([4, 3]);
+        ctx.stroke();
     } else {
-        ctx.fillStyle = synthColors.get(zoneState.lasso.id) || '#ffffff';
+        ctx.fillStyle = color;
         ctx.globalAlpha = 0.35;
         ctx.fill();
         ctx.globalAlpha = 0.9;
-        ctx.strokeStyle = ctx.fillStyle;
+        ctx.strokeStyle = color;
         ctx.lineWidth = 1.5;
         ctx.stroke();
     }
@@ -744,37 +770,83 @@ export function wandFloodCells(startCell, tolerance) {
     return flooded;
 }
 
-// Lasso on the selection: every pixel enclosed by the traced polygon
+// Non-adjacent magic wand: every pixel of the whole image whose color
+// stays within `tolerance` of the clicked cell's color (same Chebyshev
+// per-channel distance as the flood fill), whether or not it touches the
+// seed. Returned as "col,row" keys.
+export function wandGlobalCells(startCell, tolerance) {
+    const { rgba } = viewer.processedPixels;
+    const seedIdx = (startCell.row * viewer.gridW + startCell.col) * 4;
+    const sr = rgba[seedIdx], sg = rgba[seedIdx + 1], sb = rgba[seedIdx + 2];
+    const limit = tolerance;
+    const cells = new Set();
+    for (let row = 0; row < viewer.gridH; row++) {
+        const rowBase = row * viewer.gridW * 4;
+        for (let col = 0; col < viewer.gridW; col++) {
+            const i = rowBase + col * 4;
+            if (Math.max(
+                Math.abs(rgba[i] - sr),
+                Math.abs(rgba[i + 1] - sg),
+                Math.abs(rgba[i + 2] - sb),
+            ) <= limit) {
+                cells.add(`${col},${row}`);
+            }
+        }
+    }
+    return cells;
+}
+
+// Dispatches to the adjacent (flood fill) or non-adjacent (whole image)
+// magic-wand selection.
+export function wandCells(startCell, tolerance, adjacent) {
+    return adjacent
+        ? wandFloodCells(startCell, tolerance)
+        : wandGlobalCells(startCell, tolerance);
+}
+
+// Lasso add (default): every pixel enclosed by the traced polygon
 // (boundary included, closure line from the release point back to the
-// start) toggles — unselected becomes selected, selected becomes
-// deselected. Pixels of the zone under the playhead (while the synth
-// plays) are exempt from deselection. Returns true when the selection
-// changed.
-export function lassoTogglePixels(id, points, start) {
+// start) joins the selection. Already-selected pixels are left untouched.
+// Returns true when the selection changed.
+export function lassoAddPixels(id, points, start) {
     const hi = synthHighlights.get(id);
     if (!hi) return false;
 
     const enclosed = lassoEnclosedCells(points, start);
     if (enclosed.size === 0) return false;
 
-    // Current selection as a cell set
     const selected = cellSetFromZones(hi.zones);
-
-    // Toggle each enclosed pixel (XOR)
     let changed = false;
     for (const key of enclosed) {
-        const isSelected = selected.has(key);
-        if (isSelected) {
-            selected.delete(key);
-        } else {
-            selected.add(key);
-        }
-        changed = true;
+        if (!selected.has(key)) { selected.add(key); changed = true; }
     }
     if (!changed) return false;
 
     // Rebuild the selection as connected components with inherited
     // creation orders
+    hi.zones = rebuildZones(hi.zones, selected);
+    sendSynthZones(id);
+    updateZonesLabel(id);
+    return true;
+}
+
+// Lasso remove (Alt held): every enclosed pixel leaves the selection.
+// Deselected pixels lose their silence. Returns true when the selection
+// changed.
+export function lassoRemovePixels(id, points, start) {
+    const hi = synthHighlights.get(id);
+    if (!hi) return false;
+
+    const enclosed = lassoEnclosedCells(points, start);
+    if (enclosed.size === 0) return false;
+
+    const selected = cellSetFromZones(hi.zones);
+    let changed = false;
+    for (const key of enclosed) {
+        if (selected.delete(key)) changed = true;
+    }
+    if (!changed) return false;
+
     hi.zones = rebuildZones(hi.zones, selected);
     sendSynthZones(id);
     // Deselected pixels lose their silence
@@ -783,7 +855,7 @@ export function lassoTogglePixels(id, points, start) {
     return true;
 }
 
-// Lasso on the manual silences (Alt held): every enclosed selected pixel
+// Lasso silence toggle (Shift held): every enclosed selected pixel
 // toggles — played becomes silent, silent becomes played. Pixels that
 // are not selected are ignored (a silence always lives inside the
 // selection). Returns true when the silences changed.
@@ -815,43 +887,65 @@ export function lassoToggleMutePixels(id, points, start) {
     return true;
 }
 
-// Magic wand on the selection: positional semantics, like the rectangle.
-// A click on an unselected pixel adds the whole flooded region (every
-// pixel 4-connected to the clicked one whose color stays within the
-// tolerance) — already-selected pixels are left untouched, and a flooded
-// region touching an existing zone fuses with it. A click on a selected
-// pixel removes the flooded pixels instead. Returns true when the
-// selection changed.
-export function wandTogglePixels(id, startCell, tolerance) {
+// Lasso silence removal (Alt+Shift held): every enclosed silent pixel
+// plays again. Returns true when the silences changed.
+export function lassoRemoveMutePixels(id, points, start) {
     const hi = synthHighlights.get(id);
     if (!hi) return false;
 
-    const flooded = wandFloodCells(startCell, tolerance);
-    const seedKey = `${startCell.col},${startCell.row}`;
+    const enclosed = lassoEnclosedCells(points, start);
+    if (enclosed.size === 0) return false;
 
-    // Current selection as a cell set
-    const selected = cellSetFromZones(hi.zones);
-
-    if (!selected.has(seedKey)) {
-        // Free seed: pure addition — the union is rebuilt as connected
-        // components, so a flooded region touching an existing zone
-        // fuses with it (contiguity is one zone)
-        for (const key of flooded) selected.add(key);
-        hi.zones = rebuildZones(hi.zones, selected);
-        sendSynthZones(id);
-        updateZonesLabel(id);
-        return true;
+    const muted = muteCellSet(hi);
+    let changed = false;
+    for (const key of enclosed) {
+        if (muted.delete(key)) changed = true;
     }
+    if (!changed) return false;
 
-    // Selected seed: remove every flooded pixel
+    hi.muteZones = rebuildZones(hi.muteZones, muted);
+    sendSynthMuteZones(id);
+    return true;
+}
+
+// Magic wand add (default): the matched region joins the selection —
+// already-selected pixels are left untouched, and a region touching an
+// existing zone fuses with it. `adjacent` selects the flood fill (pixels
+// must touch) or the whole-image scan. Returns true when the selection
+// changed.
+export function wandAddPixels(id, startCell, tolerance, adjacent = true) {
+    const hi = synthHighlights.get(id);
+    if (!hi) return false;
+
+    const flooded = wandCells(startCell, tolerance, adjacent);
+    const selected = cellSetFromZones(hi.zones);
+    let changed = false;
+    for (const key of flooded) {
+        if (!selected.has(key)) { selected.add(key); changed = true; }
+    }
+    if (!changed) return false;
+
+    hi.zones = rebuildZones(hi.zones, selected);
+    sendSynthZones(id);
+    updateZonesLabel(id);
+    return true;
+}
+
+// Magic wand remove (Alt held): the matched pixels leave the selection.
+// Deselected pixels lose their silence. Returns true when the selection
+// changed.
+export function wandRemovePixels(id, startCell, tolerance, adjacent = true) {
+    const hi = synthHighlights.get(id);
+    if (!hi) return false;
+
+    const flooded = wandCells(startCell, tolerance, adjacent);
+    const selected = cellSetFromZones(hi.zones);
     let changed = false;
     for (const key of flooded) {
         if (selected.delete(key)) changed = true;
     }
     if (!changed) return false;
 
-    // Rebuild the selection as connected components with inherited
-    // creation orders
     hi.zones = rebuildZones(hi.zones, selected);
     sendSynthZones(id);
     // Deselected pixels lose their silence
@@ -860,34 +954,42 @@ export function wandTogglePixels(id, startCell, tolerance) {
     return true;
 }
 
-// Magic wand on the manual silences (Alt held): positional semantics,
-// like the Alt rectangle. A click on a played pixel silences every
-// flooded pixel that belongs to the selection; a click on a silent
-// pixel unsilences the flooded silent ones instead. Pixels that are
-// not selected are ignored either way (a silence always lives inside
-// the selection). Returns true when the silences changed.
-export function wandToggleMutePixels(id, startCell, tolerance) {
+// Magic wand silence toggle (Shift held): each matched selected pixel
+// toggles its manual silence (XOR). Pixels that are not selected are
+// ignored (a silence always lives inside the selection). Returns true
+// when the silences changed.
+export function wandToggleMutePixels(id, startCell, tolerance, adjacent = true) {
     const hi = synthHighlights.get(id);
     if (!hi) return false;
 
-    const flooded = wandFloodCells(startCell, tolerance);
-    const seedKey = `${startCell.col},${startCell.row}`;
-
+    const flooded = wandCells(startCell, tolerance, adjacent);
     const selected = cellSetFromZones(hi.zones);
     const muted = muteCellSet(hi);
 
     let changed = false;
-    if (!muted.has(seedKey)) {
-        // Played seed: silence every flooded pixel of the selection
-        for (const key of flooded) {
-            if (!selected.has(key)) continue; // silences live in the selection
-            if (muted.add(key)) changed = true;
-        }
-    } else {
-        // Silent seed: unsilence every flooded silent pixel
-        for (const key of flooded) {
-            if (muted.delete(key)) changed = true;
-        }
+    for (const key of flooded) {
+        if (!selected.has(key)) continue; // silences live in the selection
+        if (muted.has(key)) { muted.delete(key); changed = true; }
+        else                { muted.add(key); changed = true; }
+    }
+    if (!changed) return false;
+
+    hi.muteZones = rebuildZones(hi.muteZones, muted);
+    sendSynthMuteZones(id);
+    return true;
+}
+
+// Magic wand silence removal (Alt+Shift held): the matched silent pixels
+// play again. Returns true when the silences changed.
+export function wandRemoveMutePixels(id, startCell, tolerance, adjacent = true) {
+    const hi = synthHighlights.get(id);
+    if (!hi) return false;
+
+    const flooded = wandCells(startCell, tolerance, adjacent);
+    const muted = muteCellSet(hi);
+    let changed = false;
+    for (const key of flooded) {
+        if (muted.delete(key)) changed = true;
     }
     if (!changed) return false;
 

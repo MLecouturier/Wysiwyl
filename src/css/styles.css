@@ -133,8 +133,32 @@ h2 {
   pointer-events: auto;
   cursor: crosshair;
 }
-.image-viewer .pixel-overlay.picking.picking-silence {
-  cursor: cell;
+.image-viewer .pixel-overlay.picking.picking-rect.picking-add {
+  cursor: url("../assets/icons/square-dashed-plus.svg") 12 12, crosshair;
+}
+.image-viewer .pixel-overlay.picking.picking-rect.picking-remove {
+  cursor: url("../assets/icons/square-dashed-minus.svg") 12 12, crosshair;
+}
+.image-viewer .pixel-overlay.picking.picking-rect.picking-silence {
+  cursor: url("../assets/icons/square-dashed-silence.svg") 12 12, crosshair;
+}
+.image-viewer .pixel-overlay.picking.picking-lasso.picking-add {
+  cursor: url("../assets/icons/lasso-plus.svg") 7 22, crosshair;
+}
+.image-viewer .pixel-overlay.picking.picking-lasso.picking-remove {
+  cursor: url("../assets/icons/lasso-minus.svg") 7 22, crosshair;
+}
+.image-viewer .pixel-overlay.picking.picking-lasso.picking-silence {
+  cursor: url("../assets/icons/lasso-silence.svg") 7 22, crosshair;
+}
+.image-viewer .pixel-overlay.picking.picking-wand.picking-add {
+  cursor: url("../assets/icons/wand-sparkles-plus.svg") 2 2, crosshair;
+}
+.image-viewer .pixel-overlay.picking.picking-wand.picking-remove {
+  cursor: url("../assets/icons/wand-sparkles-minus.svg") 2 2, crosshair;
+}
+.image-viewer .pixel-overlay.picking.picking-wand.picking-silence {
+  cursor: url("../assets/icons/wand-sparkles-silence.svg") 2 2, crosshair;
 }
 .image-viewer .cursor-overlay {
   position: absolute;
@@ -272,6 +296,13 @@ select:disabled {
   color: #3a7bd5;
 }
 .icon-btn.active:hover {
+  border-color: #888;
+}
+.icon-btn.active.selective {
+  color: #e67e22;
+  border-color: #e67e22;
+}
+.icon-btn.active.selective:hover {
   border-color: #888;
 }
 

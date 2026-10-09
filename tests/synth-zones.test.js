@@ -1,12 +1,12 @@
-// Unit tests for the synth zone helpers (src/js/synth-zones.js). Only the
-// pure helpers are exercised; the send/edit functions are IPC- and
+// Unit tests for the synth zone helpers (src/js/synth/selection.js). Only
+// the pure helpers are exercised; the send/edit functions are IPC- and
 // DOM-bound.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { muteCellSet, rectOverlapsMuteZones } from '../src/js/synth/selection.js';
-import { synthHighlights } from '../src/js/core/state.js';
+import { muteCellSet, selectionMode, wandFloodCells, wandGlobalCells } from '../src/js/synth/selection.js';
+import { viewer } from '../src/js/core/state.js';
 
 test('muteCellSet enumerates the cells of the mute zones', () => {
     const hi = {
@@ -22,14 +22,41 @@ test('muteCellSet is empty without mute zones', () => {
     assert.equal(muteCellSet({ muteZones: [] }).size, 0);
 });
 
-test('rectOverlapsMuteZones reads the registry', () => {
-    synthHighlights.set(99, {
-        visible: true,
-        zones: [],
-        muteZones: [{ order: 0, runs: [{ y: 2, x0: 2, x1: 3 }] }],
-    });
-    assert.equal(rectOverlapsMuteZones(99, { x: 0, y: 0, w: 3, h: 3 }), true);
-    assert.equal(rectOverlapsMuteZones(99, { x: 5, y: 5, w: 1, h: 1 }), false);
-    assert.equal(rectOverlapsMuteZones(123, { x: 0, y: 0, w: 1, h: 1 }), false);
-    synthHighlights.delete(99);
+test('selectionMode resolves the editing mode from the modifiers', () => {
+    assert.equal(selectionMode(false, false), 'add');
+    assert.equal(selectionMode(true, false), 'remove');
+    assert.equal(selectionMode(false, true), 'silence');
+    assert.equal(selectionMode(true, true), 'unsilence');
+});
+
+// A 4x1 image: black, black, white, black (RGBA per pixel).
+function setWandFixture() {
+    viewer.processedPixels = {
+        width: 4,
+        height: 1,
+        rgba: new Uint8ClampedArray([
+            0, 0, 0, 255,
+            0, 0, 0, 255,
+            255, 255, 255, 255,
+            0, 0, 0, 255,
+        ]),
+    };
+    viewer.gridW = 4;
+    viewer.gridH = 1;
+}
+
+test('wandFloodCells selects only the pixels connected to the seed', () => {
+    setWandFixture();
+    // Seed on the first black pixel: the white pixel blocks the flood, so
+    // the trailing black pixel (col 3) is NOT reached.
+    const cells = wandFloodCells({ col: 0, row: 0 }, 0);
+    assert.deepEqual([...cells].sort(), ['0,0', '1,0']);
+});
+
+test('wandGlobalCells selects every in-tolerance pixel, touching or not', () => {
+    setWandFixture();
+    // Same seed: the trailing black pixel matches by color even though it
+    // is disconnected from the seed.
+    const cells = wandGlobalCells({ col: 0, row: 0 }, 0);
+    assert.deepEqual([...cells].sort(), ['0,0', '1,0', '3,0']);
 });

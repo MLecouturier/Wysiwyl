@@ -37,16 +37,42 @@
         height: 100%;
         pointer-events: none;
 
-        // Pixel range click-selection mode
+        // Pixel range click-selection mode: the cursor reflects the armed
+        // tool (rect / lasso / wand) and the effective mode — add (default),
+        // remove (Alt) or toggle silences (Shift, and Alt+Shift for removal).
+        // The SVG icons carry a dark outline so they stay readable on the
+        // dark viewer; the trailing crosshair is the fallback.
         &.picking {
             pointer-events: auto;
             cursor: crosshair;
-        }
 
-        // Alt (Option) held while a selection tool is armed: the
-        // square/lasso edit the manual silences instead
-        &.picking.picking-silence {
-            cursor: cell;
+            &.picking-rect.picking-add {
+                cursor: url('../assets/icons/square-dashed-plus.svg') 12 12, crosshair;
+            }
+            &.picking-rect.picking-remove {
+                cursor: url('../assets/icons/square-dashed-minus.svg') 12 12, crosshair;
+            }
+            &.picking-rect.picking-silence {
+                cursor: url('../assets/icons/square-dashed-silence.svg') 12 12, crosshair;
+            }
+            &.picking-lasso.picking-add {
+                cursor: url('../assets/icons/lasso-plus.svg') 7 22, crosshair;
+            }
+            &.picking-lasso.picking-remove {
+                cursor: url('../assets/icons/lasso-minus.svg') 7 22, crosshair;
+            }
+            &.picking-lasso.picking-silence {
+                cursor: url('../assets/icons/lasso-silence.svg') 7 22, crosshair;
+            }
+            &.picking-wand.picking-add {
+                cursor: url('../assets/icons/wand-sparkles-plus.svg') 2 2, crosshair;
+            }
+            &.picking-wand.picking-remove {
+                cursor: url('../assets/icons/wand-sparkles-minus.svg') 2 2, crosshair;
+            }
+            &.picking-wand.picking-silence {
+                cursor: url('../assets/icons/wand-sparkles-silence.svg') 2 2, crosshair;
+            }
         }
     }
 

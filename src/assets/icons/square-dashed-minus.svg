@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <g fill="none" stroke="#000000" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 3 C3.895 3 3 3.895 3 5"/>
+    <path d="M19 3 C20.105 3 21 3.895 21 5"/>
+    <path d="M21 19 C21 20.105 20.105 21 19 21"/>
+    <path d="M5 21 C3.895 21 3 20.105 3 19"/>
+    <path d="M9 3 L10 3"/>
+    <path d="M9 21 L10 21"/>
+    <path d="M14 3 L15 3"/>
+    <path d="M14 21 L15 21"/>
+    <path d="M3 9 L3 10"/>
+    <path d="M21 9 L21 10"/>
+    <path d="M3 14 L3 15"/>
+    <path d="M21 14 L21 15"/>
+    <path d="M8 12 L16 12"/>
+  </g>
+  <g fill="none" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 3 C3.895 3 3 3.895 3 5"/>
+    <path d="M19 3 C20.105 3 21 3.895 21 5"/>
+    <path d="M21 19 C21 20.105 20.105 21 19 21"/>
+    <path d="M5 21 C3.895 21 3 20.105 3 19"/>
+    <path d="M9 3 L10 3"/>
+    <path d="M9 21 L10 21"/>
+    <path d="M14 3 L15 3"/>
+    <path d="M14 21 L15 21"/>
+    <path d="M3 9 L3 10"/>
+    <path d="M21 9 L21 10"/>
+    <path d="M3 14 L3 15"/>
+    <path d="M21 14 L21 15"/>
+    <path d="M8 12 L16 12"/>
+  </g>
+</svg>

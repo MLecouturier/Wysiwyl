@@ -27,7 +27,7 @@ import {
     sendSynthZones, sendSynthMuteZones, sendSynthNoteRanges, sendSynthNoteLengths,
     clipMuteZonesToSelection,
 } from './selection.js';
-import { startZonePicking, cancelZonePicking, isZoneMode, isZonePickingId, remapZonePickIds } from './selection.js';
+import { startZonePicking, cancelZonePicking, setWandAdjacent, isZoneMode, isZonePickingId, remapZonePickIds } from './selection.js';
 
 // Deferred so importing this module does not touch the Tauri globals.
 const invoke = (...args) => window.__TAURI__.core.invoke(...args);
@@ -732,15 +732,18 @@ export function createSynthElement(id, cfg = null) {
         }
     });
 
-    // Magic wand: arm/cancel the similar-color selection mode on the
-    // image. The tolerance input shows up in the zones header while the
-    // mode is armed on this card.
+    // Magic wand: 3-state cycle — arm adjacent (blue), switch to
+    // non-adjacent (orange "selective" state: every in-tolerance pixel of
+    // the whole image), then disarm. The tolerance input shows up in the
+    // zones header while the mode is armed on this card.
     el.querySelector('.synth-magic-wand-add-zone-btn').addEventListener('click', (e) => {
         const btn = e.currentTarget;
-        if (isZoneMode(id, 'wand')) {
+        if (!isZoneMode(id, 'wand')) {
+            startZonePicking(id, btn, 'wand');
+        } else if (btn.classList.contains('selective')) {
             cancelZonePicking();
         } else {
-            startZonePicking(id, btn, 'wand');
+            setWandAdjacent(false);
         }
     });
 
