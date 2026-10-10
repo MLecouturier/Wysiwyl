@@ -109,6 +109,7 @@ export function t(key, params = {}) {
 /// attributes in the current DOM (used for the initial HTML markup).
 /// - data-i18n="key"        -> sets textContent
 /// - data-i18n-title="key"  -> sets the title attribute
+/// - data-i18n-aria-label="key" -> sets the aria-label attribute
 /// - data-i18n-placeholder="key" -> sets the placeholder attribute
 export function applyTranslations(root = document) {
     root.querySelectorAll('[data-i18n]').forEach(el => {
@@ -116,6 +117,9 @@ export function applyTranslations(root = document) {
     });
     root.querySelectorAll('[data-i18n-title]').forEach(el => {
         el.title = t(el.dataset.i18nTitle);
+    });
+    root.querySelectorAll('[data-i18n-aria-label]').forEach(el => {
+        el.setAttribute('aria-label', t(el.dataset.i18nAriaLabel));
     });
     root.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
         el.placeholder = t(el.dataset.i18nPlaceholder);

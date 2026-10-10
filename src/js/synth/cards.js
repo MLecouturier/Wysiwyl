@@ -50,6 +50,38 @@ const synthTabs = document.querySelector('.synth-tabs');
 const placeholder = document.querySelector('.synth-list-body .placeholder-text');
 const playAllBtn = document.querySelector('#play-all-btn');
 
+// Accordion state: exactly one synth card is expanded (.active) at a time,
+// the others collapse to a thin title bar. The active synth's id is kept
+// here so it survives tab drags and id renumbering.
+let activeSynthId = null;
+
+export const getActiveSynthId = () => activeSynthId;
+
+// Expands one synth card and collapses the others; the paired tab follows.
+// Any transient tool, menu or color picker is closed so it cannot outlive
+// the context switch, then the card is scrolled into view.
+export function setActiveSynth(id) {
+    const targetId = Number(id);
+    if (!synthElementById(targetId)) return;
+    activeSynthId = targetId;
+    document.querySelectorAll('.synth-block').forEach(block => {
+        block.classList.toggle('active', Number(block.dataset.synthId) === targetId);
+    });
+    document.querySelectorAll('.synth-tab').forEach(tab => {
+        tab.classList.toggle('active', Number(tab.dataset.synthId) === targetId);
+    });
+    document.querySelectorAll('.synth-menu').forEach(m => m.classList.add('hidden'));
+    document.querySelectorAll('.synth-color-picker').forEach(p => p.classList.add('hidden'));
+    cancelTransientTools();
+    scrollSynthCardIntoView(synthElementById(targetId));
+}
+
+// Drops the accordion state (no expanded card), used while rebuilding the
+// synth list on a session load.
+export function clearActiveSynth() {
+    activeSynthId = null;
+}
+
 // Options of the reading-direction select of a synth: an arrow glyph per
 // direction (locale-independent), the localized names live in the option
 // titles.
@@ -73,6 +105,26 @@ export function setTabVolumeBar(tab, volume) {
     tab?.style.setProperty('--synth-volume', `${(v / 127 * 100).toFixed(2)}%`);
 }
 
+// Reflects the monophonic/polyphonic mode on a card: the segmented buttons,
+// the mode-specific panel, and the monophonic-only settings (hue shift).
+function setSynthMode(el, mode) {
+    const poly = mode === 'polyphonic';
+    el.querySelectorAll('.synth-mode-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.mode === (poly ? 'polyphonic' : 'monophonic'));
+    });
+    el.querySelector('.synth-mode-panel-mono').classList.toggle('hidden', poly);
+    el.querySelector('.synth-mode-panel-poly').classList.toggle('hidden', !poly);
+    el.querySelectorAll('.synth-mono-only').forEach(node => node.classList.toggle('hidden', poly));
+}
+
+// Legato only applies with the sustain on (pizzicato plucks each note): the
+// legato button is greyed out (kept clickable, value preserved) while the
+// sustain is off.
+function syncLegatoAvailability(el) {
+    const sustainOn = el.querySelector('.synth-note-sustain').classList.contains('active');
+    el.querySelector('.synth-note-legato').classList.toggle('inactive', !sustainOn);
+}
+
 // Reflects a newly created synth's backend state (built from the
 // default-synth template) into its UI. No backend calls needed: the state
 // is already applied server-side.
@@ -82,12 +134,7 @@ export function applySynthConfig(el, cfg) {
     // MIDI channel
     el.querySelector('.synth-channel').value = String(cfg.channel);
     // Mode (monophonic / polyphonic)
-    const mode = cfg.mode === 'polyphonic' ? 'polyphonic' : 'monophonic';
-    el.querySelectorAll('.synth-mode-btn').forEach(b => {
-        b.classList.toggle('active', b.dataset.mode === mode);
-    });
-    el.querySelector('.synth-mode-panel-mono').classList.toggle('hidden', mode !== 'monophonic');
-    el.querySelector('.synth-mode-panel-poly').classList.toggle('hidden', mode !== 'polyphonic');
+    setSynthMode(el, cfg.mode === 'polyphonic' ? 'polyphonic' : 'monophonic');
     // Loop / back-and-forth (mutually exclusive)
     el.querySelector('.synth-loop-btn').classList.toggle('active', !!cfg.loop_enabled && !cfg.back_and_forth);
     el.querySelector('.synth-back-n-forth-btn').classList.toggle('active', !!cfg.back_and_forth);
@@ -140,6 +187,9 @@ export function applySynthConfig(el, cfg) {
     // Sustain: false by default (pizzicato) — also the backend's default
     // for sessions saved before the option existed
     el.querySelector('.synth-note-sustain').classList.toggle('active', !!cfg.note_sustain);
+    // Legato tie: false by default; only acts with the sustain on
+    el.querySelector('.synth-note-legato').classList.toggle('active', !!cfg.note_legato);
+    syncLegatoAvailability(el);
     // Master-tempo quantize: toggle + resync period (1-8 beats, default 4
     // for sessions saved before the option existed)
     const quantizeBtn = el.querySelector('.synth-quantize');
@@ -239,7 +289,7 @@ export function createSynthElement(id, cfg = null) {
     // Hydrate what the static template can't express: the dynamic
     // option lists (i18n- and config-driven), the palette swatches, the
     // four note-range groups and the identification color
-    el.querySelector('.synth-color-band').style.background = defaultColor;
+    el.querySelector('.synth-color-disc').style.background = defaultColor;
     el.querySelector('.color-swatches').innerHTML = colorSwatches;
     el.querySelector('.synth-channel').innerHTML = channelOptions;
     el.querySelector('.program-bank-manual').innerHTML = bankOptions;
@@ -387,20 +437,28 @@ export function createSynthElement(id, cfg = null) {
     });
     el.querySelector('.synth-remove').addEventListener('click', () => onSynthRemoveClick(id, el));
 
-    // Color band → toggle the picker
-    const colorBand   = el.querySelector('.synth-color-band');
+    // Color disc (left of the title) → toggle the picker
+    const colorDisc   = el.querySelector('.synth-color-disc');
     const colorPicker = el.querySelector('.synth-color-picker');
-    colorBand.addEventListener('click', () => {
+    const toggleColorPicker = (e) => {
+        e.stopPropagation(); // must not expand a collapsed card
         // Close any other open pickers
         document.querySelectorAll('.synth-color-picker').forEach(p => {
             if (p !== colorPicker) p.classList.add('hidden');
         });
         const opened = !colorPicker.classList.toggle('hidden');
-        // The picker is anchored to the card's top-left corner: when the
-        // band is clicked on a card partially scrolled out of the list,
-        // scroll the picker fully into view instead of leaving it clipped
-        // by the .synth-devices scroll container.
+        // The picker is anchored under the disc: when the card is partially
+        // scrolled out of the list, scroll it fully into view instead of
+        // leaving it clipped by the .synth-devices scroll container.
         if (opened) colorPicker.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    };
+    colorDisc.addEventListener('click', toggleColorPicker);
+    // The disc is a role="button": activate it from the keyboard too
+    colorDisc.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            toggleColorPicker(e);
+        }
     });
 
     // Click on a color
@@ -409,7 +467,7 @@ export function createSynthElement(id, cfg = null) {
             const color = btn.dataset.color;
             appEvents.emit('session-dirty');
             synthColors.set(id, color);
-            colorBand.style.background = color;
+            colorDisc.style.background = color;
             tab.style.setProperty('--synth-tab-color', color);
             el.style.setProperty('--synth-color', color);
             colorPicker.classList.add('hidden');
@@ -509,20 +567,8 @@ export function createSynthElement(id, cfg = null) {
             .catch(err => console.error('Error in set_synth_sorted_reading:', err));
     });
 
-    // ---- Compact mode: reduce the card to the playback controls ----
-    // Everything is driven by the .compact class on the synth block (see
-    // the SCSS); the JS only toggles the class and the button icon.
-    const toggleFullOptionsBtn = el.querySelector('.synth-toggle-full-options');
-    toggleFullOptionsBtn.addEventListener('click', () => {
-        const compact = el.classList.toggle('compact');
-        toggleFullOptionsBtn.querySelector('.material-symbols-outlined').textContent =
-            compact ? 'expand_all' : 'collapse_all';
-    });
-
     // ---- Monophonic / polyphonic mode ----
     const modeBtns  = el.querySelectorAll('.synth-mode-btn');
-    const monoPanel = el.querySelector('.synth-mode-panel-mono');
-    const polyPanel = el.querySelector('.synth-mode-panel-poly');
 
     modeBtns.forEach(btn => {
         btn.addEventListener('click', async () => {
@@ -530,9 +576,7 @@ export function createSynthElement(id, cfg = null) {
             if (btn.classList.contains('active')) return; // already the active mode
             try {
                 await invoke('set_synth_mode', { id, mode: newMode });
-                modeBtns.forEach(b => b.classList.toggle('active', b.dataset.mode === newMode));
-                monoPanel.classList.toggle('hidden', newMode !== 'monophonic');
-                polyPanel.classList.toggle('hidden', newMode !== 'polyphonic');
+                setSynthMode(el, newMode);
             } catch (err) {
                 console.error('Error in set_synth_mode:', err);
             }
@@ -635,8 +679,19 @@ export function createSynthElement(id, cfg = null) {
         const btn = e.currentTarget;
         const sustain = !btn.classList.contains('active');
         btn.classList.toggle('active', sustain);
+        syncLegatoAvailability(el);
         invoke('set_synth_note_sustain', { id, sustain })
             .catch(err => console.error('Error in set_synth_note_sustain:', err));
+    });
+
+    // ---- Legato tie: hold identical consecutive notes instead of
+    // re-articulating each pixel. Only acts with the sustain on.
+    el.querySelector('.synth-note-legato').addEventListener('click', (e) => {
+        const btn = e.currentTarget;
+        const legato = !btn.classList.contains('active');
+        btn.classList.toggle('active', legato);
+        invoke('set_synth_note_legato', { id, legato })
+            .catch(err => console.error('Error in set_synth_note_legato:', err));
     });
 
     // ---- Master-tempo quantize: realign the step grid on the beat ----
@@ -794,6 +849,23 @@ export function createSynthElement(id, cfg = null) {
     // The per-card actions menu (save as template, copy parameters/zones):
     // wired by synth/menu.js through this hook, so cards.js never imports it.
     hooks.initSynthMenu(el);
+
+    // Collapsed card: clicking anywhere but its own controls expands it
+    // (the disc stops propagation itself; the remove button has its own
+    // confirm flow and must not toggle the accordion).
+    el.addEventListener('click', (e) => {
+        if (e.target.closest('.synth-color-disc')) return;
+        if (e.target.closest('.synth-remove')) return;
+        if (el.classList.contains('active')) return;
+        setActiveSynth(id);
+    });
+
+    // First synth of a fresh list: expanded by default
+    if (activeSynthId === null) {
+        activeSynthId = id;
+        el.classList.add('active');
+        tab.classList.add('active');
+    }
 
     return el;
 }
@@ -1007,14 +1079,18 @@ export function updateVolumeSharedChannelWarnings() {
             input.classList.toggle('shared-channel', shared);
             const key = shared ? 'synth.volumeSharedChannel' : 'synth.volume';
             input.dataset.i18nTitle = key;
+            input.dataset.i18nAriaLabel = key;
             input.title = t(key);
+            input.setAttribute('aria-label', t(key));
         }
         const channelSelect = block.querySelector('.synth-channel');
         if (channelSelect) {
             channelSelect.classList.toggle('shared-channel', shared);
             const key = shared ? 'synth.channelSharedChannel' : 'synth.channel';
             channelSelect.dataset.i18nTitle = key;
+            channelSelect.dataset.i18nAriaLabel = key;
             channelSelect.title = t(key);
+            channelSelect.setAttribute('aria-label', t(key));
         }
     });
 }
@@ -1138,15 +1214,14 @@ export function initTabDrag(tab, el) {
 
     let drag = null; // { pointerId, grabOffset } while dragging
 
-    // Releasing a press on the tab's body — a simple click, not a drag —
-    // brings the paired card into view. The play button keeps its own
-    // role; the handle is covered by finish() (which scrolls on drop),
-    // so excluding it here avoids a double scroll.
+    // Releasing a press on the tab — a simple click on its body or on its
+    // drag handle, or the drop of a drag — expands the paired card (and
+    // collapses the previously active one). The play button keeps its own
+    // role.
     tab.addEventListener('pointerup', (e) => {
         if (e.button !== 0) return;
         if (e.target.closest('.synth-tab-play')) return;
-        if (e.target.closest('.synth-tab-drag-handle')) return;
-        scrollSynthCardIntoView(el);
+        setActiveSynth(Number(el.dataset.synthId));
     });
 
     handle.addEventListener('pointerdown', (e) => {
@@ -1249,6 +1324,13 @@ export async function renumberSynthIds() {
     rekey(synthNames);
     rekey(synthDisplayNumbers);
 
+    // The active synth follows the same renumbering (its .active class
+    // stays on the same DOM element; only the tracked id changes)
+    if (activeSynthId !== null) {
+        const activeIndex = order.indexOf(activeSynthId);
+        activeSynthId = activeIndex >= 0 ? activeIndex + 1 : null;
+    }
+
     blocks.forEach((el, i) => {
         const oldId = order[i];
         const newId = i + 1;
@@ -1327,6 +1409,15 @@ export async function onSynthRemoveClick(id, el) {
     removeSynthFromRegistry(id);
     el._tab?.remove();
     el.remove();
+
+    // If the removed synth was the expanded one, expand a remaining
+    // neighbour (before renumbering, which remaps the tracked id).
+    if (activeSynthId === id) {
+        const next = synthListBody.querySelector('.synth-block');
+        if (next) setActiveSynth(Number(next.dataset.synthId));
+        else activeSynthId = null;
+    }
+
     await renumberSynthIds();
     redrawAllHighlights();
     updateVolumeSharedChannelWarnings();

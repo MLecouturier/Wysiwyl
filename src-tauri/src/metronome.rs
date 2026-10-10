@@ -660,12 +660,18 @@ pub(crate) fn remapped_cursor(
 
 /// Whether the pixel's articulation must force a re-articulation (Note Off
 /// of the previous note + Note On of the new one) even when the note did not
-/// change. Note lengths already retrigger every pixel. Pizzicato without a
-/// minimum gate retriggers through its immediate Note Off clearing
+/// change. Note lengths already retrigger every pixel, unless the legato tie
+/// is on (identical consecutive notes are then held as one). Pizzicato
+/// without a minimum gate retriggers through its immediate Note Off clearing
 /// `note_is_on`; pizzicato with a gate keeps `note_is_on` set until the
 /// scheduled Note Off, so it must force the retrigger explicitly.
-fn pizzicato_retrigger(note_lengths_enabled: bool, note_sustain: bool, gate_ms: u32) -> bool {
-    note_lengths_enabled || (!note_sustain && gate_ms > 0)
+fn articulation_retrigger(
+    note_lengths_enabled: bool,
+    note_sustain: bool,
+    note_legato: bool,
+    gate_ms: u32,
+) -> bool {
+    (note_lengths_enabled && !note_legato) || (!note_sustain && gate_ms > 0)
 }
 
 /// Plays the pixel at the synth's current playhead position, then advances
@@ -803,8 +809,14 @@ fn step_synth_once(
     // Pizzicato with a minimum gate keeps `note_is_on` set until the
     // scheduled Note Off, so it must force a re-articulation on every pixel:
     // otherwise a run of identical pixels would hold one note instead of
-    // plucking each. With note lengths enabled the retrigger is already on.
-    let retrigger = pizzicato_retrigger(note_length.is_some(), synth.config.note_sustain, gate_ms);
+    // plucking each. With note lengths enabled the retrigger is already on,
+    // unless the legato tie is on (identical notes are then held).
+    let retrigger = articulation_retrigger(
+        note_length.is_some(),
+        synth.config.note_sustain,
+        synth.config.note_legato,
+        gate_ms,
+    );
 
     // The grid dimensions travel with the cursor so the frontend and the
     // projection mirror decode the absolute pixel index against the grid
@@ -1579,7 +1591,8 @@ pub fn start_metronome(app: AppHandle, state: tauri::State<MetronomeState>) {
                     // following step. Delay-only — a step is never advanced,
                     // so a sounding note is never cut. With note lengths
                     // enabled the note that just elapsed is released instead
-                    // of being extended until the boundary.
+                    // of being extended until the boundary — unless the legato
+                    // tie is on, where the note is meant to hold.
                     if synth.config.quantize
                         && should_hold_for_quantize(
                             wake,
@@ -1587,7 +1600,7 @@ pub fn start_metronome(app: AppHandle, state: tauri::State<MetronomeState>) {
                             synth.playback.wakes_since_step,
                         )
                     {
-                        if !synth.config.note_lengths.is_empty() {
+                        if !synth.config.note_lengths.is_empty() && !synth.config.note_legato {
                             release_sounding_notes(synth, &midi_state);
                         }
                         continue;
@@ -2633,20 +2646,24 @@ mod tests {
     }
 
     #[test]
-    fn pizzicato_retrigger_depends_on_lengths_sustain_and_gate() {
+    fn articulation_retrigger_depends_on_lengths_sustain_legato_and_gate() {
         // Note lengths always retrigger, whatever the articulation
-        assert!(pizzicato_retrigger(true, false, 0));
-        assert!(pizzicato_retrigger(true, true, 0));
-        assert!(pizzicato_retrigger(true, false, 40));
+        assert!(articulation_retrigger(true, false, false, 0));
+        assert!(articulation_retrigger(true, true, false, 0));
+        assert!(articulation_retrigger(true, false, false, 40));
+
+        // Legato ties identical notes: no forced retrigger even with lengths
+        assert!(!articulation_retrigger(true, true, true, 0));
+        assert!(!articulation_retrigger(true, true, true, 40));
 
         // Sustained without note lengths: the next note holds, no retrigger
-        assert!(!pizzicato_retrigger(false, true, 40));
+        assert!(!articulation_retrigger(false, true, false, 40));
 
         // Pizzicato without note lengths: a non-zero gate keeps the flags
         // set, so the retrigger must be forced; a zero gate relies on the
         // immediate Note Off clearing them
-        assert!(pizzicato_retrigger(false, false, 40));
-        assert!(!pizzicato_retrigger(false, false, 0));
+        assert!(articulation_retrigger(false, false, false, 40));
+        assert!(!articulation_retrigger(false, false, false, 0));
     }
 
     // --- Note lengths: binary vs ternary ---

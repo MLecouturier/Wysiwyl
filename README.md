@@ -101,7 +101,7 @@ The interface is plain HTML/SCSS/JS (no framework, no bundler), organized around
 
 - **Utility classes** — Tailwind-style single-purpose classes, hand-rolled in `src/scss/_utilities.scss` (`flex`, `flex-col`, `items-center`, `gap-2`, `mb-3`, `text-muted`, `hidden`...). They are loaded **last** in the cascade, so a utility always overrides a component class and the markup can fine-tune any component without new SCSS. The spacing and font-size scales are generated from SCSS maps at the top of the file.
 - **Component classes** — one per UI region or control role (`.image-viewer`, `.controls`, `.mode-panel`, `.icon-btn`, `.synth-block`...), with their states and pseudo-elements nested in SCSS. They live in `scss/components/`, one file per area of the interface.
-- **State classes** — toggled by JS at runtime: `.hidden` (with `!important`), `.active`, `.locked`, `.picking`, `.compact`, `.confirm-pending`, `.dragging`, `.reversed`...
+- **State classes** — toggled by JS at runtime: `.hidden` (with `!important`), `.active`, `.locked`, `.picking`, `.confirm-pending`, `.dragging`, `.reversed`...
 
 ### Ids are hooks, never styled
 

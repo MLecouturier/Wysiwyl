@@ -3,15 +3,43 @@
 // ==========================================================================
 @use '../variables' as *;
 
+// Card padding, shared by the block and the header band's negative
+// margins (which bleed the tinted header to the card edges).
+$card-pad: 10px;
+
+// Shared look for the small numeric inputs of the card (volume, quantize
+// period, magic-wand tolerance, program bank/number): same background,
+// border, tabular digits and spinner removal everywhere. Font size and
+// cursor are left to each rule (they differ).
+%synth-number-input {
+    padding: .25rem .375rem;
+    background-color: $color-bg-medium;
+    color: $color-text-primary;
+    border: 1px solid $color-border;
+    border-radius: $border-radius-base;
+    outline: none;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+
+    &::-webkit-inner-spin-button,
+    &::-webkit-outer-spin-button {
+        -webkit-appearance: none;
+        margin: 0;
+    }
+
+    &:hover { border-color: $color-accent; }
+    &:focus { border-color: $color-accent; }
+}
+
 .synth-block {
     position: relative;
     background-color: $color-bg-light;
     // The synth's identification color (set inline via --synth-color,
-    // same mechanism as the tab's --synth-tab-color)
+    // same mechanism as the tab's --synth-tab-color): a thin 1px border
+    // all around, plus the color disc next to the title.
     border: 1px solid var(--synth-color, #{$color-border});
-    border-left: 5px solid var(--synth-color, #{$color-border}); // will be visually covered by .synth-color-band
     border-radius: $border-radius-base;
-    padding: 10px 10px 10px .875rem;
+    padding: $card-pad;
     overflow: visible;
 
     .synth-title-label {
@@ -21,7 +49,6 @@
         font-weight: 600;
         background-color: $color-bg-medium;
         border-radius: 1rem;
-        border: 1px solid $color-text-muted;
     }
 
     // Program change of the synth's MIDI channel: bank select (A–P) and
@@ -30,7 +57,6 @@
         display: inline-flex;
         align-items: center;
         gap: .375rem;
-        margin-left: .5rem;
         font-size: .78rem;
         white-space: nowrap;
 
@@ -43,49 +69,49 @@
 
         .program-bank-manual,
         .program-number-manual {
-            padding: .25rem .375rem;
+            @extend %synth-number-input;
             font-size: .9rem;
-            background-color: $color-bg-medium;
-            color: $color-text-primary;
-            border: 1px solid $color-border;
-            border-radius: $border-radius-base;
-            outline: none;
-            text-align: center;
-            font-variant-numeric: tabular-nums;
-
-            &::-webkit-inner-spin-button,
-            &::-webkit-outer-spin-button {
-                -webkit-appearance: none;
-                margin: 0;
-            }
-
-            &:hover { border-color: $color-accent; }
-            &:focus { border-color: $color-accent; }
         }
 
         .program-bank-manual { width: 3rem; cursor: pointer; }
         .program-number-manual { width: 3.5rem; }
     }
 
-    // Clickable color band on the left edge
-    .synth-color-band {
-        position: absolute;
-        left: -.5rem;
-        top: 0;
-        width: .5rem;
-        height: 100%;
-        border-radius: $border-radius-base 0 0 $border-radius-base;
-        cursor: pointer;
-        transition: filter $transition-fast;
-
-        &:hover { filter: brightness(1.3); }
+    .synth-midi-port {
+        max-width: 11rem;
     }
 
-    // Color picker
+    // MIDI channel select: amber border when the (port, channel) pair is
+    // shared with another synth — same warning as the volume input (CC 7
+    // addresses the channel, not the synth). Scoped to the block, not a
+    // header row, so it follows the select wherever it is placed.
+    .synth-channel.shared-channel {
+        border-color: $color-warning;
+
+        &:hover,
+        &:focus { border-color: $color-warning; }
+    }
+
+    // Color disc, left of the title: clicking it opens the palette
+    .synth-color-disc {
+        flex: 0 0 auto;
+        width: 1rem;
+        height: 1rem;
+        border-radius: 50%;
+        cursor: pointer;
+        transition: filter $transition-fast, transform $transition-fast;
+
+        &:hover {
+            filter: brightness(1.3);
+            transform: scale(1.15);
+        }
+    }
+
+    // Color picker, anchored under the disc
     .synth-color-picker {
         position: absolute;
-        left: .5rem;
-        top: 0;
+        left: .75rem;
+        top: 2.75rem;
         z-index: 100;
         background-color: $color-bg-dark;
         border: 1px solid $color-border;
@@ -161,7 +187,17 @@
         display: flex;
         flex-direction: column;
         gap: .5rem;
-        margin-bottom: .5rem;
+        // Header band tinted with the synth's identification color: the
+        // negative margins cancel the block's padding so it bleeds to the
+        // card edges, with the top corners rounded like the card.
+        margin: (-$card-pad) (-$card-pad) .5rem;
+        padding: $card-pad;
+        border-radius: $border-radius-base $border-radius-base 0 0;
+        // Dimmed tint: the identification color at 50 %, blended with the
+        // card's own background. The plain color is the fallback for
+        // engines without color-mix().
+        background-color: var(--synth-color, #{$color-border});
+        background-color: color-mix(in srgb, var(--synth-color, #{$color-border}) 50%, #{$color-bg-light});
         font-size: 0.9rem;
         color: $color-text-secondary;
 
@@ -170,26 +206,13 @@
             justify-content: flex-start;
             align-items: center;
             gap: .5rem;
+        }
 
-            &.center {
-                justify-content: center;
-            }
-
-            .synth-midi-port {
-                max-width: 11rem;
-            }
-
-            // MIDI channel select: amber border when the (port, channel)
-            // pair is shared with another synth — same warning as the
-            // volume input (CC 7 addresses the channel, not the synth).
-            .synth-channel {
-                &.shared-channel {
-                    border-color: #e0a016;
-
-                    &:hover,
-                    &:focus { border-color: #e0a016; }
-                }
-            }
+        // Header actions keep the card's own background: the tinted header
+        // band must not show through the buttons.
+        .synth-toggle-menu,
+        .synth-remove {
+            background-color: $color-bg-light;
         }
 
         .synth-title-input {
@@ -245,6 +268,7 @@
                 display: flex;
                 align-items: center;
                 gap: .5rem;
+                flex-wrap: wrap;
 
                 .synth-section-title {
                     font-size: 0.7rem;
@@ -277,6 +301,7 @@
                 justify-content: center;
                 gap: .5rem;
                 flex-grow: 1;
+                flex-wrap: wrap;
 
                 select { height: 1.75rem; }
 
@@ -298,60 +323,28 @@
         // (port, channel) is shared with another synth: the last CC 7
         // sent wins, overruling this input's value.
         .synth-volume {
+            @extend %synth-number-input;
             width: 3.25rem;
             height: 1.75rem;
-            padding: .25rem .375rem;
             font-size: .78rem;
-            background-color: $color-bg-medium;
-            color: $color-text-primary;
-            border: 1px solid $color-border;
-            border-radius: $border-radius-base;
-            outline: none;
-            text-align: center;
-            font-variant-numeric: tabular-nums;
             cursor: ns-resize;
 
-            &::-webkit-inner-spin-button,
-            &::-webkit-outer-spin-button {
-                -webkit-appearance: none;
-                margin: 0;
-            }
-
-            &:hover { border-color: $color-accent; }
-            &:focus { border-color: $color-accent; }
-
             &.shared-channel {
-                border-color: #e0a016;
+                border-color: $color-warning;
 
                 &:hover,
-                &:focus { border-color: #e0a016; }
+                &:focus { border-color: $color-warning; }
             }
         }
 
         // Quantize resync period, next to its toggle on the play row:
         // greyed out while the quantize is disabled (the value is kept).
         .synth-quantize-tempo {
+            @extend %synth-number-input;
             width: 3rem;
             height: 1.75rem;
-            padding: .25rem .375rem;
             font-size: .78rem;
-            background-color: $color-bg-medium;
-            color: $color-text-primary;
-            border: 1px solid $color-border;
-            border-radius: $border-radius-base;
-            outline: none;
-            text-align: center;
-            font-variant-numeric: tabular-nums;
             cursor: ns-resize;
-
-            &::-webkit-inner-spin-button,
-            &::-webkit-outer-spin-button {
-                -webkit-appearance: none;
-                margin: 0;
-            }
-
-            &:hover { border-color: $color-accent; }
-            &:focus { border-color: $color-accent; }
 
             // Greyed while the quantize toggle is off (the value is kept)
             &.inactive {
@@ -403,22 +396,6 @@
             white-space: pre-line;
         }
 
-        // Collapsible advanced options section
-        .synth-full-options {
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
-            border-top: 1px solid $color-border;
-            padding-top: 6px;
-        }
-
-        // Note lengths: brightness→duration mapping toggles
-        .note-lengths {
-            display: flex;
-            align-items: center;
-            gap: .25rem;
-        }
-
         // Glyph toggles (musical symbols instead of Material icons):
         // standard .icon-btn look, just a slightly larger glyph
         .synth-note-range button,
@@ -429,6 +406,12 @@
         // Binary/ternary toggle: a plain "3" marks the triplet division
         .synth-note-length-ternary {
             font-weight: 600;
+        }
+
+        // Legato tie is only meaningful with the sustain on: greyed out
+        // (kept clickable, value preserved) while the sustain is off.
+        .synth-note-legato.inactive {
+            opacity: .45;
         }
 
         // Segmented monophonic/polyphonic control: the look comes from the
@@ -443,6 +426,14 @@
             display: flex;
             flex-direction: column;
             gap: 6px;
+        }
+
+        // Voix section: the global scale + root sit next to the mode panel,
+        // which takes the remaining width (so the R/G/B groups spread like
+        // the mono note-range row).
+        .synth-voices .synth-section-body .synth-mode-panel {
+            flex: 1 1 auto;
+            min-width: 0;
         }
 
         .synth-channel-toggles {
@@ -463,6 +454,7 @@
         .synth-note-range {
             display: flex;
             align-items: center;
+            justify-content: center;
             gap: .25rem;
         }
 
@@ -528,57 +520,63 @@
     // magic-wand mode is armed on this card. The value is kept while
     // hidden, ready for the next wand click.
     .magic-wand-tolerance {
-        // display: none;
+        @extend %synth-number-input;
         visibility: hidden;
         width: 3rem;
         height: 1.75rem;
-        padding: .25rem .375rem;
         font-size: .78rem;
-        background-color: $color-bg-medium;
-        color: $color-text-primary;
-        border: 1px solid $color-border;
-        border-radius: $border-radius-base;
-        outline: none;
-        text-align: center;
-        font-variant-numeric: tabular-nums;
         cursor: ns-resize;
-
-        &::-webkit-inner-spin-button,
-        &::-webkit-outer-spin-button {
-            -webkit-appearance: none;
-            margin: 0;
-        }
-
-        &:hover { border-color: $color-accent; }
-        &:focus { border-color: $color-accent; }
     }
 
     // Armed magic wand: the tolerance input joins the zones header
-    &.wand-armed .magic-wand-tolerance { 
-        // display: block; 
+    &.wand-armed .magic-wand-tolerance {
         visibility: visible;
     }
 
-    // Compact mode (synth-toggle-full-options click): reduce the card to
-    // the strict minimum — header + playback section only
-    &.compact .synth-body {
-        > .synth-section:not(.synth-playback),
-        > .synth-full-options {
+    // Accordion: an inactive synth collapses to a thin bar carrying its
+    // identification color, title and remove button. The body is hidden,
+    // and the header is flattened (display: contents) so only the disc,
+    // the title and the remove button remain on a single row.
+    &:not(.active) {
+        cursor: pointer;
+        padding: .375rem .5rem;
+
+        .synth-body,
+        .synth-menu,
+        .synth-color-picker {
             display: none;
         }
-    }
 
-    .synth-section-separator {
-        height: 2px;
-        background: $color-accent;
-
-        &.gradient-wb {
-            background: $gradient-wb;
+        .synth-header {
+            flex-direction: row;
+            align-items: center;
+            margin: -.375rem -.5rem;
+            padding: .375rem .5rem;
+            border-radius: $border-radius-base;
+            font-size: .95rem;
         }
 
-        &.gradient-hue {
-            background: $gradient-hue;
+        .synth-header-row {
+            display: contents;
         }
+
+        // Only the header actions survive the flattening; the body (and
+        // everything it holds: MIDI, program, zones, transport…) is hidden
+        // as a whole above.
+        .synth-header-row .flex-fill,
+        .synth-toggle-menu {
+            display: none;
+        }
+
+        .synth-color-disc { order: 0; }
+
+        .synth-title-label {
+            order: 1;
+            flex: 1 1 auto;
+            width: auto;
+        }
+
+        .synth-remove { order: 2; }
     }
 
     // Zone selection row: the four actions live in the section header

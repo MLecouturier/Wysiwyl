@@ -31,10 +31,10 @@ const NON_SAVED_CONTAINERS = '#transform-panel, #crop-bar, #metronome, #language
 // the zones are sent to the backend).
 const NON_SAVED_SYNTH_BUTTONS = [
     '.synth-play', '.synth-rewind', '.synth-step-forward',
-    '.synth-eye-btn', '.synth-toggle-full-options', '.synth-toggle-menu',
+    '.synth-eye-btn', '.synth-toggle-menu',
     '.synth-add-zone-btn', '.synth-lasso-add-zone-btn',
     '.synth-magic-wand-add-zone-btn', '.synth-remove',
-    '.synth-color-band', '.synth-color-picker', '.synth-menu',
+    '.synth-color-disc', '.synth-color-picker', '.synth-menu',
 ].join(',');
 
 export function createSessionState({

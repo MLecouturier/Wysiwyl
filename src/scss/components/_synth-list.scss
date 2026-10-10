@@ -149,7 +149,6 @@
             gap: .25rem;
             flex: 1 1 auto;
             overflow-y: auto;
-            padding-bottom: 20rem;
 
             &::-webkit-scrollbar {
                 display: none;
@@ -186,7 +185,9 @@
         padding: 0;
         border: none;
         background: none;
-        color: var(--synth-tab-color, #{$color-text-muted});
+        // Inactive synths keep a neutral handle; the identification color
+        // is reserved for the expanded (active) synth's tab.
+        color: $color-text-muted;
         cursor: grab;
         touch-action: none; // the handle drives the drag, never a scroll
 
@@ -232,6 +233,14 @@
             color: #fff;
             &:hover { background-color: $color-stop-hover; }
         }
+    }
+
+    // Expanded synth: its tab reads as the current head of the stack and
+    // its handle takes the synth's identification color
+    &.active {
+        background-color: $color-bg-medium;
+
+        .synth-tab-drag-handle { color: var(--synth-tab-color, #{$color-text-primary}); }
     }
 
     // Dragging keeps the identification color (no border-color override:

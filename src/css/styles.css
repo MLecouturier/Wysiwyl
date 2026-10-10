@@ -736,7 +736,6 @@ button.toggle-btn.active.selective:hover {
   gap: 0.25rem;
   flex: 1 1 auto;
   overflow-y: auto;
-  padding-bottom: 20rem;
 }
 .synth-list-body .synth-devices .synth-devices-wrapper::-webkit-scrollbar {
   display: none;
@@ -766,7 +765,7 @@ button.toggle-btn.active.selective:hover {
   padding: 0;
   border: none;
   background: none;
-  color: var(--synth-tab-color, #888);
+  color: #888;
   cursor: grab;
   touch-action: none;
 }
@@ -808,6 +807,12 @@ button.toggle-btn.active.selective:hover {
 .synth-tab .synth-tab-play.active:hover {
   background-color: #a5281b;
 }
+.synth-tab.active {
+  background-color: #232323;
+}
+.synth-tab.active .synth-tab-drag-handle {
+  color: var(--synth-tab-color, #e0e0e0);
+}
 .synth-tab.dragging {
   z-index: 10;
   box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5);
@@ -831,13 +836,38 @@ button.toggle-btn.active.selective:hover {
   font-style: italic;
 }
 
+.synth-block .magic-wand-tolerance, .synth-block .synth-body .synth-quantize-tempo, .synth-block .synth-body .synth-volume, .synth-block .synth-section-program-change .program-bank-manual,
+.synth-block .synth-section-program-change .program-number-manual {
+  padding: 0.25rem 0.375rem;
+  background-color: #232323;
+  color: #e0e0e0;
+  border: 1px solid #333;
+  border-radius: 0.25rem;
+  outline: none;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.synth-block .magic-wand-tolerance::-webkit-inner-spin-button, .synth-block .synth-body .synth-quantize-tempo::-webkit-inner-spin-button, .synth-block .synth-body .synth-volume::-webkit-inner-spin-button, .synth-block .synth-section-program-change .program-bank-manual::-webkit-inner-spin-button,
+.synth-block .synth-section-program-change .program-number-manual::-webkit-inner-spin-button, .synth-block .magic-wand-tolerance::-webkit-outer-spin-button, .synth-block .synth-body .synth-quantize-tempo::-webkit-outer-spin-button, .synth-block .synth-body .synth-volume::-webkit-outer-spin-button, .synth-block .synth-section-program-change .program-bank-manual::-webkit-outer-spin-button,
+.synth-block .synth-section-program-change .program-number-manual::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.synth-block .magic-wand-tolerance:hover, .synth-block .synth-body .synth-quantize-tempo:hover, .synth-block .synth-body .synth-volume:hover, .synth-block .synth-section-program-change .program-bank-manual:hover,
+.synth-block .synth-section-program-change .program-number-manual:hover {
+  border-color: #3a7bd5;
+}
+.synth-block .magic-wand-tolerance:focus, .synth-block .synth-body .synth-quantize-tempo:focus, .synth-block .synth-body .synth-volume:focus, .synth-block .synth-section-program-change .program-bank-manual:focus,
+.synth-block .synth-section-program-change .program-number-manual:focus {
+  border-color: #3a7bd5;
+}
+
 .synth-block {
   position: relative;
   background-color: #262626;
   border: 1px solid var(--synth-color, #333);
-  border-left: 5px solid var(--synth-color, #333);
   border-radius: 0.25rem;
-  padding: 10px 10px 10px 0.875rem;
+  padding: 10px;
   overflow: visible;
 }
 .synth-block .synth-title-label {
@@ -847,13 +877,11 @@ button.toggle-btn.active.selective:hover {
   font-weight: 600;
   background-color: #232323;
   border-radius: 1rem;
-  border: 1px solid #888;
 }
 .synth-block .synth-section-program-change {
   display: inline-flex;
   align-items: center;
   gap: 0.375rem;
-  margin-left: 0.5rem;
   font-size: 0.78rem;
   white-space: nowrap;
 }
@@ -865,29 +893,7 @@ button.toggle-btn.active.selective:hover {
 }
 .synth-block .synth-section-program-change .program-bank-manual,
 .synth-block .synth-section-program-change .program-number-manual {
-  padding: 0.25rem 0.375rem;
   font-size: 0.9rem;
-  background-color: #232323;
-  color: #e0e0e0;
-  border: 1px solid #333;
-  border-radius: 0.25rem;
-  outline: none;
-  text-align: center;
-  font-variant-numeric: tabular-nums;
-}
-.synth-block .synth-section-program-change .program-bank-manual::-webkit-inner-spin-button, .synth-block .synth-section-program-change .program-bank-manual::-webkit-outer-spin-button,
-.synth-block .synth-section-program-change .program-number-manual::-webkit-inner-spin-button,
-.synth-block .synth-section-program-change .program-number-manual::-webkit-outer-spin-button {
-  -webkit-appearance: none;
-  margin: 0;
-}
-.synth-block .synth-section-program-change .program-bank-manual:hover,
-.synth-block .synth-section-program-change .program-number-manual:hover {
-  border-color: #3a7bd5;
-}
-.synth-block .synth-section-program-change .program-bank-manual:focus,
-.synth-block .synth-section-program-change .program-number-manual:focus {
-  border-color: #3a7bd5;
 }
 .synth-block .synth-section-program-change .program-bank-manual {
   width: 3rem;
@@ -896,23 +902,31 @@ button.toggle-btn.active.selective:hover {
 .synth-block .synth-section-program-change .program-number-manual {
   width: 3.5rem;
 }
-.synth-block .synth-color-band {
-  position: absolute;
-  left: -0.5rem;
-  top: 0;
-  width: 0.5rem;
-  height: 100%;
-  border-radius: 0.25rem 0 0 0.25rem;
-  cursor: pointer;
-  transition: filter 0.2s ease;
+.synth-block .synth-midi-port {
+  max-width: 11rem;
 }
-.synth-block .synth-color-band:hover {
+.synth-block .synth-channel.shared-channel {
+  border-color: #e0a016;
+}
+.synth-block .synth-channel.shared-channel:hover, .synth-block .synth-channel.shared-channel:focus {
+  border-color: #e0a016;
+}
+.synth-block .synth-color-disc {
+  flex: 0 0 auto;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: filter 0.2s ease, transform 0.2s ease;
+}
+.synth-block .synth-color-disc:hover {
   filter: brightness(1.3);
+  transform: scale(1.15);
 }
 .synth-block .synth-color-picker {
   position: absolute;
-  left: 0.5rem;
-  top: 0;
+  left: 0.75rem;
+  top: 2.75rem;
   z-index: 100;
   background-color: #1e1e1e;
   border: 1px solid #333;
@@ -980,7 +994,11 @@ button.toggle-btn.active.selective:hover {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  margin-bottom: 0.5rem;
+  margin: -10px -10px 0.5rem;
+  padding: 10px;
+  border-radius: 0.25rem 0.25rem 0 0;
+  background-color: var(--synth-color, #333);
+  background-color: color-mix(in srgb, var(--synth-color, #333) 50%, #262626);
   font-size: 0.9rem;
   color: #ccc;
 }
@@ -990,17 +1008,9 @@ button.toggle-btn.active.selective:hover {
   align-items: center;
   gap: 0.5rem;
 }
-.synth-block .synth-header .synth-header-row.center {
-  justify-content: center;
-}
-.synth-block .synth-header .synth-header-row .synth-midi-port {
-  max-width: 11rem;
-}
-.synth-block .synth-header .synth-header-row .synth-channel.shared-channel {
-  border-color: #e0a016;
-}
-.synth-block .synth-header .synth-header-row .synth-channel.shared-channel:hover, .synth-block .synth-header .synth-header-row .synth-channel.shared-channel:focus {
-  border-color: #e0a016;
+.synth-block .synth-header .synth-toggle-menu,
+.synth-block .synth-header .synth-remove {
+  background-color: #262626;
 }
 .synth-block .synth-header .synth-title-input {
   background-color: #262626;
@@ -1041,6 +1051,7 @@ button.toggle-btn.active.selective:hover {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  flex-wrap: wrap;
 }
 .synth-block .synth-body .synth-section .synth-section-header .synth-section-title {
   font-size: 0.7rem;
@@ -1068,6 +1079,7 @@ button.toggle-btn.active.selective:hover {
   justify-content: center;
   gap: 0.5rem;
   flex-grow: 1;
+  flex-wrap: wrap;
 }
 .synth-block .synth-body .synth-section .synth-section-body select {
   height: 1.75rem;
@@ -1084,26 +1096,8 @@ button.toggle-btn.active.selective:hover {
 .synth-block .synth-body .synth-volume {
   width: 3.25rem;
   height: 1.75rem;
-  padding: 0.25rem 0.375rem;
   font-size: 0.78rem;
-  background-color: #232323;
-  color: #e0e0e0;
-  border: 1px solid #333;
-  border-radius: 0.25rem;
-  outline: none;
-  text-align: center;
-  font-variant-numeric: tabular-nums;
   cursor: ns-resize;
-}
-.synth-block .synth-body .synth-volume::-webkit-inner-spin-button, .synth-block .synth-body .synth-volume::-webkit-outer-spin-button {
-  -webkit-appearance: none;
-  margin: 0;
-}
-.synth-block .synth-body .synth-volume:hover {
-  border-color: #3a7bd5;
-}
-.synth-block .synth-body .synth-volume:focus {
-  border-color: #3a7bd5;
 }
 .synth-block .synth-body .synth-volume.shared-channel {
   border-color: #e0a016;
@@ -1114,26 +1108,8 @@ button.toggle-btn.active.selective:hover {
 .synth-block .synth-body .synth-quantize-tempo {
   width: 3rem;
   height: 1.75rem;
-  padding: 0.25rem 0.375rem;
   font-size: 0.78rem;
-  background-color: #232323;
-  color: #e0e0e0;
-  border: 1px solid #333;
-  border-radius: 0.25rem;
-  outline: none;
-  text-align: center;
-  font-variant-numeric: tabular-nums;
   cursor: ns-resize;
-}
-.synth-block .synth-body .synth-quantize-tempo::-webkit-inner-spin-button, .synth-block .synth-body .synth-quantize-tempo::-webkit-outer-spin-button {
-  -webkit-appearance: none;
-  margin: 0;
-}
-.synth-block .synth-body .synth-quantize-tempo:hover {
-  border-color: #3a7bd5;
-}
-.synth-block .synth-body .synth-quantize-tempo:focus {
-  border-color: #3a7bd5;
 }
 .synth-block .synth-body .synth-quantize-tempo.inactive {
   opacity: 0.45;
@@ -1178,24 +1154,15 @@ button.toggle-btn.active.selective:hover {
   font-variant-numeric: tabular-nums;
   white-space: pre-line;
 }
-.synth-block .synth-body .synth-full-options {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  border-top: 1px solid #333;
-  padding-top: 6px;
-}
-.synth-block .synth-body .note-lengths {
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-}
 .synth-block .synth-body .synth-note-range button,
 .synth-block .synth-body .note-length-btn {
   font-size: 1rem;
 }
 .synth-block .synth-body .synth-note-length-ternary {
   font-weight: 600;
+}
+.synth-block .synth-body .synth-note-legato.inactive {
+  opacity: 0.45;
 }
 .synth-block .synth-body .synth-mode-btn {
   flex-grow: 1;
@@ -1204,6 +1171,10 @@ button.toggle-btn.active.selective:hover {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+.synth-block .synth-body .synth-voices .synth-section-body .synth-mode-panel {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 .synth-block .synth-body .synth-channel-toggles {
   display: flex;
@@ -1218,6 +1189,7 @@ button.toggle-btn.active.selective:hover {
 .synth-block .synth-body .synth-note-range {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 0.25rem;
 }
 .synth-block .synth-body .synth-channel-toggle {
@@ -1261,43 +1233,46 @@ button.toggle-btn.active.selective:hover {
   visibility: hidden;
   width: 3rem;
   height: 1.75rem;
-  padding: 0.25rem 0.375rem;
   font-size: 0.78rem;
-  background-color: #232323;
-  color: #e0e0e0;
-  border: 1px solid #333;
-  border-radius: 0.25rem;
-  outline: none;
-  text-align: center;
-  font-variant-numeric: tabular-nums;
   cursor: ns-resize;
-}
-.synth-block .magic-wand-tolerance::-webkit-inner-spin-button, .synth-block .magic-wand-tolerance::-webkit-outer-spin-button {
-  -webkit-appearance: none;
-  margin: 0;
-}
-.synth-block .magic-wand-tolerance:hover {
-  border-color: #3a7bd5;
-}
-.synth-block .magic-wand-tolerance:focus {
-  border-color: #3a7bd5;
 }
 .synth-block.wand-armed .magic-wand-tolerance {
   visibility: visible;
 }
-.synth-block.compact .synth-body > .synth-section:not(.synth-playback),
-.synth-block.compact .synth-body > .synth-full-options {
+.synth-block:not(.active) {
+  cursor: pointer;
+  padding: 0.375rem 0.5rem;
+}
+.synth-block:not(.active) .synth-body,
+.synth-block:not(.active) .synth-menu,
+.synth-block:not(.active) .synth-color-picker {
   display: none;
 }
-.synth-block .synth-section-separator {
-  height: 2px;
-  background: #3a7bd5;
+.synth-block:not(.active) .synth-header {
+  flex-direction: row;
+  align-items: center;
+  margin: -0.375rem -0.5rem;
+  padding: 0.375rem 0.5rem;
+  border-radius: 0.25rem;
+  font-size: 0.95rem;
 }
-.synth-block .synth-section-separator.gradient-wb {
-  background: linear-gradient(to right, black, white);
+.synth-block:not(.active) .synth-header-row {
+  display: contents;
 }
-.synth-block .synth-section-separator.gradient-hue {
-  background: linear-gradient(to right, #F00, #FF0, #0F0, #0FF, #00F, #F0F, #F00);
+.synth-block:not(.active) .synth-header-row .flex-fill,
+.synth-block:not(.active) .synth-toggle-menu {
+  display: none;
+}
+.synth-block:not(.active) .synth-color-disc {
+  order: 0;
+}
+.synth-block:not(.active) .synth-title-label {
+  order: 1;
+  flex: 1 1 auto;
+  width: auto;
+}
+.synth-block:not(.active) .synth-remove {
+  order: 2;
 }
 .synth-block .synth-range-track {
   position: relative;

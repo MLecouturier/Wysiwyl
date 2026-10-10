@@ -33,6 +33,10 @@ $color-stop-hover: #a5281b;
 $color-selective: #e67e22;
 $color-selective-hover: #d35400;
 
+// Amber warning: a shared MIDI (port, channel) — CC 7 addresses the
+// channel, so synths on the same pair override each other's volume.
+$color-warning: #e0a016;
+
 // Neutral filled background for small transport controls (bpm steps)
 $color-bg-neutral: #444;
 $color-bg-neutral-hover: #555;

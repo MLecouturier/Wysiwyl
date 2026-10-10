@@ -579,6 +579,7 @@ mod tests {
         synth.config.note_length_reversed = true;
         synth.config.note_length_ternary = true;
         synth.config.note_sustain = false;
+        synth.config.note_legato = true;
         synth.config.mono_note_range = [true, false, true];
         synth.config.voice_note_ranges = [
             [true, false, false],
@@ -642,6 +643,7 @@ mod tests {
             synth.config.note_length_ternary
         );
         assert_eq!(s.config.note_sustain, synth.config.note_sustain);
+        assert_eq!(s.config.note_legato, synth.config.note_legato);
         assert_eq!(s.config.mono_note_range, synth.config.mono_note_range);
         assert_eq!(s.config.voice_note_ranges, synth.config.voice_note_ranges);
         assert_eq!(s.config.scale, synth.config.scale);

@@ -205,6 +205,7 @@ pub struct SynthConfig {
     pub note_length_reversed: bool, // flip the brightness->length mapping direction
     pub note_length_ternary: bool, // true: lengths are triplets (3 in the time of 2)
     pub note_sustain: bool, // true: notes hold their full length; false: pizzicato
+    pub note_legato: bool, // true: tie identical consecutive notes (no re-attack)
     pub mono_note_range: [bool; 3], // bass/medium/treble for the monophonic note
     pub voice_note_ranges: [[bool; 3]; 3], // same, per R/G/B voice, polyphonic mode
     pub scale: Scale,     // scale the derived notes are snapped to (Chromatic = none)
@@ -236,6 +237,7 @@ impl Default for SynthConfig {
             note_length_reversed: false,
             note_length_ternary: false,
             note_sustain: false,
+            note_legato: false,
             mono_note_range: [false, false, false],
             voice_note_ranges: [[false, false, false]; 3],
             scale: Scale::Chromatic,

@@ -96,7 +96,7 @@ L'interface est du HTML/SCSS/JS pur (pas de framework, pas de bundler), organis�
 
 - **Classes utilitaires** — classes à vocation unique, style Tailwind, écrites à la main dans `src/scss/_utilities.scss` (`flex`, `flex-col`, `items-center`, `gap-2`, `mb-3`, `text-muted`, `hidden`...). Elles sont chargées **en dernier** dans la cascade : une classe utilitaire surpasse toujours une classe de composant, et le markup peut ajuster n'importe quel composant sans toucher au SCSS. Les échelles d'espacement et de tailles de police sont générées depuis des maps SCSS en tête de fichier.
 - **Classes de composants** — une par région de l'interface ou rôle de contrôle (`.image-viewer`, `.controls`, `.mode-panel`, `.icon-btn`, `.synth-block`...), avec leurs états et pseudo-éléments imbriqués dans le SCSS. Elles vivent dans `scss/components/`, un fichier par zone de l'interface.
-- **Classes d'état** — basculées par le JS à l'exécution : `.hidden` (avec `!important`), `.active`, `.locked`, `.picking`, `.compact`, `.confirm-pending`, `.dragging`, `.reversed`...
+- **Classes d'état** — basculées par le JS à l'exécution : `.hidden` (avec `!important`), `.active`, `.locked`, `.picking`, `.confirm-pending`, `.dragging`, `.reversed`...
 
 ### Les ids sont des hooks, jamais stylés
 

@@ -1,12 +1,13 @@
 use crate::config::ConfigState;
 use crate::error::{err, AppError};
 use crate::metronome::remapped_cursor;
+use crate::midi::VolumeEvent;
 use crate::state::{
     ImageState, MidiState, NoteLength, ProgramState, ReadingDirection, Scale, Synth, SynthMode,
     SynthState, SynthView, Zone,
 };
 use std::collections::{HashMap, HashSet};
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 
 // --- Existing SynthConfig / SynthEngine (pure pixel-processing logic) ---
 // (unchanged, assumed to remain above or below in this file)
@@ -360,24 +361,35 @@ pub fn set_synth_program(
 /// immediately sends it as MIDI CC 7 on its output port and channel.
 /// Caveat: CC 7 addresses the channel, so synths sharing the same
 /// (port, channel) override each other — the last setting sent wins.
+/// Because they share the physical channel volume, every synth on that
+/// (port, channel) adopts the new value, and a `midi-volume` event lets
+/// the frontend mirror it on all of them.
 #[tauri::command]
 pub fn set_synth_volume(
     id: u32,
     volume: u8,
+    app: AppHandle,
     state: State<SynthState>,
     midi: State<MidiState>,
 ) -> Result<(), AppError> {
+    let volume = volume.min(127);
     let (port, channel) = {
         let mut synths = state.synths.lock().unwrap();
-        match synths.get_mut(&id) {
-            Some(synth) => {
-                synth.config.volume = volume.min(127);
-                (synth.config.midi_port, synth.config.channel)
-            }
+        let (port, channel) = match synths.get(&id) {
+            Some(synth) => (synth.config.midi_port, synth.config.channel),
             None => return Err(synth_not_found(id)),
+        };
+        // CC 7 addresses the (port, channel): every synth on that pair
+        // shares the same channel volume, so update them all.
+        for synth in synths.values_mut() {
+            if synth.config.midi_port == port && synth.config.channel == channel {
+                synth.config.volume = volume;
+            }
         }
+        (port, channel)
     };
-    midi.send_channel_volume(port, channel, volume.min(127));
+    midi.send_channel_volume(port, channel, volume);
+    let _ = app.emit("midi-volume", VolumeEvent { port, channel, volume });
     Ok(())
 }
 
@@ -697,6 +709,27 @@ pub fn set_synth_note_sustain(
                 }
             }
             synth.config.note_sustain = sustain;
+            Ok(())
+        }
+        None => Err(synth_not_found(id)),
+    }
+}
+
+/// Toggles the legato tie: when on, consecutive pixels of the same pitch
+/// are tied into one held note instead of being re-articulated on every
+/// step. Only meaningful with the sustain on (pizzicato plucks each note)
+/// and with note lengths enabled; a pitch change always re-articulates.
+/// No note is released here: the change only affects the next steps.
+#[tauri::command]
+pub fn set_synth_note_legato(
+    id: u32,
+    legato: bool,
+    state: State<SynthState>,
+) -> Result<(), AppError> {
+    let mut synths = state.synths.lock().unwrap();
+    match synths.get_mut(&id) {
+        Some(synth) => {
+            synth.config.note_legato = legato;
             Ok(())
         }
         None => Err(synth_not_found(id)),

@@ -43,8 +43,8 @@ import {
 import {
     createSynthElement, onSynthPlayClick, syncPlayAllButton,
     setSynthControlsLocked, startSynthPlayback, stopSynthPlayback,
-    scrollSynthCardIntoView, renumberSynthIds, configureSynthCards,
-    toggleSynthMute, cancelTransientTools,
+    renumberSynthIds, configureSynthCards,
+    toggleSynthMute, cancelTransientTools, setActiveSynth, clearActiveSynth,
 } from './synth/cards.js';
 import { initSynthMenu } from './synth/menu.js';
 import {
@@ -310,7 +310,7 @@ registerEscape(50,
 // scope, auto-repeat ignored). Enter commits the pending crop or perspective
 // correction (the buttons' own guards make it a no-op when nothing is
 // pending). Space toggles every synth, Shift+Space is the panic kill switch.
-// Bare 1-8 bring the N-th synth's card into view (like releasing its tab);
+// Bare 1-8 expand the N-th synth's card (like clicking its tab);
 // Cmd/Ctrl+1-8 toggle its playback from any focus (even a text field);
 // Alt+1-8 mute/unmute it. The digit is resolved by digitIndex (core/
 // shortcuts.js), robust to the keyboard layout and to Option rewriting
@@ -352,7 +352,7 @@ registerShortcut({
     when: e => !digitConsumed(e.target),
     run: e => {
         const el = nthSynthBlock(digitIndex(e));
-        if (el) scrollSynthCardIntoView(el);
+        if (el) setActiveSynth(Number(el.dataset.synthId));
     },
 });
 
@@ -646,6 +646,7 @@ async function openSession() {
         synthListBody.querySelectorAll('.synth-block').forEach(el => el.remove());
         synthTabs.querySelectorAll('.synth-tab').forEach(el => el.remove());
         clearSynthRegistry();
+        clearActiveSynth();
         placeholder.classList.remove('hidden');
         cancelZonePicking();
         syncPlayAllButton();
@@ -882,9 +883,9 @@ addSynthBtn.addEventListener('click', async () => {
         synthDevices.appendChild(el);
         // A new synth is a structural change: start a fresh undo baseline
         resetHistory();
-        // Bring the newly created card into view (new synths stack at the
-        // end of the list, potentially below the fold)
-        scrollSynthCardIntoView(el);
+        // Expand the newly created card (new synths stack at the end of
+        // the list, potentially below the fold) and collapse the previous
+        setActiveSynth(synth.id);
     } catch (err) {
         console.error('Error while adding the synthesizer:', err);
         alert(translateError(err)); // or a more discreet display like a toast/error message in the UI
