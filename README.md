@@ -79,6 +79,7 @@ A JSON configuration file (opened with a gear button in the application settings
 - **`clock_source`** — input port name the clock sync follows when `clock_mode` is `input`.
 - **`default_synth`** — template applied to every newly created synthesizer; any existing synth can be saved as the template with its bookmark button ("Use this synth as the default template").
 - **`pizzicato_gate_ms`** — minimum duration (ms) of a note in the pizzicato articulation (`note_sustain = false`): the Note Off is deferred by that much instead of being sent in the same packet as the Note On, so software synths whose envelope needs time to rise (Vital, etc.) produce an audible pluck. `0` restores the historical behavior (immediate Note Off, the instrument's release shaping the tail); default `40`, clamped to 0–1000. The effective duration is capped by the next articulation.
+- **`undo_depth`** — depth of the undo/redo history for zone and silence edits (number of steps kept); default `25`, clamped to 1–500. Undo/redo use Cmd/Ctrl+Z and Cmd/Ctrl+Shift+Z.
 
 ## Tech Stack
 

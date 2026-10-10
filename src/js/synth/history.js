@@ -20,7 +20,7 @@ export const HISTORY_LIMIT = 25;
 // tested without the synth registry. `states[index]` is the current state;
 // undo/redo move the index; capture truncates the redo branch.
 export function createHistoryStack(limit = HISTORY_LIMIT) {
-    const max = Math.max(1, limit);
+    let max = Math.max(1, limit);
     let states = [];
     let index = -1;
     const trim = () => {
@@ -31,6 +31,16 @@ export function createHistoryStack(limit = HISTORY_LIMIT) {
         }
     };
     return {
+        // Changes the depth at runtime: dropping the oldest steps when the
+        // limit shrinks, keeping the current pointer on a valid state.
+        setLimit(n) {
+            max = Math.max(1, n);
+            const excess = states.length - max;
+            if (excess > 0) {
+                states = states.slice(excess);
+                index = Math.max(0, index - excess);
+            }
+        },
         reset(state) {
             states = [state];
             index = 0;
@@ -163,3 +173,10 @@ export function redo() {
 
 export const canUndo = () => stack.canUndo();
 export const canRedo = () => stack.canRedo();
+
+// Applies the configured undo/redo depth (config.json `undo_depth`). The
+// backend already clamps it to 1–500; validate defensively anyway.
+export function setHistoryDepth(depth) {
+    const n = Math.round(Number(depth));
+    stack.setLimit(Number.isFinite(n) ? Math.min(500, Math.max(1, n)) : HISTORY_LIMIT);
+}

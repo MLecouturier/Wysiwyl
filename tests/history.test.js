@@ -62,3 +62,26 @@ test('capturing on an empty stack initializes it (no undo available)', () => {
     assert.equal(h.current(), 'a');
     assert.equal(h.canUndo(), false);
 });
+
+test('setLimit shrinks the stack, keeping the most recent steps', () => {
+    const h = createHistoryStack(10);
+    h.reset(0);
+    for (let i = 1; i <= 6; i++) h.capture(i);
+    assert.equal(h.depth(), 7); // baseline + 6 steps
+    h.setLimit(3);
+    assert.equal(h.depth(), 3);
+    assert.equal(h.current(), 6); // most recent kept
+    assert.equal(h.undo(), 5);
+    assert.equal(h.undo(), 4);
+    assert.equal(h.undo(), null);
+});
+
+test('setLimit clamps to at least one step', () => {
+    const h = createHistoryStack(10);
+    h.reset('a');
+    h.capture('b');
+    h.setLimit(0);
+    assert.equal(h.depth(), 1);
+    assert.equal(h.current(), 'b');
+    assert.equal(h.canUndo(), false);
+});

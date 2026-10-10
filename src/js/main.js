@@ -9,7 +9,7 @@ import { appEvents } from './core/state.js';
 import { viewer } from './core/state.js';
 import { registerShortcut, registerEscape, runEscapeChain, digitIndex, SCOPE } from './core/shortcuts.js';
 import { installFocusPolicy, enterConsumed, spaceConsumed, digitConsumed, isTextEntry } from './core/focus.js';
-import { undo, redo, resetHistory } from './synth/history.js';
+import { undo, redo, resetHistory, setHistoryDepth } from './synth/history.js';
 import {
     synthNames, synthColors, synthHighlights,
     synthCursors, synthCursorGrid, synthCursorMuted,
@@ -130,6 +130,8 @@ invoke('get_config').then(config => {
     // Clock source of the metronome (master / slave), persisted by the
     // backend and applied live on its side; the selects just reflect it.
     clockSource.hydrate(config.clock_mode, config.clock_source);
+    // Undo/redo history depth for zone/silence edits
+    setHistoryDepth(config.undo_depth);
 }).catch(err => console.error('Error in get_config:', err));
 
 document.querySelector('#open-config-btn').addEventListener('click', () => {

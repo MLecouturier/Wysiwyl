@@ -94,6 +94,9 @@ pub struct AppConfig {
     /// Note Off is immediate and the instrument's release shapes the tail).
     /// Hand-edited values are clamped to 0–1000 on load.
     pub pizzicato_gate_ms: u32,
+    /// Depth of the undo/redo history for zone and silence edits (number
+    /// of steps kept). Hand-edited values are clamped to 1–500 on load.
+    pub undo_depth: u32,
 }
 
 impl Default for AppConfig {
@@ -109,6 +112,7 @@ impl Default for AppConfig {
             enabled_scales: default_enabled_scales(),
             wheel_trackpad_threshold: 100,
             pizzicato_gate_ms: 40,
+            undo_depth: 25,
         }
     }
 }
@@ -157,6 +161,8 @@ impl AppConfig {
         self.wheel_trackpad_threshold = self.wheel_trackpad_threshold.clamp(1, 2000);
         // Pizzicato gate: at most one second, 0 = immediate Note Off
         self.pizzicato_gate_ms = self.pizzicato_gate_ms.min(1000);
+        // Undo history depth: at least one step, capped to stay reasonable
+        self.undo_depth = self.undo_depth.clamp(1, 500);
     }
 }
 
@@ -508,5 +514,37 @@ mod tests {
         };
         config.sanitize();
         assert_eq!(config.wheel_trackpad_threshold, 2000);
+    }
+
+    #[test]
+    fn config_without_undo_depth_defaults_to_25() {
+        // A file written before the field existed
+        let json = r##"{
+            "max_image_size": 2048,
+            "default_bpm": 120,
+            "default_synth": {},
+            "note_range_bounds": [[21, 47], [48, 71], [72, 108]],
+            "synth_colors": ["#3498db"]
+        }"##;
+        let config: AppConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.undo_depth, 25);
+        assert_eq!(AppConfig::default().undo_depth, 25);
+    }
+
+    #[test]
+    fn sanitize_clamps_undo_depth() {
+        let mut config = AppConfig {
+            undo_depth: 0,
+            ..AppConfig::default()
+        };
+        config.sanitize();
+        assert_eq!(config.undo_depth, 1);
+
+        let mut config = AppConfig {
+            undo_depth: 10_000,
+            ..AppConfig::default()
+        };
+        config.sanitize();
+        assert_eq!(config.undo_depth, 500);
     }
 }
