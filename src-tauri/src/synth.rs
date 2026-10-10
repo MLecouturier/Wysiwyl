@@ -389,7 +389,14 @@ pub fn set_synth_volume(
         (port, channel)
     };
     midi.send_channel_volume(port, channel, volume);
-    let _ = app.emit("midi-volume", VolumeEvent { port, channel, volume });
+    let _ = app.emit(
+        "midi-volume",
+        VolumeEvent {
+            port,
+            channel,
+            volume,
+        },
+    );
     Ok(())
 }
 
