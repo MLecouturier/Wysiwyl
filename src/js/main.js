@@ -8,7 +8,8 @@ import { createChrono } from './core/timing.js';
 import { appEvents } from './core/state.js';
 import { viewer } from './core/state.js';
 import { registerShortcut, registerEscape, runEscapeChain, digitIndex, SCOPE } from './core/shortcuts.js';
-import { installFocusPolicy, enterConsumed, spaceConsumed, digitConsumed } from './core/focus.js';
+import { installFocusPolicy, enterConsumed, spaceConsumed, digitConsumed, isTextEntry } from './core/focus.js';
+import { undo, redo, resetHistory } from './synth/history.js';
 import {
     synthNames, synthColors, synthHighlights,
     synthCursors, synthCursorGrid, synthCursorMuted,
@@ -714,6 +715,7 @@ async function openSession() {
     }
     sessionState.setPath(session.path);
     sessionState.setDirty(false);
+    resetHistory(); // a loaded session is a fresh undo baseline
 }
 
 loadSessionBtn.addEventListener('click', () => openSession());
@@ -728,6 +730,21 @@ registerShortcut({
 registerShortcut({
     id: 'session-open', key: 'o', scope: SCOPE.GLOBAL, primary: true, alt: false,
     run: () => openSession(),
+});
+
+// ---------- Undo / redo (Cmd/Ctrl+Z, Cmd/Ctrl+Shift+Z) ----------
+// Zone/silence edits only (Phase 1). The isTextEntry guard preserves the
+// native undo of text and number fields; the modal scope blocks them while
+// a modal is open.
+registerShortcut({
+    id: 'undo', key: 'z', scope: SCOPE.GLOBAL, primary: true, shift: false, alt: false,
+    when: e => !isTextEntry(e.target),
+    run: () => undo(),
+});
+registerShortcut({
+    id: 'redo', key: 'z', scope: SCOPE.GLOBAL, primary: true, shift: true, alt: false,
+    when: e => !isTextEntry(e.target),
+    run: () => redo(),
 });
 
 
@@ -766,6 +783,7 @@ configureImageEditor({
 
 // ---------- Init ----------
 syncLabels();
+resetHistory(); // undo baseline for the initial (empty) zone state
 
 // The mute rest glyph is only ever drawn on a canvas; canvas fillText
 // does NOT trigger a lazy @font-face download (the Noto Music font is
@@ -860,6 +878,8 @@ addSynthBtn.addEventListener('click', async () => {
         placeholder.classList.add('hidden');
         const el = createSynthElement(synth.id, synth);
         synthDevices.appendChild(el);
+        // A new synth is a structural change: start a fresh undo baseline
+        resetHistory();
         // Bring the newly created card into view (new synths stack at the
         // end of the list, potentially below the fold)
         scrollSynthCardIntoView(el);

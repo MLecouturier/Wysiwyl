@@ -4,6 +4,7 @@
 import { cellSetFromZones, computeLayout, drawCursorCell, drawZones, rebuildZones, zoneCellSet } from '../core/geometry.js';
 import { appEvents, synthBrightnessBounds, synthColors, synthCursorGrid, synthCursorMuted, synthCursors, synthHighlights, viewer } from '../core/state.js';
 import { syncEyeButton, synthElementById, updateZonesLabel } from './model.js';
+import { configure as configureHistory, scheduleCapture } from './history.js';
 import { registerEscape } from '../core/shortcuts.js';
 
 // Synth zone editing and persistence: adding/removing selection
@@ -54,6 +55,7 @@ export function sendSynthZones(id) {
     appEvents.emit('session-dirty');
     invoke('set_synth_zones', { id, zones: hi.zones })
         .catch(err => console.error('Error in set_synth_zones:', err));
+    scheduleCapture(); // record an undo step (coalesced with the mutes push)
 }
 
 // ---------- Manual silences (Shift + square/lasso/wand) ----------
@@ -125,7 +127,17 @@ export function sendSynthMuteZones(id) {
     appEvents.emit('session-dirty');
     invoke('set_synth_mute_zones', { id, zones: hi.muteZones })
         .catch(err => console.error('Error in set_synth_mute_zones:', err));
+    scheduleCapture(); // record an undo step (coalesced with the zones push)
 }
+
+// Undo/redo history wiring: the history module re-pushes through these same
+// choke points when restoring a snapshot, so it never imports this module.
+configureHistory({
+    pushZones: sendSynthZones,
+    pushMutes: sendSynthMuteZones,
+    redraw: redrawAllHighlights,
+    updateLabel: updateZonesLabel,
+});
 
 // Sends the note-range filter states: one triplet (bass, medium, treble)
 // for the monophonic note, and one per R/G/B voice in polyphonic mode.

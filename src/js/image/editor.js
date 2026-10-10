@@ -19,6 +19,7 @@ import { sendSynthZones, sendSynthMuteZones } from '../synth/selection.js';
 import { updateZonesLabel } from '../synth/model.js';
 import { updateAllSynthZones } from '../synth/cards.js';
 import { cancelZonePicking } from '../synth/selection.js';
+import { resetHistory } from '../synth/history.js';
 import { registerShortcut, registerEscape, SCOPE } from '../core/shortcuts.js';
 import { enterConsumed } from '../core/focus.js';
 
@@ -143,6 +144,8 @@ export async function refresh() {
   pending = true;
 
   try {
+    const prevW = viewer.gridW;
+    const prevH = viewer.gridH;
     const buf = await invoke('apply_image_adjustments', {
       params: buildParams(),
     });
@@ -157,6 +160,10 @@ export async function refresh() {
     clearOverlay();
     cancelZonePicking();
     updateAllSynthZones();
+
+    // A grid change clips the zones: that is out of the undo scope, so it
+    // starts a fresh history baseline (and drops the pending captures).
+    if (decoded.width !== prevW || decoded.height !== prevH) resetHistory();
 
     lastDimensionsInfo = {
       origWidth: viewer.origWidth, origHeight: viewer.origHeight,
@@ -207,6 +214,7 @@ loadBtn.addEventListener('click', async () => {
     // zone re-push inside it is a no-op (everything is already empty).
     resetAllSynthZones();
     await refresh();
+    resetHistory(); // a new image is a fresh undo baseline
   } catch (err) {
     console.error('Error while loading the image:', err);
     dimensionsInfo.textContent = translateError(err);
@@ -241,6 +249,7 @@ export async function applyReshapedImage(result) {
     syncLabels();
     updatePreviewSrc();
     await refresh();
+    resetHistory(); // a reshape is a fresh undo baseline
 }
 
 // ---------- Rotation (90° steps) ----------

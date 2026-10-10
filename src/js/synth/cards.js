@@ -28,6 +28,7 @@ import {
     clipMuteZonesToSelection,
 } from './selection.js';
 import { startZonePicking, cancelZonePicking, setWandAdjacent, isZoneMode, isZonePickingId, remapZonePickIds } from './selection.js';
+import { resetHistory } from './history.js';
 
 // Deferred so importing this module does not touch the Tauri globals.
 const invoke = (...args) => window.__TAURI__.core.invoke(...args);
@@ -1264,6 +1265,9 @@ export async function renumberSynthIds() {
         // Re-target an armed zone-picking mode, if any
         remapZonePickIds(oldId, newId);
     });
+
+    // Ids changed: any stored history would target stale ids, so start over
+    resetHistory();
 }
 
 // Double-click confirmation for synth removal: only one remove button can
