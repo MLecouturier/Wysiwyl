@@ -2,8 +2,9 @@
 // the mouse-based zone selection tools.
 
 import { cellSetFromZones, computeLayout, drawCursorCell, drawZones, rebuildZones, zoneCellSet } from '../core/geometry.js';
-import { appEvents, synthBrightnessBounds, synthColors, synthCursorGrid, synthCursorMuted, synthCursors, synthHighlights, viewer } from '../core/state.js';
-import { syncEyeButton, synthElementById, updateZonesLabel } from './model.js';
+import { appEvents, synthColors, synthCursorGrid, synthCursorMuted, synthCursors, synthHighlights, viewer } from '../core/state.js';
+import { syncEyeButton, updateZonesLabel, synthNoteForPixel } from './model.js';
+import { midiNoteNameHtml } from '../core/utils.js';
 import { configure as configureHistory, scheduleCapture } from './history.js';
 import { registerEscape } from '../core/shortcuts.js';
 
@@ -171,6 +172,19 @@ export function sendSynthNoteLengths(id, el) {
 const pixelOverlay = typeof document !== 'undefined' ? document.querySelector('#pixel-overlay') : null;
 const cursorOverlay = typeof document !== 'undefined' ? document.querySelector('#cursor-overlay') : null;
 
+// Hover-note preview DOM: a floating label (near the cursor) and a cell
+// outline drawn over the hovered pixel. Created once, hidden by default.
+const gridNoteLabel = typeof document !== 'undefined' ? document.createElement('div') : null;
+const gridNoteCell = typeof document !== 'undefined' ? document.createElement('div') : null;
+if (gridNoteLabel) {
+    gridNoteLabel.className = 'grid-note-label hidden';
+    document.body.appendChild(gridNoteLabel);
+}
+if (gridNoteCell) {
+    gridNoteCell.className = 'grid-note-cell hidden';
+    document.querySelector('#image-viewer')?.appendChild(gridNoteCell);
+}
+
 // ---------- Canvas overlay ----------
 export function resizeOverlay() {
     pixelOverlay.width  = pixelOverlay.offsetWidth;
@@ -286,39 +300,11 @@ export function getImageLayout() {
     return computeLayout(pixelOverlay.width, pixelOverlay.height, viewer.gridW, viewer.gridH);
 }
 
-// Refreshes the stored brightness bounds of a synth from its sliders and
-// redraws the highlights: muted-pixel marks depend on the bounds.
-export function updateBrightnessBounds(id) {
-    const el = synthElementById(id);
-    if (!el) return;
-    const bounds = synthBrightnessBounds.get(id);
-    if (!bounds) return;
-    bounds.min = Number(el.querySelector('.brightness-start').value);
-    bounds.max = Number(el.querySelector('.brightness-end').value);
-    redrawAllHighlights();
-}
-
-// Mute cells of a synth: pixels outside its brightness window plus the
-// manually silenced ones, precomputed so the mirror window can render
-// the marks without needing the processed pixel buffer.
-export function computeMuteCells(synthId, hi) {
+// Mute cells of a synth: the manually silenced pixels, precomputed so the
+// mirror window can render the marks without needing the processed pixel
+// buffer.
+export function computeMuteCells(hi) {
     const muteCells = new Set();
-    const bounds = synthBrightnessBounds.get(synthId);
-    if (bounds && viewer.processedPixels && (bounds.min > 0 || bounds.max < 127)) {
-        const { width: pw, rgba } = viewer.processedPixels;
-        for (const z of hi.zones) {
-            for (const r of z.runs) {
-                for (let col = r.x0; col <= r.x1; col++) {
-                    const i = (r.y * pw + col) * 4;
-                    if (i + 2 >= rgba.length) continue; // torn zone edge
-                    const luma = 0.299 * rgba[i] + 0.587 * rgba[i + 1] + 0.114 * rgba[i + 2];
-                    const level = Math.round(luma / 255 * 127);
-                    if (level >= bounds.min && level <= bounds.max) continue;
-                    muteCells.add(`${col},${r.y}`);
-                }
-            }
-        }
-    }
     // Manually silenced pixels: they always live within the selection
     if (hi.muteZones.length > 0) {
         const selected = cellSetFromZones(hi.zones);
@@ -340,7 +326,7 @@ export function drawRangeHighlight(synthId) {
     drawZones(pixelOverlay.getContext('2d'), layout, {
         color,
         zones: hi.zones,
-        muteCells: computeMuteCells(synthId, hi),
+        muteCells: computeMuteCells(hi),
     });
 }
 
@@ -577,6 +563,105 @@ export function setWandAdjacent(adjacent) {
 // below the crop/transform panels and the color pickers (40/50) — see the
 // Escape chain in core/shortcuts.js.
 registerEscape(30, () => !!zoneState.pick, () => cancelZonePicking());
+
+// ---------- Hover-note preview ----------
+// A per-synth, exclusive mode: while armed, hovering the grid shows the
+// note(s) the synth would play for the hovered pixel (monophonic: one note;
+// polyphonic: one per enabled R/G/B voice, disabled voices are ignored) in a
+// floating label, with the hovered cell outlined. Purely a preview: nothing
+// is sent to the backend, the note math being ported in model.js so no IPC
+// is needed on each mouse move. Independent of the zone tools: the preview
+// stays active while a selection tool is armed, so the note under the cursor
+// is visible during a gesture too.
+
+export const gridNoteState = { id: null, el: null, btn: null };
+
+// Arms the mode for one synth: cancels any other armed synth (exclusive
+// among synths), but leaves the zone tools untouched. The overlay becomes
+// interactive so it receives the mousemove events, without changing the
+// cursor.
+export function startGridNoteInfo(id, el, btn) {
+    if (gridNoteState.id !== null && gridNoteState.id !== id) cancelGridNoteInfo();
+    gridNoteState.id = id;
+    gridNoteState.el = el;
+    gridNoteState.btn = btn;
+    btn.classList.add('active');
+    btn.setAttribute('aria-pressed', 'true');
+    pixelOverlay.classList.add('note-hover');
+}
+
+export function cancelGridNoteInfo() {
+    if (gridNoteState.id === null) return;
+    gridNoteState.btn?.classList.remove('active');
+    gridNoteState.btn?.setAttribute('aria-pressed', 'false');
+    gridNoteState.id = null;
+    gridNoteState.el = null;
+    gridNoteState.btn = null;
+    pixelOverlay.classList.remove('note-hover');
+    hideGridNoteHover();
+}
+
+// Toggle driven by the card button.
+export function toggleGridNoteInfo(id, el, btn) {
+    if (gridNoteState.id === id) cancelGridNoteInfo();
+    else startGridNoteInfo(id, el, btn);
+}
+
+// Hides the label and the cell outline (no-op when not armed).
+export function hideGridNoteHover() {
+    gridNoteLabel?.classList.add('hidden');
+    gridNoteCell?.classList.add('hidden');
+}
+
+// Updates the label and the cell outline for the hovered point. Called on
+// every mousemove over the overlay while the mode is armed.
+export function updateGridNoteHover(clientX, clientY) {
+    if (gridNoteState.id === null || !viewer.hasImage || !viewer.processedPixels) {
+        hideGridNoteHover();
+        return;
+    }
+    const cell = cellFromClientPoint(clientX, clientY);
+    if (!cell) {
+        hideGridNoteHover();
+        return;
+    }
+
+    const { rgba } = viewer.processedPixels;
+    const idx = (cell.row * viewer.gridW + cell.col) * 4;
+    const preview = synthNoteForPixel(gridNoteState.el, rgba[idx], rgba[idx + 1], rgba[idx + 2]);
+
+    const text = preview.mode === 'monophonic'
+        ? midiNoteNameHtml(preview.note)
+        : preview.voices
+            .filter(v => v.enabled)
+            .map(v => `${v.channel}:${midiNoteNameHtml(v.note)}`)
+            .join('  ');
+    gridNoteLabel.innerHTML = text || '—';
+
+    // Near the cursor, clamped to the viewport (like the help popup)
+    gridNoteLabel.classList.remove('hidden');
+    const x = Math.min(Math.max(8, clientX + 14), window.innerWidth - gridNoteLabel.offsetWidth - 8);
+    const y = Math.min(Math.max(8, clientY + 14), window.innerHeight - gridNoteLabel.offsetHeight - 8);
+    gridNoteLabel.style.left = `${x}px`;
+    gridNoteLabel.style.top = `${y}px`;
+
+    // Outline the hovered cell (layout units match the overlay's CSS pixels)
+    const layout = getImageLayout();
+    if (!layout) {
+        gridNoteCell.classList.add('hidden');
+        return;
+    }
+    gridNoteCell.classList.remove('hidden');
+    gridNoteCell.style.left = `${layout.offsetX + cell.col * layout.cellW}px`;
+    gridNoteCell.style.top = `${layout.offsetY + cell.row * layout.cellH}px`;
+    gridNoteCell.style.width = `${layout.cellW}px`;
+    gridNoteCell.style.height = `${layout.cellH}px`;
+}
+
+// Escape cancels the hover-note mode. Same priority as the zone tools; when
+// both are armed, the zone tool (registered first) is cancelled first, then
+// the preview on the next press.
+registerEscape(30, () => gridNoteState.id !== null, () => cancelGridNoteInfo());
 
 // Live preview of the rectangle being dragged, styled after the effective
 // mode: add fills with the synth's color, remove "erases" the highlights

@@ -4,7 +4,7 @@ use crate::metronome::remapped_cursor;
 use crate::midi::VolumeEvent;
 use crate::state::{
     ImageState, MidiState, NoteLength, ProgramState, ReadingDirection, Scale, Synth, SynthMode,
-    SynthState, SynthView, Zone,
+    SynthState, SynthView, Zone, TEMPO_RATIO_MAX, TEMPO_RATIO_MIN,
 };
 use std::collections::{HashMap, HashSet};
 use tauri::{AppHandle, Emitter, State};
@@ -94,7 +94,7 @@ pub fn copy_config_between(
 
 /// Copies another synthesizer's parameters onto this one (the "Copy
 /// parameters from…" menu action). The target's MIDI port and channel are
-/// preserved; everything else (mode, ranges, thresholds, note lengths,
+/// preserved; everything else (mode, ranges, note lengths,
 /// loop, direction, scale, volume, quantize…) is taken from the source.
 /// Returns the updated view so the UI can reflect it.
 #[tauri::command]
@@ -439,29 +439,11 @@ pub fn set_synth_velocity_range(
 }
 
 #[tauri::command]
-pub fn set_synth_brightness_range(
-    id: u32,
-    brightness_min: u8,
-    brightness_max: u8,
-    state: State<SynthState>,
-) -> Result<(), AppError> {
-    let mut synths = state.synths.lock().unwrap();
-    match synths.get_mut(&id) {
-        Some(synth) => {
-            synth.config.brightness_min = brightness_min.min(127);
-            synth.config.brightness_max = brightness_max.min(127);
-            Ok(())
-        }
-        None => Err(synth_not_found(id)),
-    }
-}
-
-#[tauri::command]
 pub fn set_synth_tempo(id: u32, tempo: f64, state: State<SynthState>) -> Result<(), AppError> {
     let mut synths = state.synths.lock().unwrap();
     match synths.get_mut(&id) {
         Some(synth) => {
-            synth.config.tempo_ratio = tempo.clamp(0.05, 4.0);
+            synth.config.tempo_ratio = tempo.clamp(TEMPO_RATIO_MIN, TEMPO_RATIO_MAX);
             Ok(())
         }
         None => Err(synth_not_found(id)),
@@ -469,7 +451,9 @@ pub fn set_synth_tempo(id: u32, tempo: f64, state: State<SynthState>) -> Result<
 }
 
 /// Enables the master-tempo quantize: the synth's step grid is realigned on
-/// every `quantize_beats` beats, delaying steps only so no note is ever cut.
+/// the master grid, delaying steps only so no note is ever cut. The resync
+/// period (`quantize_beats`) is rounded up to a multiple of the ratio's cycle
+/// so a boundary always lands on a natural step (see `metronome`).
 #[tauri::command]
 pub fn set_synth_quantize(
     id: u32,

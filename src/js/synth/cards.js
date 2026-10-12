@@ -1,5 +1,5 @@
 // Synth cards, playback and tabs: creation and configuration of a synth
-// card, the brightness/velocity range controls, the play/stop handling,
+// card, the velocity range controls, the play/stop handling,
 // the tab drag & drop and the removal confirmation. The metronome and the
 // image-controls lock are reached through hooks injected by main.js.
 
@@ -10,24 +10,26 @@ import { rectZone, zoneCellSet, rebuildZones } from '../core/geometry.js';
 import { viewer } from '../core/state.js';
 import {
     synthNames, synthDisplayNumbers, synthColors, synthHighlights,
-    synthBrightnessBounds, synthCursors, removeSynthFromRegistry,
+    synthCursors, removeSynthFromRegistry,
 } from '../core/state.js';
 import { appEvents } from '../core/state.js';
 import { synthElementById } from './model.js';
 import { scaleOptionsHtml, applyNoteRangeTitles, getSynthColors } from './model.js';
 import { updateZonesLabel, cycleZonesDisplayMode } from './model.js';
 import { synthDisplayName, setPlayButtonState, setSynthPlaying } from './model.js';
+import { applySynthInfoCollapsed, toggleSynthInfoCollapsed, updateNoteRangeInfo } from './model.js';
 import { isWheelNotch, getTrackpadThreshold } from '../audio/stepper.js';
 import { sendProgramSelection, updateProgramDisplay } from './model.js';
 import {
     eraseSynthCursor, drawRangeHighlight, clearRangeHighlight, redrawAllHighlights,
-    drawChannelOverlay, hideChannelOverlay, updateBrightnessBounds,
+    drawChannelOverlay, hideChannelOverlay,
 } from './selection.js';
 import {
     sendSynthZones, sendSynthMuteZones, sendSynthNoteRanges, sendSynthNoteLengths,
     clipMuteZonesToSelection,
 } from './selection.js';
 import { startZonePicking, cancelZonePicking, setWandAdjacent, isZoneMode, isZonePickingId, remapZonePickIds } from './selection.js';
+import { toggleGridNoteInfo, cancelGridNoteInfo, gridNoteState } from './selection.js';
 import { resetHistory } from './history.js';
 
 // Deferred so importing this module does not touch the Tauri globals.
@@ -115,6 +117,7 @@ function setSynthMode(el, mode) {
     el.querySelector('.synth-mode-panel-mono').classList.toggle('hidden', poly);
     el.querySelector('.synth-mode-panel-poly').classList.toggle('hidden', !poly);
     el.querySelectorAll('.synth-mono-only').forEach(node => node.classList.toggle('hidden', poly));
+    el.querySelectorAll('.synth-poly-only').forEach(node => node.classList.toggle('hidden', !poly));
 }
 
 // Legato only applies with the sustain on (pizzicato plucks each note): the
@@ -142,15 +145,6 @@ export function applySynthConfig(el, cfg) {
     el.querySelector('.synth-reading-direction').value = cfg.reading_direction || 'leftToRight';
     // Sorted reading
     el.querySelector('.synth-sort-btn').classList.toggle('active', !!cfg.sorted_reading);
-    // Brightness threshold
-    el.querySelector('.brightness-start').value = cfg.brightness_min;
-    el.querySelector('.brightness-end').value = cfg.brightness_max;
-    el.querySelector('.brightness-start-val').textContent = cfg.brightness_min;
-    el.querySelector('.brightness-end-val').textContent = cfg.brightness_max;
-    synthBrightnessBounds.set(Number(el.dataset.synthId), {
-        min: Number(cfg.brightness_min),
-        max: Number(cfg.brightness_max),
-    });
     // Velocity range
     el.querySelector('.velocity-min').value = cfg.velocity_min;
     el.querySelector('.velocity-max').value = cfg.velocity_max;
@@ -220,6 +214,8 @@ export function applySynthConfig(el, cfg) {
         sel.value = scale;
     });
     el.querySelectorAll('.synth-scale-root').forEach(sel => { sel.value = String(scaleRoot); });
+    // The note-range summary follows the restored mode, ranges and scale
+    updateNoteRangeInfo(el);
 }
 
 // One bass/medium/treble filter group: used four times per card
@@ -577,6 +573,7 @@ export function createSynthElement(id, cfg = null) {
             try {
                 await invoke('set_synth_mode', { id, mode: newMode });
                 setSynthMode(el, newMode);
+                updateNoteRangeInfo(id);
             } catch (err) {
                 console.error('Error in set_synth_mode:', err);
             }
@@ -601,6 +598,7 @@ export function createSynthElement(id, cfg = null) {
         btn.addEventListener('click', () => {
             btn.classList.toggle('active');
             sendSynthNoteRanges(id, el);
+            updateNoteRangeInfo(id);
         });
     });
 
@@ -611,19 +609,27 @@ export function createSynthElement(id, cfg = null) {
     // stays within the enabled note ranges.
     const scaleSelects = el.querySelectorAll('.synth-scale');
     const scaleRootSelects = el.querySelectorAll('.synth-scale-root');
+    // Rebuild the options while preserving the value applySynthConfig may
+    // have restored from a session (an innerHTML reset would otherwise
+    // drop it back to the first scale).
     scaleSelects.forEach(sel => {
-        sel.innerHTML = scaleOptionsHtml(null);
+        const current = sel.value || 'chromatic';
+        sel.innerHTML = scaleOptionsHtml(current);
+        sel.value = current;
     });
     scaleRootSelects.forEach(sel => {
+        const current = sel.value || '0';
         sel.innerHTML = NOTE_NAMES
             .map((name, i) => `<option value="${i}">${name}</option>`)
             .join('');
+        sel.value = current;
     });
     const sendSynthScale = () => {
         const scale = scaleSelects[0].value;
         const root = Number(scaleRootSelects[0].value);
         invoke('set_synth_scale', { id, scale, root })
             .catch(err => console.error('Error in set_synth_scale:', err));
+        updateNoteRangeInfo(id);
     };
     scaleSelects.forEach(sel => sel.addEventListener('change', () => {
         scaleSelects.forEach(other => { other.value = sel.value; });
@@ -633,6 +639,12 @@ export function createSynthElement(id, cfg = null) {
         scaleRootSelects.forEach(other => { other.value = sel.value; });
         sendSynthScale();
     }));
+
+    // ---- Hover-note preview: hovering the grid shows the note this synth
+    // would play for the pixel under the cursor (exclusive mode) ----
+    el.querySelector('.synth-grid-note-info').addEventListener('click', (e) => {
+        toggleGridNoteInfo(id, el, e.currentTarget);
+    });
 
     // ---- Note lengths: brightness → duration mapping ----
     // At least one length must stay enabled: clicking the last remaining
@@ -739,10 +751,6 @@ export function createSynthElement(id, cfg = null) {
     // Initialize the highlight state (visible by default, nothing
     // selected, nothing silenced)
     synthHighlights.set(id, { visible: true, zones: [], muteZones: [] });
-    synthBrightnessBounds.set(id, {
-        min: Number(cfg?.brightness_min ?? 0),
-        max: Number(cfg?.brightness_max ?? 127),
-    });
     updateZonesLabel(id);
 
     // Zones value: click to cycle the display mode (beats → seconds →
@@ -810,7 +818,8 @@ export function createSynthElement(id, cfg = null) {
         if (!viewer.hasImage) return;
         const hi = synthHighlights.get(id);
         if (!hi) return;
-        if (isZonePickingId(id)) cancelZonePicking();
+    if (isZonePickingId(id)) cancelZonePicking();
+    if (gridNoteState.id === id) cancelGridNoteInfo();
         hi.zones = [rectZone(0, 0, viewer.gridW, viewer.gridH)];
         sendSynthZones(id);
         updateZonesLabel(id);
@@ -830,7 +839,6 @@ export function createSynthElement(id, cfg = null) {
         redrawAllHighlights();
     });
 
-    initBrightnessRange(el);
     initVelocityRange(el);
 
     // ---- Velocity mapping mode: relative (rescaled) vs clamp ----
@@ -866,6 +874,13 @@ export function createSynthElement(id, cfg = null) {
         el.classList.add('active');
         tab.classList.add('active');
     }
+
+    // Info section (live pixel readout + note-range summary): wire the
+    // collapse caret and seed the note-range line now that the mode,
+    // ranges and scale selects are all initialized.
+    el.querySelector('.synth-info-toggle').addEventListener('click', toggleSynthInfoCollapsed);
+    applySynthInfoCollapsed(el);
+    updateNoteRangeInfo(el);
 
     return el;
 }
@@ -913,54 +928,6 @@ export function anchorHueGradient(input, hueShift) {
 // The id is read from the DOM at event time (not captured at creation),
 // so the listeners survive the id renumbering that follows the display
 // order (see renumberSynthIds).
-export function initBrightnessRange(el) {
-    const startInput = el.querySelector('.brightness-start');
-    const endInput   = el.querySelector('.brightness-end');
-    const startVal   = el.querySelector('.brightness-start-val');
-    const endVal     = el.querySelector('.brightness-end-val');
-    const fill       = startInput.closest('.synth-range-track').querySelector('.synth-range-fill');
-
-    function updateFill() {
-        const max = 127;
-        const s = Number(startInput.value) / max * 100;
-        const e = Number(endInput.value)   / max * 100;
-        // The gradient spans the whole track; --s/--e clip it to the
-        // selection, keeping colors anchored to absolute luminosity values.
-        fill.style.setProperty('--s', `${s}%`);
-        fill.style.setProperty('--e', `${e}%`);
-
-        const atEnd = Number(startInput.value) >= Number(endInput.value);
-        startInput.style.zIndex = atEnd ? '3' : '2';
-        endInput.style.zIndex   = atEnd ? '1' : '2';
-    }
-
-    function sendRange() {
-        invoke('set_synth_brightness_range', {
-            id: Number(el.dataset.synthId),
-            brightnessMin: Number(startInput.value),
-            brightnessMax: Number(endInput.value),
-        }).catch(err => console.error('Error in set_synth_brightness_range:', err));
-    }
-
-    startInput.addEventListener('input', () => {
-        if (Number(startInput.value) > Number(endInput.value)) startInput.value = endInput.value;
-        startVal.textContent = startInput.value;
-        updateFill();
-        sendRange();
-        updateBrightnessBounds(Number(el.dataset.synthId));
-    });
-
-    endInput.addEventListener('input', () => {
-        if (Number(endInput.value) < Number(startInput.value)) endInput.value = startInput.value;
-        endVal.textContent = endInput.value;
-        updateFill();
-        sendRange();
-        updateBrightnessBounds(Number(el.dataset.synthId));
-    });
-
-    updateFill();
-}
-
 export function initVelocityRange(el) {
     const minInput = el.querySelector('.velocity-min');
     const maxInput = el.querySelector('.velocity-max');
@@ -1320,7 +1287,6 @@ export async function renumberSynthIds() {
     rekey(synthColors);
     rekey(synthCursors);
     rekey(synthHighlights);
-    rekey(synthBrightnessBounds);
     rekey(synthNames);
     rekey(synthDisplayNumbers);
 
@@ -1376,6 +1342,7 @@ export function resetSynthRemoveConfirm() {
 // tool left armed on one element can never act on another by accident.
 export function cancelTransientTools() {
     cancelZonePicking();
+    cancelGridNoteInfo();
     resetSynthRemoveConfirm();
 }
 

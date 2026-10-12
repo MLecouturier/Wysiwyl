@@ -84,7 +84,7 @@ export function installInputStepper() {
         if (event.ctrlKey) return; // pinch zoom / ctrl+wheel: don't touch the value
         // The synth range inputs sit under a .synth-range-track overlay with
         // pointer-events on the track, so hovering the track must count too.
-        // Dual-handle tracks (brightness, velocity) stack two inputs: scroll
+        // Dual-handle tracks (velocity) stack two inputs: scroll
         // drives the lower handle, Shift+scroll the upper one.
         const wrapper = event.target.closest('.bpm-input-wrapper');
         const track = event.target.closest('.synth-range-track');

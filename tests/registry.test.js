@@ -6,14 +6,14 @@ import assert from 'node:assert/strict';
 
 import {
     synthNames, synthDisplayNumbers, synthColors, synthHighlights,
-    synthBrightnessBounds, synthCursors, synthCursorGrid, synthCursorMuted,
+    synthCursors, synthCursorGrid, synthCursorMuted,
     clearSynthRegistry, removeSynthFromRegistry,
 } from '../src/js/core/state.js';
 import { viewer } from '../src/js/core/state.js';
 
 const allMaps = [
     synthNames, synthDisplayNumbers, synthColors, synthHighlights,
-    synthBrightnessBounds, synthCursors, synthCursorGrid, synthCursorMuted,
+    synthCursors, synthCursorGrid, synthCursorMuted,
 ];
 
 test('clearSynthRegistry empties every per-synth map', () => {
@@ -21,7 +21,6 @@ test('clearSynthRegistry empties every per-synth map', () => {
     synthDisplayNumbers.set(1, 1);
     synthColors.set(1, '#ff0000');
     synthHighlights.set(1, { visible: true, zones: [] });
-    synthBrightnessBounds.set(1, { min: 0, max: 127 });
     synthCursors.set(1, 3);
     synthCursorGrid.set(1, { w: 10, h: 10 });
     synthCursorMuted.set(1, true);

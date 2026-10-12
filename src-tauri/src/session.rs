@@ -567,8 +567,6 @@ mod tests {
         synth.config.back_and_forth = true;
         synth.config.reading_direction = ReadingDirection::BottomToTop;
         synth.config.sorted_reading = true;
-        synth.config.brightness_min = 12;
-        synth.config.brightness_max = 100;
         synth.config.velocity_min = 40;
         synth.config.velocity_max = 110;
         synth.config.velocity_relative = false;
@@ -625,8 +623,6 @@ mod tests {
         assert_eq!(s.config.back_and_forth, synth.config.back_and_forth);
         assert_eq!(s.config.reading_direction, synth.config.reading_direction);
         assert_eq!(s.config.sorted_reading, synth.config.sorted_reading);
-        assert_eq!(s.config.brightness_min, synth.config.brightness_min);
-        assert_eq!(s.config.brightness_max, synth.config.brightness_max);
         assert_eq!(s.config.velocity_min, synth.config.velocity_min);
         assert_eq!(s.config.velocity_max, synth.config.velocity_max);
         assert_eq!(s.config.velocity_relative, synth.config.velocity_relative);

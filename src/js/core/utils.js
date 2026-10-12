@@ -49,6 +49,25 @@ export function midiNoteToName(midi) {
     return `${midiNoteName(midi)} (${midi})`;
 }
 
+// HTML rendering of a note name: the octave (-1 to 9) is wrapped in a
+// half-size inline span (.note-index) so it reads as an index while staying
+// on the same baseline as the pitch class. Used wherever a note value is
+// displayed (pixel readout, note-range summary); "-" when the note is
+// unknown.
+export function midiNoteNameHtml(n) {
+    if (n == null) return '-';
+    const name = midiNoteName(n);
+    const match = name.match(/^(.*?)(-?\d+)$/);
+    return match ? `${match[1]}<span class="note-index">${match[2]}</span>` : name;
+}
+
+// "C<span…>4</span> (60)" for the pixel info line; "-" when the note is
+// unknown.
+export function midiNoteToNameHtml(midi) {
+    if (midi == null) return '-';
+    return `${midiNoteNameHtml(midi)} (${midi})`;
+}
+
 // Slider ↔ value mappings for the image controls: the logarithmic
 // column-count scale and the posterize level scale. Pure functions (the
 // caller passes the raw slider value and the image's max columns), so

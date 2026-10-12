@@ -5,7 +5,12 @@
 
 // Card padding, shared by the block and the header band's negative
 // margins (which bleed the tinted header to the card edges).
-$card-pad: 10px;
+$card-pad: .5rem;
+
+// Fixed width of the header title pill, shared by the expanded card and
+// the collapsed (inactive) accordion row so both align identically:
+// left-anchored after the color disc, with the actions pushed right.
+$synth-title-width: 18rem;
 
 // Shared look for the small numeric inputs of the card (volume, quantize
 // period, magic-wand tolerance, program bank/number): same background,
@@ -39,12 +44,12 @@ $card-pad: 10px;
     // all around, plus the color disc next to the title.
     border: 1px solid var(--synth-color, #{$color-border});
     border-radius: $border-radius-base;
-    padding: $card-pad;
+    // padding: $card-pad;
     overflow: visible;
 
     .synth-title-label {
         font-size: 1.125rem;
-        width: 100%;
+        width: $synth-title-width;
         text-align: center;
         font-weight: 600;
         background-color: $color-bg-medium;
@@ -54,11 +59,6 @@ $card-pad: 10px;
     // Program change of the synth's MIDI channel: bank select (A–P) and
     // program number (1–128), both sent to the instrument on change
     .synth-section-program-change {
-        display: inline-flex;
-        align-items: center;
-        gap: .375rem;
-        font-size: .78rem;
-        white-space: nowrap;
 
         .program-label {
             color: $color-text-muted;
@@ -190,7 +190,7 @@ $card-pad: 10px;
         // Header band tinted with the synth's identification color: the
         // negative margins cancel the block's padding so it bleeds to the
         // card edges, with the top corners rounded like the card.
-        margin: (-$card-pad) (-$card-pad) .5rem;
+        // margin: (-$card-pad) (-$card-pad) .5rem;
         padding: $card-pad;
         border-radius: $border-radius-base $border-radius-base 0 0;
         // Dimmed tint: the identification color at 50 %, blended with the
@@ -254,7 +254,6 @@ $card-pad: 10px;
     .synth-body {
         display: flex;
         flex-direction: column;
-        gap: 6px;
 
         // Uniform section pattern used by every settings group of the
         // card: a titled header (title + value + right-side actions) and
@@ -263,11 +262,13 @@ $card-pad: 10px;
             display: flex;
             flex-direction: column;
             gap: .375rem;
+            padding: .375rem .5rem;
 
             .synth-section-header {
                 display: flex;
                 align-items: center;
-                gap: .5rem;
+                justify-content: flex-start;
+                gap: .375rem;
                 flex-wrap: wrap;
 
                 .synth-section-title {
@@ -275,6 +276,7 @@ $card-pad: 10px;
                     color: $color-text-muted;
                     text-transform: uppercase;
                     letter-spacing: .03em;
+                    min-width: 5rem;
                 }
 
                 .synth-section-value {
@@ -299,9 +301,10 @@ $card-pad: 10px;
                 display: flex;
                 align-items: center;
                 justify-content: center;
-                gap: .5rem;
+                gap: .375rem;
                 flex-grow: 1;
                 flex-wrap: wrap;
+                min-height: 1.25rem;
 
                 select { height: 1.75rem; }
 
@@ -313,10 +316,37 @@ $card-pad: 10px;
                     padding: .25rem 0;
                 }
 
+                .wrapper {
+                    display: flex;
+                }
+
                 &.reversed {
-                    flex-direction: row-reverse;
+
+                    .wrapper {
+                        flex-direction: row-reverse;
+                    }                    
                 }
             }
+        }
+
+        // Helper bars, 2px high, showing how a pixel's channels map to
+        // note parameters. They override the default .synth-section
+        // padding/gap so the background reads as a thin bar.
+
+        // Luminosity → note length (black → white)
+        .luminosity-gradient {
+            height: 2px;
+            min-height: 2px;
+            padding: 0;
+            background: linear-gradient(to right, #000, #fff);
+        }
+
+        // Saturation → velocity (desaturated grey → the synth's own color)
+        .saturation-gradient {
+            height: 2px;
+            min-height: 2px;
+            padding: 0;
+            background: linear-gradient(to right, #888, var(--synth-color, #{$color-accent}));
         }
 
         // Channel volume input, on the play row. Amber border when the
@@ -324,7 +354,7 @@ $card-pad: 10px;
         // sent wins, overruling this input's value.
         .synth-volume {
             @extend %synth-number-input;
-            width: 3.25rem;
+            width: 2.75rem;
             height: 1.75rem;
             font-size: .78rem;
             cursor: ns-resize;
@@ -389,11 +419,55 @@ $card-pad: 10px;
             }
         }
 
+        // Info section (collapsible): the body stacks the live pixel readout
+        // and the note-range summary. Higher specificity than the generic
+        // .synth-section-body so the column layout wins over its wrap/center.
+        .synth-info-section .synth-info-body {
+            flex-direction: column;
+            align-items: stretch;
+            justify-content: flex-start;
+            flex-wrap: nowrap;
+            gap: .25rem;
+        }
+
+        // Folded info: only the caret row remains. The section tightens to
+        // the caret's own height so the collapsed zone stays as light as
+        // possible.
+        .synth-info-section.collapsed {
+            padding-top: 0;
+            padding-bottom: 0;
+            gap: 0;
+
+            .synth-info-body { display: none; }
+        }
+
+        // Caret of the info section: a bare icon, no button frame, as small
+        // as the glyph allows (the section has no title).
+        .synth-info-toggle {
+            width: 1.25rem;
+            height: 1.25rem;
+            border: none;
+            color: $color-text-muted;
+
+            .material-symbols-outlined { font-size: 1.5rem; }
+
+            &:hover {
+                color: $color-text-primary;
+                border-color: transparent;
+            }
+        }
+
         .synth-pixel-info {
             font-size: 0.78rem;
             color: $color-text-muted;
             font-variant-numeric: tabular-nums;
             white-space: pre-line;
+        }
+
+        .synth-note-range-info {
+            font-size: 0.78rem;
+            color: $color-text-muted;
+            font-variant-numeric: tabular-nums;
         }
 
         // Glyph toggles (musical symbols instead of Material icons):
@@ -539,7 +613,7 @@ $card-pad: 10px;
     // the title and the remove button remain on a single row.
     &:not(.active) {
         cursor: pointer;
-        padding: .375rem .5rem;
+        padding: .125rem .5rem;
 
         .synth-body,
         .synth-menu,
@@ -550,8 +624,8 @@ $card-pad: 10px;
         .synth-header {
             flex-direction: row;
             align-items: center;
-            margin: -.375rem -.5rem;
-            padding: .375rem .5rem;
+            margin: -.125rem -.5rem;
+            padding: .125rem .5rem;
             border-radius: $border-radius-base;
             font-size: .95rem;
         }
@@ -563,7 +637,7 @@ $card-pad: 10px;
         // Only the header actions survive the flattening; the body (and
         // everything it holds: MIDI, program, zones, transport…) is hidden
         // as a whole above.
-        .synth-header-row .flex-fill,
+        .synth-header-row .flex-filler,
         .synth-toggle-menu {
             display: none;
         }
@@ -572,17 +646,20 @@ $card-pad: 10px;
 
         .synth-title-label {
             order: 1;
-            flex: 1 1 auto;
-            width: auto;
         }
 
-        .synth-remove { order: 2; }
+        // Pushed to the right edge: the flex-filler spacer is hidden in the
+        // collapsed row (see above), so the auto margin takes over.
+        .synth-remove {
+            order: 2;
+            margin-left: auto;
+        }
     }
 
     // Zone selection row: the four actions live in the section header
     // (see .synth-section)
 
-    // Brightness threshold dual slider: the track is used as a
+    // Dual-handle range slider (velocity): the track is used as a
     // .synth-section-body, the title/value live in the section header
     .synth-range-track {
         position: relative;
@@ -607,17 +684,6 @@ $card-pad: 10px;
             background-color: $color-accent;
             border-radius: .125rem;
             pointer-events: none;
-
-            // Brightness threshold variant: the black→white gradient spans
-            // the whole track and is clipped to the selection, so its colors
-            // stay anchored to absolute luminosity values — moving a handle
-            // erodes the gradient instead of squashing it.
-            &.gradient-wb {
-                left: 0;
-                width: 100%;
-                background: $gradient-wb;
-                clip-path: inset(0 calc(100% - var(--e, 100%)) 0 var(--s, 0%));
-            }
         }
 
         // The two overlapping inputs — the thumb style comes from the global mixin

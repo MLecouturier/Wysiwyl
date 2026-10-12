@@ -315,7 +315,7 @@ export function createMirror({
                 synths.push({
                     color,
                     zones: hi.zones,
-                    muteCells: Array.from(computeMuteCells(sid, hi)),
+                    muteCells: Array.from(computeMuteCells(hi)),
                 });
             });
         }

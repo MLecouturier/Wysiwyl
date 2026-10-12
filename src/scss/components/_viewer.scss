@@ -74,6 +74,25 @@
                 cursor: url('../assets/icons/wand-sparkles-silence.svg') 2 2, crosshair;
             }
         }
+
+        // Hover-note preview mode: the overlay must receive the mousemove
+        // events (the note label and cell outline follow the pointer), but
+        // the cursor is left untouched.
+        &.note-hover {
+            pointer-events: auto;
+        }
+    }
+
+    // Cell outline of the hover-note preview: a bare frame drawn over the
+    // hovered pixel. Positioned in layout pixels by selection.js.
+    .grid-note-cell {
+        position: absolute;
+        z-index: 5;
+        box-sizing: border-box;
+        border: 2px solid $color-accent;
+        border-radius: 2px;
+        pointer-events: none;
+        box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6);
     }
 
     // Playhead cursors live on their own layer, above the zones, so
@@ -101,4 +120,22 @@
             image-rendering: crisp-edges;
         }
     }
+}
+
+// Floating label of the hover-note preview: follows the cursor over the
+// image (position set by selection.js). The note's octave reuses the shared
+// .note-index style.
+.grid-note-label {
+    position: fixed;
+    z-index: 900;
+    padding: .125rem .375rem;
+    background-color: $color-bg-panel;
+    border: 1px solid $color-border;
+    border-radius: $border-radius-base;
+    color: $color-text-primary;
+    font-size: 0.8rem;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    pointer-events: none;
+    box-shadow: 0 .25rem 1rem rgba(0, 0, 0, 0.5);
 }

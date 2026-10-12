@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { NOTE_NAMES, midiNoteName, midiNoteToName } from '../src/js/core/utils.js';
+import { NOTE_NAMES, midiNoteName, midiNoteToName, midiNoteNameHtml, midiNoteToNameHtml } from '../src/js/core/utils.js';
 
 test('NOTE_NAMES lists the twelve pitch classes', () => {
     assert.equal(NOTE_NAMES.length, 12);
@@ -25,4 +25,20 @@ test('midiNoteToName appends the raw value', () => {
 test('midiNoteToName returns a dash for an unknown note', () => {
     assert.equal(midiNoteToName(null), '-');
     assert.equal(midiNoteToName(undefined), '-');
+});
+
+test('midiNoteNameHtml wraps the octave in a half-size span', () => {
+    assert.equal(midiNoteNameHtml(60), 'C<span class="note-index">4</span>');
+    assert.equal(midiNoteNameHtml(0), 'C<span class="note-index">-1</span>');
+    assert.equal(midiNoteNameHtml(61), 'C#<span class="note-index">4</span>');
+});
+
+test('midiNoteNameHtml returns a dash for an unknown note', () => {
+    assert.equal(midiNoteNameHtml(null), '-');
+    assert.equal(midiNoteNameHtml(undefined), '-');
+});
+
+test('midiNoteToNameHtml appends the raw value to the HTML name', () => {
+    assert.equal(midiNoteToNameHtml(60), 'C<span class="note-index">4</span> (60)');
+    assert.equal(midiNoteToNameHtml(null), '-');
 });

@@ -3,7 +3,7 @@ import { loadTemplates } from './core/templates.js';
 import { MUTE_GLYPH } from './core/geometry.js';
 import { seedZoneOrder } from './core/geometry.js';
 import { rgbToTslStr } from './core/utils.js';
-import { midiNoteToName } from './core/utils.js';
+import { midiNoteToNameHtml } from './core/utils.js';
 import { createChrono } from './core/timing.js';
 import { appEvents } from './core/state.js';
 import { viewer } from './core/state.js';
@@ -23,7 +23,7 @@ import { createMirror } from './mirror/window.js';
 import { createSessionState } from './session/session.js';
 import { setSynthColors, setNoteRangeBounds, setEnabledScales, refreshScaleSelects } from './synth/model.js';
 import { synthElementById } from './synth/model.js';
-import { updateZonesLabel, updateAllSynthZonesLabels } from './synth/model.js';
+import { updateZonesLabel, updateAllSynthZonesLabels, updateNoteRangeInfo } from './synth/model.js';
 import {
     addSynthZone, removeSynthZoneRect, toggleSynthMuteRect, removeSynthMuteRect,
 } from './synth/selection.js';
@@ -39,6 +39,7 @@ import {
     wandAddPixels, wandRemovePixels, wandToggleMutePixels, wandRemoveMutePixels,
     lassoAddPixels, lassoRemovePixels, lassoToggleMutePixels, lassoRemoveMutePixels,
     selectionMode, syncPickingUi,
+    gridNoteState, updateGridNoteHover, hideGridNoteHover,
 } from './synth/selection.js';
 import {
     createSynthElement, onSynthPlayClick, syncPlayAllButton,
@@ -127,6 +128,8 @@ invoke('get_config').then(config => {
         setEnabledScales(config.enabled_scales);
     }
     document.querySelectorAll('.synth-block').forEach(el => refreshScaleSelects(el));
+    // The note-range summary follows the configured bounds and enabled scales
+    document.querySelectorAll('.synth-block').forEach(el => updateNoteRangeInfo(Number(el.dataset.synthId)));
     // Clock source of the metronome (master / slave), persisted by the
     // backend and applied live on its side; the selects just reflect it.
     clockSource.hydrate(config.clock_mode, config.clock_source);
@@ -472,6 +475,9 @@ pixelOverlay.addEventListener('mousemove', (e) => {
         drawCropOverlay();
         return;
     }
+    // Hover-note preview: while the mode is armed, show the note of the
+    // pixel under the cursor (independent of any zone gesture).
+    if (gridNoteState.id !== null) updateGridNoteHover(e.clientX, e.clientY);
     if (!zoneState.drag && !zoneState.lasso) return;
     if (zoneState.lasso) {
         const pt = imagePointFromClient(e.clientX, e.clientY);
@@ -490,6 +496,9 @@ pixelOverlay.addEventListener('mousemove', (e) => {
     redrawAllHighlights();
     drawZonePreview();
 });
+
+// Leaving the image hides the hover-note label and its cell outline.
+pixelOverlay.addEventListener('mouseleave', () => hideGridNoteHover());
 
 window.addEventListener('mouseup', (e) => {
     if (cropState.drag) {
@@ -967,18 +976,20 @@ window.__TAURI__.event.listen('synth-pixel-tick', (event) => {
         const labels = ['R', 'G', 'B'];
         noteInfo = voices.map((v, i) => {
             if (!v.enabled) return t('synth.voiceOff', { channel: labels[i] });
-            const name = midiNoteToName(v.note);
+            const name = midiNoteToNameHtml(v.note);
             return v.muted
                 ? t('synth.voiceMuted', { channel: labels[i], note: name })
                 : `${labels[i]}:${name}`;
         }).join('  ');
     } else {
-        const noteName = midiNoteToName(note);
+        const noteName = midiNoteToNameHtml(note);
         noteInfo = t('synth.noteLabel', { note: noteName }) + (muted ? t('synth.noteMuted') : '');
     }
 
     const pixelInfoEl = el.querySelector('.synth-pixel-info');
-    pixelInfoEl.textContent = t('synth.pixelInfo', { cursor, rgb: rgbStr, tsl: tslStr, noteInfo, velocity: velocity ?? '-' });
+    // innerHTML: the note names carry a sized-down <span> for their octave.
+    // Nothing here comes from user input (numbers + generated note names).
+    pixelInfoEl.innerHTML = t('synth.pixelInfo', { cursor, rgb: rgbStr, tsl: tslStr, noteInfo, velocity: velocity ?? '-' });
     pixelInfoEl.dataset.hasTick = '1';
     drawSynthPixel(id, cursor, muted, tickW, tickH);
 });

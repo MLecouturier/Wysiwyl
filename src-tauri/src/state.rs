@@ -179,6 +179,11 @@ impl Synth {
     }
 }
 
+/// Bounds of the per-synth tempo ratio offered by the UI (1/2 to 3/2 of the
+/// global metronome tempo). Kept in sync with the `.synth-tempo` options.
+pub const TEMPO_RATIO_MIN: f64 = 0.5;
+pub const TEMPO_RATIO_MAX: f64 = 1.5;
+
 /// Per-synth configuration: every field saved in a session's synth entry
 /// and offered as the config file's default synth template. Serializable,
 /// and sanitized when applied (see [`SynthConfig::to_synth`]).
@@ -193,8 +198,6 @@ pub struct SynthConfig {
     pub back_and_forth: bool, // bounce back and forth (mutually exclusive with the loop)
     pub reading_direction: ReadingDirection, // order in which the sequence is built
     pub sorted_reading: bool, // read the pixels by absolute position, not zone by zone
-    pub brightness_min: u8, // minimum brightness threshold (0-127)
-    pub brightness_max: u8, // maximum brightness threshold (0-127)
     pub velocity_min: u8, // floor of the velocity range (0-126)
     pub velocity_max: u8, // ceiling of the velocity range (1-127)
     pub velocity_relative: bool, // true: saturation rescaled onto [min, max]
@@ -225,8 +228,6 @@ impl Default for SynthConfig {
             back_and_forth: false,
             reading_direction: ReadingDirection::LeftToRight,
             sorted_reading: false,
-            brightness_min: 0,
-            brightness_max: 127,
             velocity_min: 0,
             velocity_max: 127,
             velocity_relative: true,
@@ -255,6 +256,7 @@ impl SynthConfig {
         let mut synth = Synth::new(id);
         synth.config = self.clone();
         synth.config.loop_enabled = self.loop_enabled && !self.back_and_forth;
+        synth.config.tempo_ratio = self.tempo_ratio.clamp(TEMPO_RATIO_MIN, TEMPO_RATIO_MAX);
         synth.config.volume = self.volume.min(127);
         if self.note_lengths.is_empty() {
             synth.config.note_lengths = vec![NoteLength::Quarter];
@@ -427,5 +429,26 @@ mod tests {
         });
         synth.invalidate_sequence();
         assert!(synth.playback.cached_sequence.is_none());
+    }
+
+    #[test]
+    fn to_synth_clamps_tempo_ratio_to_the_ui_range() {
+        // Hand-edited sessions/config files may hold a stale ratio; it is
+        // clamped to the values the `.synth-tempo` select offers.
+        let low = SynthConfig {
+            tempo_ratio: 0.05,
+            ..Default::default()
+        };
+        assert_eq!(low.to_synth(1).config.tempo_ratio, TEMPO_RATIO_MIN);
+        let high = SynthConfig {
+            tempo_ratio: 4.0,
+            ..Default::default()
+        };
+        assert_eq!(high.to_synth(1).config.tempo_ratio, TEMPO_RATIO_MAX);
+        let in_range = SynthConfig {
+            tempo_ratio: 0.75,
+            ..Default::default()
+        };
+        assert_eq!(in_range.to_synth(1).config.tempo_ratio, 0.75);
     }
 }

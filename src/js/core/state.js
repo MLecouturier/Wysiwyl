@@ -92,10 +92,6 @@ export const synthColors = new Map();
 // id → { visible, zones, muteZones, start, end, _wasVisible }
 export const synthHighlights = new Map();
 
-// id → { min, max }: the brightness threshold, mirroring the backend so
-// the UI can mark out-of-range pixels as muted without asking per cell.
-export const synthBrightnessBounds = new Map();
-
 // id → current playhead cursor index (for drawing)
 export const synthCursors = new Map();
 
@@ -114,7 +110,6 @@ export function clearSynthRegistry() {
     synthDisplayNumbers.clear();
     synthColors.clear();
     synthHighlights.clear();
-    synthBrightnessBounds.clear();
     synthCursors.clear();
     synthCursorGrid.clear();
     synthCursorMuted.clear();
@@ -127,7 +122,6 @@ export function removeSynthFromRegistry(id) {
     synthDisplayNumbers.delete(id);
     synthColors.delete(id);
     synthHighlights.delete(id);
-    synthBrightnessBounds.delete(id);
     synthCursors.delete(id);
     synthCursorGrid.delete(id);
     synthCursorMuted.delete(id);

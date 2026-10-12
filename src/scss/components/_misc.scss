@@ -3,6 +3,15 @@
 // ==========================================================================
 @use '../variables' as *;
 
+// Octave index of a note value, emitted by the note-name HTML helpers
+// (midiNoteNameHtml / midiNoteToNameHtml): half the note's size, sitting on
+// the same baseline as the pitch class (not lowered like a subscript). Used
+// wherever a note value is displayed (pixel readout, note-range summary).
+.note-index {
+    font-size: .75em;
+    vertical-align: baseline;
+}
+
 // Contextual help window (live-help mode): floats near the hovered control.
 // pointer-events:none keeps it from intercepting the hover that shows it.
 // Built dynamically by main.js (id #help-popup = JS hook).

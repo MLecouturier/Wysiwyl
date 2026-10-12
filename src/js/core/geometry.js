@@ -184,9 +184,9 @@ export function mergeZones(baseZones, addedZones) {
 // both windows own their own state and canvases, and feed them to these
 // functions.
 
-// Mute rest glyph, drawn on every muted pixel of a zone (rests outside
-// the brightness window and manual silences alike). Rendered with the
-// Noto Music font (self-hosted, loaded on demand via unicode-range).
+// Mute rest glyph, drawn on every manually silenced pixel of a zone.
+// Rendered with the Noto Music font (self-hosted, loaded on demand via
+// unicode-range).
 export const MUTE_GLYPH = '𝆝';
 
 // Computes the render rect of the image inside a viewer of the given
@@ -321,9 +321,8 @@ export function drawZones(ctx, layout, { color, zones, muteCells }) {
 
 // Draws one playhead cell: semi-transparent fill of the whole cell in
 // the synth's color, like the main viewer's cursor layer. A muted cell
-// (manual silence or pixel outside the brightness window) keeps its
-// cursor, drawn at half opacity so it stays visible above the silence
-// veil.
+// (manual silence) keeps its cursor, drawn at half opacity so it stays
+// visible above the silence veil.
 export function drawCursorCell(ctx, layout, { color, cursor, muted }) {
     const { offsetX, offsetY, cellW, cellH, gridW } = layout;
     const col = cursor % gridW;

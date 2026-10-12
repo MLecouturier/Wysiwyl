@@ -119,8 +119,8 @@ fn channel_to_midi_note(value: u8) -> u8 {
     ((value as f32 / 255.0) * 127.0).round() as u8
 }
 
-/// Maps a brightness value (0–255) to a MIDI level 0–127 (used for
-/// brightness-threshold filtering, independently of the note played).
+/// Maps a brightness value (0–255) to a MIDI level 0–127 (used for the
+/// brightness→note-length mapping, independently of the note played).
 fn luma_to_level(luma: f32) -> u8 {
     ((luma / 255.0) * 127.0).round() as u8
 }
@@ -176,7 +176,7 @@ fn saturation_to_velocity(
 /// every pixel (used when note lengths are enabled, where each pixel is a
 /// distinct note of a fixed duration, disabling the legato sustain).
 /// `manual_mute` silences the pixel by hand (rest): no note is sounded,
-/// exactly like a pixel outside the brightness window.
+/// like a manually silenced pixel.
 #[allow(clippy::too_many_arguments)] // flat by design: the pixel context is threaded explicitly
 fn process_monophonic(
     synth: &mut Synth,
@@ -185,7 +185,6 @@ fn process_monophonic(
     r: u8,
     g: u8,
     b: u8,
-    brightness_level: u8,
     velocity: u8,
     payload: &mut PixelTick,
     retrigger: bool,
@@ -205,9 +204,7 @@ fn process_monophonic(
         &synth.config.mono_note_range,
     );
 
-    let in_range = !manual_mute
-        && brightness_level >= synth.config.brightness_min
-        && brightness_level <= synth.config.brightness_max;
+    let in_range = !manual_mute;
 
     // We only (re)trigger MIDI if the note actually changes or if its
     // audible status (muted / not muted) changes. Otherwise we let the
@@ -249,8 +246,8 @@ fn process_monophonic(
 /// its own independent note, forming a chord of 1 to 3 notes. `retrigger`
 /// forces a re-articulation of every enabled voice on each pixel (used when
 /// note lengths are enabled, see process_monophonic). `manual_mute` silences
-/// the pixel by hand (rest): no voice is sounded, exactly like a pixel
-/// outside the brightness window.
+/// the pixel by hand (rest): no voice is sounded, like a manually silenced
+/// pixel.
 #[allow(clippy::too_many_arguments)] // flat by design: the pixel context is threaded explicitly
 fn process_polyphonic(
     synth: &mut Synth,
@@ -259,7 +256,6 @@ fn process_polyphonic(
     r: u8,
     g: u8,
     b: u8,
-    brightness_level: u8,
     velocity: u8,
     payload: &mut PixelTick,
     retrigger: bool,
@@ -267,9 +263,7 @@ fn process_polyphonic(
 ) {
     let channel_values = [r, g, b];
     let channel_midi = synth.config.channel;
-    let global_in_range = !manual_mute
-        && brightness_level >= synth.config.brightness_min
-        && brightness_level <= synth.config.brightness_max;
+    let global_in_range = !manual_mute;
 
     let mut voices_payload = Vec::with_capacity(3);
 
@@ -850,7 +844,6 @@ fn step_synth_once(
                 r,
                 g,
                 b,
-                brightness_level,
                 velocity,
                 &mut payload,
                 retrigger,
@@ -865,7 +858,6 @@ fn step_synth_once(
                 r,
                 g,
                 b,
-                brightness_level,
                 velocity,
                 &mut payload,
                 retrigger,
@@ -974,11 +966,38 @@ fn step_synth_once(
     note_length
 }
 
+/// Musical cycle of a per-synth tempo ratio, in master beats: the smallest
+/// `q` (1-8) such that `ratio * q` is a whole number of steps, i.e. after `q`
+/// master beats the synth's steps realign on the beat. The UI ratios are
+/// simple fractions (1/2, 2/3, 3/4, 1, 5/4, 4/3, 3/2) whose stored decimals
+/// (0.66, 1.33) are approximations, hence the tolerance. Falls back to 1 when
+/// no small cycle fits (arbitrary hand-edited ratio).
+fn ratio_cycle_beats(ratio: f64) -> u64 {
+    for q in 1..=8u64 {
+        let steps = ratio * q as f64;
+        if (steps - steps.round()).abs() < 0.03 {
+            return q;
+        }
+    }
+    1
+}
+
+/// Effective master-tempo quantize period, in beats: the user's period
+/// rounded up to the next multiple of the ratio's cycle, so every resync
+/// boundary lands on a natural step of the synth. Without this the boundary
+/// can fall mid-cycle and, since the quantize is delay-only, hold a step —
+/// producing a rhythmic hole instead of a clean realignment.
+fn effective_quantize_period(ratio: f64, beats: u8) -> u64 {
+    let cycle = ratio_cycle_beats(ratio);
+    let beats = beats.max(1) as u64;
+    beats.div_ceil(cycle) * cycle
+}
+
 /// Smallest resync boundary strictly after `wake`: a multiple of
 /// `beats * WAKES_PER_BEAT` wakes. `beats` is the quantize period in
-/// master beats (1-8).
-fn next_resync_boundary(wake: u64, beats: u8) -> u64 {
-    let period = beats.max(1) as u64 * WAKES_PER_BEAT;
+/// master beats.
+fn next_resync_boundary(wake: u64, beats: u64) -> u64 {
+    let period = beats.max(1) * WAKES_PER_BEAT;
     (wake / period + 1) * period
 }
 
@@ -987,8 +1006,8 @@ fn next_resync_boundary(wake: u64, beats: u8) -> u64 {
 /// interval of the step that just completed). A step landing exactly on a
 /// boundary is never held. Delay-only: a step is never advanced, so a
 /// sounding note is never cut by the quantize.
-fn should_hold_for_quantize(wake: u64, beats: u8, interval_wakes: u32) -> bool {
-    let period = beats.max(1) as u64 * WAKES_PER_BEAT;
+fn should_hold_for_quantize(wake: u64, beats: u64, interval_wakes: u32) -> bool {
+    let period = beats.max(1) * WAKES_PER_BEAT;
     if wake.is_multiple_of(period) {
         return false;
     }
@@ -1552,11 +1571,22 @@ pub fn start_metronome(app: AppHandle, state: tauri::State<MetronomeState>) {
 
                     // Start sync: the very first note waits for the next
                     // master beat (wake % WAKES_PER_BEAT == 0) so playback
-                    // begins in phase with the metronome. Nothing is
-                    // accumulated while waiting; the beat wake then plays
-                    // the first pixel.
+                    // begins in phase with the metronome. With quantize on it
+                    // waits for the next resync boundary instead, so the very
+                    // first step already lands on the cycle-aligned grid (no
+                    // initial held step). Nothing is accumulated while
+                    // waiting; the wake then plays the first pixel.
                     if synth.playback.start_pending {
-                        if !wake.is_multiple_of(WAKES_PER_BEAT) {
+                        let ready = if synth.config.quantize {
+                            let period = effective_quantize_period(
+                                synth.config.tempo_ratio,
+                                synth.config.quantize_beats,
+                            ) * WAKES_PER_BEAT;
+                            wake.is_multiple_of(period)
+                        } else {
+                            wake.is_multiple_of(WAKES_PER_BEAT)
+                        };
+                        if !ready {
                             continue;
                         }
                         synth.playback.start_pending = false;
@@ -1586,6 +1616,19 @@ pub fn start_metronome(app: AppHandle, state: tauri::State<MetronomeState>) {
                         continue;
                     }
 
+                    // Effective quantize period, in master beats: the user's
+                    // period rounded up to the ratio's cycle, so a boundary
+                    // always coincides with a natural step of the synth (see
+                    // effective_quantize_period). 0 when the quantize is off.
+                    let quantize_period = if synth.config.quantize {
+                        effective_quantize_period(
+                            synth.config.tempo_ratio,
+                            synth.config.quantize_beats,
+                        )
+                    } else {
+                        0
+                    };
+
                     // Master-tempo quantize: hold a due step until the next
                     // resync boundary when that boundary falls before the
                     // following step. Delay-only — a step is never advanced,
@@ -1596,7 +1639,7 @@ pub fn start_metronome(app: AppHandle, state: tauri::State<MetronomeState>) {
                     if synth.config.quantize
                         && should_hold_for_quantize(
                             wake,
-                            synth.config.quantize_beats,
+                            quantize_period,
                             synth.playback.wakes_since_step,
                         )
                     {
@@ -1609,9 +1652,7 @@ pub fn start_metronome(app: AppHandle, state: tauri::State<MetronomeState>) {
                     // On a resync boundary the accumulator is reset cleanly
                     // (a fresh phase anchor) instead of subtracting the step.
                     let on_boundary = synth.config.quantize
-                        && wake.is_multiple_of(
-                            synth.config.quantize_beats.max(1) as u64 * WAKES_PER_BEAT,
-                        );
+                        && wake.is_multiple_of(quantize_period * WAKES_PER_BEAT);
                     if on_boundary {
                         synth.playback.tempo_accumulator = 0.0;
                     } else {
@@ -2643,6 +2684,92 @@ mod tests {
         // away: no hold yet
         assert!(!should_hold_for_quantize(20, 8, 8));
         assert!(should_hold_for_quantize(89, 8, 8));
+    }
+
+    #[test]
+    fn ratio_cycle_matches_the_ui_fractions() {
+        // 1/2, 2/3, 3/4, 1, 5/4, 4/3, 3/2 (0.66/1.33 are their decimals)
+        let cases = [
+            (0.5, 2),
+            (0.66, 3),
+            (0.75, 4),
+            (1.0, 1),
+            (1.25, 4),
+            (1.33, 3),
+            (1.5, 2),
+        ];
+        for (ratio, cycle) in cases {
+            assert_eq!(ratio_cycle_beats(ratio), cycle, "ratio {ratio}");
+        }
+        // An arbitrary ratio with no small cycle falls back to 1
+        assert_eq!(ratio_cycle_beats(0.7), 1);
+    }
+
+    #[test]
+    fn effective_period_rounds_up_to_the_ratio_cycle() {
+        // Cycle 3 (2/3, 4/3): N = 4 rounds up to 6, N = 3 stays 3, N = 8 → 9
+        assert_eq!(effective_quantize_period(2.0 / 3.0, 4), 6);
+        assert_eq!(effective_quantize_period(4.0 / 3.0, 4), 6);
+        assert_eq!(effective_quantize_period(0.66, 4), 6);
+        assert_eq!(effective_quantize_period(2.0 / 3.0, 3), 3);
+        assert_eq!(effective_quantize_period(2.0 / 3.0, 8), 9);
+        // Cycle 2 (1/2, 3/2) and 4 (3/4, 5/4): N = 4 already aligns
+        assert_eq!(effective_quantize_period(0.5, 4), 4);
+        assert_eq!(effective_quantize_period(1.5, 4), 4);
+        assert_eq!(effective_quantize_period(0.75, 4), 4);
+        // Cycle 1 (ratio 1): the user's period is kept as-is
+        assert_eq!(effective_quantize_period(1.0, 4), 4);
+        assert_eq!(effective_quantize_period(1.0, 1), 1);
+    }
+
+    #[test]
+    fn quantize_realigns_on_the_ratio_cycle_without_holes() {
+        // Simulates the accumulator loop for ratio 2/3 with the user's
+        // period N = 4. The effective period is rounded up to the ratio's
+        // cycle (3), i.e. 6 beats, so a boundary always lands on a natural
+        // step: the gaps stay uniform (18 wakes) and no step is ever held.
+        let ratio = 2.0 / 3.0;
+        let period = effective_quantize_period(ratio, 4);
+        assert_eq!(period, 6);
+
+        let mut acc = 0.0f64;
+        let mut last_step = 0u64;
+        let mut gaps = Vec::new();
+        let mut wakes_since_step = 0u32;
+        let mut held = false;
+
+        // Playback starts on a boundary: the first step fires immediately at
+        // wake 0 (accumulator reset), so the loop starts one wake later.
+        for wake in 1..(period * WAKES_PER_BEAT * 2) {
+            wakes_since_step += 1;
+            acc += ratio / WAKES_PER_BEAT as f64;
+            if acc < 1.0 - ACC_EPSILON {
+                continue;
+            }
+            if should_hold_for_quantize(wake, period, wakes_since_step) {
+                held = true;
+                continue;
+            }
+            if wake.is_multiple_of(period * WAKES_PER_BEAT) {
+                acc = 0.0;
+            } else {
+                acc -= 1.0;
+            }
+            gaps.push(wake - last_step);
+            last_step = wake;
+            wakes_since_step = 0;
+        }
+
+        assert!(!held, "an exact ratio must never hold a step");
+        assert!(gaps.len() >= 4);
+        assert!(
+            gaps.iter().all(|&g| g == 18),
+            "uniform gaps expected, got {gaps:?}"
+        );
+
+        // The raw user period (4), not cycle-aligned, would hold a step
+        // mid-cycle — the hole this change removes.
+        assert!(should_hold_for_quantize(36, 4, 18));
     }
 
     #[test]
