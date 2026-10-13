@@ -48,6 +48,7 @@ import {
     toggleSynthMute, cancelTransientTools, setActiveSynth, clearActiveSynth,
 } from './synth/cards.js';
 import { initSynthMenu } from './synth/menu.js';
+import './core/shortcuts-dialog.js';
 import {
     syncLabels, updatePreviewSrc, refresh, exitCropMode, closeTransformPanel,
     isTransformActive, redrawTransformOverlay,
@@ -321,6 +322,9 @@ registerEscape(50,
 // (see core/focus.js).
 // Note: Cmd+M would be reserved by a standard macOS menu (minimize) if one
 // is ever added.
+// Adding, changing or removing a shortcut (here, in image/editor.js or a
+// mouse gesture): update the static list of the shortcuts dialog too
+// (#shortcuts-modal in index.html, shortcuts.* i18n keys).
 // Physical digit pressed (1-8) is resolved by digitIndex (core/shortcuts.js),
 // which is layout- and modifier-independent (see its comment).
 function nthSynthBlock(index) {

@@ -1418,6 +1418,77 @@ button.toggle-btn.active:hover {
   margin-bottom: 1rem;
 }
 
+.modal-box-wide {
+  display: flex;
+  flex-direction: column;
+  width: min(52rem, 92vw);
+  max-width: none;
+  max-height: 85vh;
+}
+
+.shortcut-groups {
+  columns: 2 22rem;
+  column-gap: 2rem;
+  min-height: 0;
+  margin: 0.25rem 0 1rem;
+  overflow-y: auto;
+}
+
+.shortcut-group {
+  break-inside: avoid;
+  margin-bottom: 1rem;
+}
+.shortcut-group h4 {
+  margin-bottom: 0.375rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #888;
+}
+
+.shortcut-list {
+  display: grid;
+  grid-template-columns: minmax(8.5rem, max-content) 1fr;
+  gap: 0.375rem 0.75rem;
+  align-items: center;
+  font-size: 0.8rem;
+}
+.shortcut-list dt {
+  display: flex;
+  align-items: center;
+  gap: 0.125rem;
+  white-space: nowrap;
+}
+.shortcut-list dd {
+  color: #ccc;
+}
+
+kbd {
+  display: inline-block;
+  min-width: 1.4rem;
+  padding: 0.0625rem 0.375rem;
+  border: 1px solid #333;
+  border-bottom-width: 2px;
+  border-radius: 0.25rem;
+  background-color: #262626;
+  color: #e0e0e0;
+  font-family: inherit;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  text-align: center;
+}
+
+.shortcut-plus {
+  padding: 0 0.125rem;
+  color: #888;
+}
+
+.shortcut-gesture {
+  font-style: italic;
+  color: #e0e0e0;
+}
+
 .gap-2 {
   gap: 0.5rem;
 }

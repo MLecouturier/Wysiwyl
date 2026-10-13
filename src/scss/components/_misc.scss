@@ -72,8 +72,8 @@
 // ==========================================================================
 // Modal dialogs
 // ==========================================================================
-// Shared by the unsaved-session confirmation (main window close) and the
-// "copy from another synth" dialog. Built statically in index.html (the
+// Shared by the unsaved-session confirmation (main window close), the
+// "copy from another synth" dialog and the keyboard shortcuts list. Built statically in index.html (the
 // ids are JS hooks); the texts and button labels are i18n-driven.
 
 .modal-overlay {
@@ -125,4 +125,89 @@
 .synth-copy-source-select {
     width: 100%;
     margin-bottom: 1rem;
+}
+
+// ==========================================================================
+// Keyboard shortcuts dialog
+// ==========================================================================
+// Static list in index.html (#shortcuts-modal), opened by the footer
+// keyboard button (js/core/shortcuts-dialog.js). Two columns of groups;
+// each row pairs the keys (or a mouse gesture) with what they do.
+
+// Wider box, scrolling on small windows
+.modal-box-wide {
+    display: flex;
+    flex-direction: column;
+    width: min(52rem, 92vw);
+    max-width: none;
+    max-height: 85vh;
+}
+
+.shortcut-groups {
+    columns: 2 22rem;
+    column-gap: 2rem;
+    min-height: 0;
+    margin: .25rem 0 1rem;
+    overflow-y: auto;
+}
+
+// A group never splits across the two columns
+.shortcut-group {
+    break-inside: avoid;
+    margin-bottom: 1rem;
+
+    h4 {
+        margin-bottom: .375rem;
+        font-size: .7rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: .04em;
+        color: $color-text-muted;
+    }
+}
+
+.shortcut-list {
+    display: grid;
+    // Same key column width in every group, so the descriptions align
+    grid-template-columns: minmax(8.5rem, max-content) 1fr;
+    gap: .375rem .75rem;
+    align-items: center;
+    font-size: .8rem;
+
+    dt {
+        display: flex;
+        align-items: center;
+        gap: .125rem;
+        white-space: nowrap;
+    }
+
+    dd { color: $color-text-secondary; }
+}
+
+// A key cap
+kbd {
+    display: inline-block;
+    min-width: 1.4rem;
+    padding: .0625rem .375rem;
+    border: 1px solid $color-border;
+    border-bottom-width: 2px;
+    border-radius: $border-radius-base;
+    background-color: $color-bg-light;
+    color: $color-text-primary;
+    font-family: inherit;
+    font-size: .75rem;
+    line-height: 1.4;
+    text-align: center;
+}
+
+// "+" between the keys of a combination
+.shortcut-plus {
+    padding: 0 .125rem;
+    color: $color-text-muted;
+}
+
+// Mouse gesture (drag, double-click, wheel), in place of a key
+.shortcut-gesture {
+    font-style: italic;
+    color: $color-text-primary;
 }

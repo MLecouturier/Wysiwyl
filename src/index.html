@@ -237,6 +237,9 @@
                                 <button id="live-help-btn" class="icon-btn" data-i18n-title="controls.help">
                                     <span class="material-symbols-outlined" aria-hidden="true">live_help</span>
                                 </button>
+                                <button id="show-shortcuts-btn" class="icon-btn" data-i18n-title="config.showShortcuts">
+                                    <span class="material-symbols-outlined" aria-hidden="true">keyboard_command_key</span>
+                                </button>
                                 <button id="open-config-btn" class="icon-btn" data-i18n-title="config.openFile">
                                     <span class="material-symbols-outlined" aria-hidden="true">settings</span>
                                 </button>
@@ -281,6 +284,72 @@
                 <button id="synth-copy-replace" class="secondary" data-i18n="synth.copyModeReplace"></button>
                 <button id="synth-copy-confirm" class="primary" data-i18n="synth.copyActionCopy"></button>
                 <button id="synth-copy-cancel" class="secondary" data-i18n="synth.copyCancel"></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Keyboard shortcuts and mouse gestures (footer keyboard button).
+         Static list: keep it in sync with the registerShortcut() calls
+         (js/main.js, js/image/editor.js) and the mouse handlers. The
+         [data-mod] keys are filled per platform by core/shortcuts-dialog.js. -->
+    <div id="shortcuts-modal" class="modal-overlay hidden">
+        <div class="modal-box modal-box-wide" role="dialog" aria-modal="true" aria-labelledby="shortcuts-title">
+            <h3 id="shortcuts-title" data-i18n="shortcuts.title"></h3>
+            <div class="shortcut-groups">
+            <section class="shortcut-group">
+                <h4 data-i18n="shortcuts.groupPlayback"></h4>
+                <dl class="shortcut-list">
+                    <dt><kbd data-i18n="shortcuts.keySpace"></kbd></dt><dd data-i18n="shortcuts.playAll"></dd>
+                    <dt><kbd data-mod="shift"></kbd><span class="shortcut-plus">+</span><kbd data-i18n="shortcuts.keySpace"></kbd></dt><dd data-i18n="shortcuts.panic"></dd>
+                    <dt><kbd>1–8</kbd></dt><dd data-i18n="shortcuts.synthReveal"></dd>
+                    <dt><kbd data-mod="primary"></kbd><span class="shortcut-plus">+</span><kbd>1–8</kbd></dt><dd data-i18n="shortcuts.synthToggle"></dd>
+                    <dt><kbd data-mod="alt"></kbd><span class="shortcut-plus">+</span><kbd>1–8</kbd></dt><dd data-i18n="shortcuts.synthMute"></dd>
+                </dl>
+            </section>
+            <section class="shortcut-group">
+                <h4 data-i18n="shortcuts.groupSession"></h4>
+                <dl class="shortcut-list">
+                    <dt><kbd data-mod="primary"></kbd><span class="shortcut-plus">+</span><kbd>S</kbd></dt><dd data-i18n="shortcuts.sessionSave"></dd>
+                    <dt><kbd data-mod="primary"></kbd><span class="shortcut-plus">+</span><kbd>O</kbd></dt><dd data-i18n="shortcuts.sessionOpen"></dd>
+                    <dt><kbd data-mod="primary"></kbd><span class="shortcut-plus">+</span><kbd>Z</kbd></dt><dd data-i18n="shortcuts.undo"></dd>
+                    <dt><kbd data-mod="primary"></kbd><span class="shortcut-plus">+</span><kbd data-mod="shift"></kbd><span class="shortcut-plus">+</span><kbd>Z</kbd></dt><dd data-i18n="shortcuts.redo"></dd>
+                    <dt><kbd data-mod="primary"></kbd><span class="shortcut-plus">+</span><kbd>M</kbd></dt><dd data-i18n="shortcuts.mirror"></dd>
+                    <dt><kbd data-i18n="shortcuts.keyEsc"></kbd></dt><dd data-i18n="shortcuts.escape"></dd>
+                </dl>
+            </section>
+            <section class="shortcut-group">
+                <h4 data-i18n="shortcuts.groupImage"></h4>
+                <dl class="shortcut-list">
+                    <dt><kbd data-i18n="shortcuts.keyEnter"></kbd></dt><dd data-i18n="shortcuts.commit"></dd>
+                    <dt><kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd></dt><dd data-i18n="shortcuts.perspective"></dd>
+                    <dt><kbd data-mod="shift"></kbd><span class="shortcut-plus">+</span><kbd>↑</kbd><kbd>↓</kbd></dt><dd data-i18n="shortcuts.rotation"></dd>
+                </dl>
+            </section>
+            <section class="shortcut-group">
+                <h4 data-i18n="shortcuts.groupZones"></h4>
+                <dl class="shortcut-list">
+                    <dt><span class="shortcut-gesture" data-i18n="shortcuts.gestureDrag"></span></dt><dd data-i18n="shortcuts.zoneAdd"></dd>
+                    <dt><kbd data-mod="alt"></kbd><span class="shortcut-plus">+</span><span class="shortcut-gesture" data-i18n="shortcuts.gestureDrag"></span></dt><dd data-i18n="shortcuts.zoneRemove"></dd>
+                    <dt><kbd data-mod="shift"></kbd><span class="shortcut-plus">+</span><span class="shortcut-gesture" data-i18n="shortcuts.gestureDrag"></span></dt><dd data-i18n="shortcuts.zoneSilence"></dd>
+                    <dt><kbd data-mod="alt"></kbd><span class="shortcut-plus">+</span><kbd data-mod="shift"></kbd><span class="shortcut-plus">+</span><span class="shortcut-gesture" data-i18n="shortcuts.gestureDrag"></span></dt><dd data-i18n="shortcuts.zoneUnsilence"></dd>
+                </dl>
+            </section>
+            <section class="shortcut-group">
+                <h4 data-i18n="shortcuts.groupMouse"></h4>
+                <dl class="shortcut-list">
+                    <dt><span class="shortcut-gesture" data-i18n="shortcuts.gestureDoubleClick"></span></dt><dd data-i18n="shortcuts.dblSlider"></dd>
+                    <dt><span class="shortcut-gesture" data-i18n="shortcuts.gestureDoubleClick"></span></dt><dd data-i18n="shortcuts.dblColumns"></dd>
+                    <dt><span class="shortcut-gesture" data-i18n="shortcuts.gestureDoubleClick"></span></dt><dd data-i18n="shortcuts.dblRename"></dd>
+                    <dt><span class="shortcut-gesture" data-i18n="shortcuts.gestureWheel"></span></dt><dd data-i18n="shortcuts.wheelValue"></dd>
+                    <dt><kbd data-mod="shift"></kbd><span class="shortcut-plus">+</span><span class="shortcut-gesture" data-i18n="shortcuts.gestureWheel"></span></dt><dd data-i18n="shortcuts.wheelVelocity"></dd>
+                    <dt><span class="shortcut-gesture" data-i18n="shortcuts.gestureWheel"></span></dt><dd data-i18n="shortcuts.wheelVolume"></dd>
+                    <dt><span class="shortcut-gesture" data-i18n="shortcuts.gestureDoubleClick"></span></dt><dd data-i18n="shortcuts.dblMirror"></dd>
+                </dl>
+            </section>
+            </div>
+            <div class="modal-actions">
+                <div class="flex-fill"></div>
+                <button id="shortcuts-close" class="primary" data-i18n="shortcuts.close"></button>
             </div>
         </div>
     </div>
