@@ -859,10 +859,11 @@ export function createSynthElement(id, cfg = null) {
     hooks.initSynthMenu(el);
 
     // Collapsed card: clicking anywhere but its own controls expands it
-    // (the disc stops propagation itself; the remove button has its own
-    // confirm flow and must not toggle the accordion).
+    // (the disc stops propagation itself; the color picker stays usable
+    // on a collapsed card; the remove button has its own confirm flow and
+    // must not toggle the accordion).
     el.addEventListener('click', (e) => {
-        if (e.target.closest('.synth-color-disc')) return;
+        if (e.target.closest('.synth-color-disc, .synth-color-picker')) return;
         if (e.target.closest('.synth-remove')) return;
         if (el.classList.contains('active')) return;
         setActiveSynth(id);

@@ -28,17 +28,15 @@
         <button class="synth-menu-item synth-menu-copy-zones" type="button" data-i18n="synth.menuCopyZones" data-i18n-title="synth.menuCopyZones"></button>
     </div>
     <div class="synth-header">
-        <div class="synth-header-row">
-            <div class="synth-color-disc" role="button" tabindex="0" data-i18n-title="synth.pickColor" data-i18n-aria-label="synth.pickColor"></div>
-            <div class="synth-title-label" data-i18n-title="synth.renameHint"></div>
-            <div class="flex-filler grow"></div>
-            <button class="synth-toggle-menu icon-btn" data-i18n-title="synth.toggleMenu" data-i18n-aria-label="synth.toggleMenu">
-                <span class="material-symbols-outlined" aria-hidden="true">more_vert</span>
-            </button>
-            <button class="synth-remove icon-btn" data-i18n-title="synth.remove" data-i18n-aria-label="synth.remove">
-                <span class="material-symbols-outlined" aria-hidden="true">close</span>
-            </button>
-        </div>
+        <div class="synth-color-disc" role="button" tabindex="0" data-i18n-title="synth.pickColor" data-i18n-aria-label="synth.pickColor"></div>
+        <div class="synth-title-label" data-i18n-title="synth.renameHint"></div>
+        <div class="flex-filler grow"></div>
+        <button class="synth-toggle-menu icon-btn" data-i18n-title="synth.toggleMenu" data-i18n-aria-label="synth.toggleMenu">
+            <span class="material-symbols-outlined" aria-hidden="true">more_vert</span>
+        </button>
+        <button class="synth-remove icon-btn" data-i18n-title="synth.remove" data-i18n-aria-label="synth.remove">
+            <span class="material-symbols-outlined" aria-hidden="true">close</span>
+        </button>
     </div>
     <div class="synth-body">
         <!-- 1. Sortie MIDI : instrument (port + canal) et programme -->
@@ -51,7 +49,7 @@
             <div class="synth-section-header synth-section-program-change" data-i18n-title="synth.programEditHint">
                 <span class="synth-section-title" data-i18n="synth.programLabel"></span>
                 <select class="program-bank-manual" data-i18n-title="synth.programBankManual" data-i18n-aria-label="synth.programBankManual"></select>
-                <input type="number" class="program-number-manual" placeholder="-" min="1" max="128" step="1" data-i18n-title="synth.programManual" data-i18n-aria-label="synth.programManual" />                
+                <input type="number" class="program-number-manual" placeholder="-" min="1" max="128" step="1" data-i18n-title="synth.programManual" data-i18n-aria-label="synth.programManual" />
             </div>
         </div>
 
@@ -59,7 +57,7 @@
         <div class="synth-section synth-zones pb-2 bg-dark">
             <div class="synth-section-header">
                 <span class="synth-section-title" data-i18n="synth.zonesLabel"></span>
-                <em class="synth-section-value zones-val" data-i18n-title="synth.zonesBeatsInfo"></em>
+                <span class="synth-section-value zones-val" data-i18n-title="synth.zonesBeatsInfo"></span>
                 <div class="flex-filler grow"></div>
                 <button class="synth-eye-btn icon-btn active" data-i18n-title="synth.toggleHighlight" data-i18n-aria-label="synth.toggleHighlight">
                     <span class="material-symbols-outlined" aria-hidden="true">visibility</span>
@@ -116,11 +114,11 @@
                 <button class="synth-mute icon-btn" type="button" data-i18n-title="synth.mute" aria-pressed="false">
                     <span class="material-symbols-outlined" aria-hidden="true">volume_up</span>
                 </button>
-                <input type="number" class="synth-volume" min="0" max="127" step="1" value="127" data-i18n-title="synth.volume" data-i18n-aria-label="synth.volume" /> 
+                <input type="number" class="synth-volume" min="0" max="127" step="1" value="127" data-i18n-title="synth.volume" data-i18n-aria-label="synth.volume" />
             </div>
 
             <div class="synth-section-body">
-                <div class="flex-filler w-20"></div>                
+                <div class="flex-filler w-20"></div>
                 <select class="synth-reading-direction" data-i18n-title="synth.readingDirectionTitle" data-i18n-aria-label="synth.readingDirectionTitle"></select>
                 <button class="synth-sort-btn icon-btn" data-i18n-title="synth.toggleSort" data-i18n-aria-label="synth.toggleSort">
                     <span class="material-symbols-outlined" aria-hidden="true">sort</span>
@@ -136,7 +134,7 @@
                 <button class="synth-quantize icon-btn" type="button" data-i18n-title="synth.quantize" aria-pressed="false">
                     <span class="material-symbols-outlined" aria-hidden="true">move_selection_right</span>
                 </button>
-                <input type="number" class="synth-quantize-tempo" min="1" max="8" step="1" value="4" data-i18n-title="synth.quantizeTempo" data-i18n-aria-label="synth.quantizeTempo" />                
+                <input type="number" class="synth-quantize-tempo" min="1" max="8" step="1" value="4" data-i18n-title="synth.quantizeTempo" data-i18n-aria-label="synth.quantizeTempo" />
             </div>
         </div>
         <!-- 4. Synth Mode : Monophonic / Polyphonic -->
@@ -164,7 +162,7 @@
         <div class="synth-section synth-hue-section synth-mono-only">
             <div class="synth-section-header">
                 <span class="synth-section-title" data-i18n="synth.hueShift" data-i18n-title="synth.hueShift"></span>
-                <em class="synth-section-value hue-shift-val">0°</em>
+                <span class="synth-section-value hue-shift-val">0°</span>
             </div>
             <div class="synth-section-body">
                 <input type="range" class="synth-hue-shift gradient-hue" min="0" max="360" value="0" step="1" />
@@ -210,7 +208,7 @@
             </div>
             <div class="synth-section-body synth-note-length-section">
                 <div class="flex-filler w-20"></div>
-                <button class="synth-note-length-ternary icon-btn" data-i18n-title="synth.noteLengthTernary" data-i18n-aria-label="synth.noteLengthTernary">3</button>                
+                <button class="synth-note-length-ternary icon-btn" data-i18n-title="synth.noteLengthTernary" data-i18n-aria-label="synth.noteLengthTernary">3</button>
                 <button class="synth-note-sustain icon-btn" data-i18n-title="synth.noteSustain" data-i18n-aria-label="synth.noteSustain">
                     <span class="material-symbols-outlined" aria-hidden="true">touch_long</span>
                 </button>
@@ -218,7 +216,7 @@
                     <span class="material-symbols-outlined" aria-hidden="true">link</span>
                 </button>
                 <div class="flex-filler w-4"></div>
-                <div class="wrapper">
+                <div class="synth-note-lengths">
                     <button class="note-length-btn noto-music icon-btn" data-length="sixteenth" data-i18n-title="synth.noteLengthSixteenth" data-i18n-aria-label="synth.noteLengthSixteenth">𝅘𝅥𝅯</button>
                     <button class="note-length-btn noto-music icon-btn" data-length="eighth" data-i18n-title="synth.noteLengthEighth" data-i18n-aria-label="synth.noteLengthEighth">𝅘𝅥𝅮</button>
                     <button class="note-length-btn noto-music icon-btn active" data-length="quarter" data-i18n-title="synth.noteLengthQuarter" data-i18n-aria-label="synth.noteLengthQuarter">𝅘𝅥</button>
@@ -226,7 +224,6 @@
                     <button class="note-length-btn noto-music icon-btn" data-length="whole" data-i18n-title="synth.noteLengthWhole" data-i18n-aria-label="synth.noteLengthWhole">𝅝</button>
                 </div>
                 <div class="flex-filler grow"></div>
-                
             </div>
         </div>
         <div class="synth-section luminosity-gradient"></div>
@@ -234,7 +231,7 @@
         <div class="synth-section">
             <div class="synth-section-header">
                 <span class="synth-section-title" data-i18n="synth.velocityRange" data-i18n-title="synth.velocityRange"></span>
-                <em class="synth-section-value"><span class="velocity-min-val">0</span> – <span class="velocity-max-val">127</span></em>
+                <span class="synth-section-value"><span class="velocity-min-val">0</span> – <span class="velocity-max-val">127</span></span>
                 <div class="flex-fill"></div>
                 <button class="synth-relative-velocity-range icon-btn active" data-i18n-title="synth.velocityRelative" data-i18n-aria-label="synth.velocityRelative">
                     <span class="material-symbols-outlined" aria-hidden="true">arrow_or_edge</span>
@@ -258,8 +255,8 @@
             </div>
             <div class="synth-section-body synth-info-body">
                 <p class="synth-note-range-info"></p>
-                <p class="synth-pixel-info"></p>                
+                <p class="synth-pixel-info"></p>
             </div>
-        </div>        
+        </div>
     </div>
 </div>
