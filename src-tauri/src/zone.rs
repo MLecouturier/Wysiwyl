@@ -102,7 +102,35 @@ impl Zone {
     /// sum of lengths is exact — unlike the historical rectangle
     /// model where overlapping zones double-counted).
     pub fn pixel_count(&self) -> u64 {
-        self.runs.iter().map(|r| (r.x1 - r.x0 + 1) as u64).sum()
+        self.runs
+            .iter()
+            .map(|r| r.x1.saturating_sub(r.x0) as u64 + 1)
+            .sum()
+    }
+
+    /// Brings a zone received from outside (the webview, a session file)
+    /// into the invariants the reading code relies on: inverted runs are
+    /// swapped back, runs are sorted by `(y, x0)` (required by
+    /// [`Zone::contains`]), and overlapping or adjacent runs of a row are
+    /// merged.
+    fn normalized(mut self) -> Zone {
+        for run in self.runs.iter_mut() {
+            if run.x1 < run.x0 {
+                std::mem::swap(&mut run.x0, &mut run.x1);
+            }
+        }
+        self.runs.sort_unstable_by_key(|r| (r.y, r.x0));
+        let mut merged: Vec<RowRun> = Vec::with_capacity(self.runs.len());
+        for run in self.runs {
+            match merged.last_mut() {
+                Some(last) if last.y == run.y && run.x0 <= last.x1.saturating_add(1) => {
+                    last.x1 = last.x1.max(run.x1);
+                }
+                _ => merged.push(run),
+            }
+        }
+        self.runs = merged;
+        self
     }
 
     /// Top-left cell of the bounding box as (row, column) — the
@@ -120,8 +148,37 @@ impl Zone {
         let y1 = self.runs.last()?.y;
         let x0 = self.runs.iter().map(|r| r.x0).min()?;
         let x1 = self.runs.iter().map(|r| r.x1).max()?;
-        Some((x0, y0, x1 - x0 + 1, y1 - y0 + 1))
+        Some((x0, y0, x1.saturating_sub(x0) + 1, y1.saturating_sub(y0) + 1))
     }
+}
+
+/// Coordinate bound of a zone cell: grids are at most a few thousand
+/// cells wide, anything beyond is malformed input.
+pub const MAX_ZONE_COORD: u32 = 1 << 16;
+
+/// Upper bound on the runs of one zone list (a full 4096×4096 grid with
+/// alternating cells is ~8M runs; legitimate selections stay far below).
+pub const MAX_ZONE_RUNS: usize = 1 << 22;
+
+/// Validates and normalizes a zone list received from the webview or a
+/// session file (see [`Zone::normalized`]). Empty zones are dropped.
+/// Rejects coordinates beyond [`MAX_ZONE_COORD`] and lists of more than
+/// [`MAX_ZONE_RUNS`] runs with `invalid_zones`, so a malformed payload can
+/// neither exhaust memory nor overflow the pixel index arithmetic.
+pub fn normalize_zones(zones: Vec<Zone>) -> Result<Vec<Zone>, crate::error::AppError> {
+    let total: usize = zones.iter().map(|z| z.runs.len()).sum();
+    let out_of_bounds = zones
+        .iter()
+        .flat_map(|z| &z.runs)
+        .any(|r| r.y >= MAX_ZONE_COORD || r.x0 >= MAX_ZONE_COORD || r.x1 >= MAX_ZONE_COORD);
+    if total > MAX_ZONE_RUNS || out_of_bounds {
+        return Err(crate::error::err("invalid_zones"));
+    }
+    Ok(zones
+        .into_iter()
+        .map(Zone::normalized)
+        .filter(|z| !z.runs.is_empty())
+        .collect())
 }
 
 #[cfg(test)]
@@ -217,5 +274,56 @@ mod tests {
         // Top-left as (row, column): the highest row, leftmost cell ON
         // that row (there is no cell at (0, 0) in this shape)
         assert_eq!(z.top_left(), Some((0, 5)));
+    }
+
+    // --- Normalization of external input ---
+
+    #[test]
+    fn normalize_zones_sorts_swaps_and_merges_runs() {
+        let messy = Zone {
+            order: 3,
+            runs: vec![
+                RowRun { y: 2, x0: 1, x1: 1 },
+                RowRun { y: 0, x0: 4, x1: 2 }, // inverted
+                RowRun { y: 0, x0: 5, x1: 6 }, // adjacent to the previous
+                RowRun { y: 0, x0: 0, x1: 0 },
+            ],
+        };
+        let zones = normalize_zones(vec![messy, Zone::from_cells(1, &[])]).unwrap();
+        // The empty zone is dropped
+        assert_eq!(zones.len(), 1);
+        assert_eq!(zones[0].order, 3);
+        assert_eq!(runs_of(&zones[0]), vec![(0, 0, 0), (0, 2, 6), (2, 1, 1)]);
+        // Containment works on the normalized runs
+        assert!(zones[0].contains(1, 2));
+        assert!(zones[0].contains(6, 0));
+        assert!(!zones[0].contains(1, 0));
+    }
+
+    #[test]
+    fn normalize_zones_rejects_out_of_range_coordinates() {
+        let huge = Zone {
+            order: 0,
+            runs: vec![RowRun {
+                y: 0,
+                x0: 0,
+                x1: u32::MAX,
+            }],
+        };
+        assert_eq!(
+            normalize_zones(vec![huge]).unwrap_err().code,
+            "invalid_zones"
+        );
+    }
+
+    #[test]
+    fn malformed_runs_never_panic() {
+        let inverted = Zone {
+            order: 0,
+            runs: vec![RowRun { y: 0, x0: 5, x1: 2 }],
+        };
+        // Saturating arithmetic instead of an underflow panic
+        assert_eq!(inverted.pixel_count(), 1);
+        assert!(inverted.bounding_box().is_some());
     }
 }

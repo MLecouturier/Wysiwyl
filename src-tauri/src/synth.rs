@@ -1,11 +1,13 @@
 use crate::config::ConfigState;
 use crate::error::{err, AppError};
+use crate::locks::MutexExt;
 use crate::metronome::remapped_cursor;
 use crate::midi::VolumeEvent;
 use crate::state::{
-    ImageState, MidiState, NoteLength, ProgramState, ReadingDirection, Scale, Synth, SynthMode,
-    SynthState, SynthView, Zone, TEMPO_RATIO_MAX, TEMPO_RATIO_MIN,
+    normalize_note_lengths, normalize_tempo_ratio, ImageState, MidiState, NoteLength, ProgramState,
+    ReadingDirection, Scale, Synth, SynthMode, SynthState, SynthView, Zone,
 };
+use crate::zone::normalize_zones;
 use std::collections::{HashMap, HashSet};
 use tauri::{AppHandle, Emitter, State};
 
@@ -22,7 +24,7 @@ fn synth_not_found(id: u32) -> AppError {
 #[tauri::command]
 pub fn set_synth_name(id: u32, name: String, state: State<SynthState>) -> Result<(), AppError> {
     let trimmed = name.trim().to_string();
-    let mut synths = state.synths.lock().unwrap();
+    let mut synths = state.synths.lock_safe();
     match synths.get_mut(&id) {
         Some(synth) => {
             synth.name = if trimmed.is_empty() {
@@ -44,26 +46,26 @@ pub fn add_synth(
     config_state: State<ConfigState>,
     state: State<SynthState>,
 ) -> Result<SynthView, AppError> {
-    let template = config_state.config.lock().unwrap().default_synth.clone();
+    let template = config_state.config.lock_safe().default_synth.clone();
 
-    let mut next_id = state.next_id.lock().unwrap();
+    let mut next_id = state.next_id.lock_safe();
     let id = *next_id;
-    *next_id += 1;
+    *next_id = next_id.wrapping_add(1).max(1);
     drop(next_id);
 
     // The display number comes from its own counter (see
     // `Synth::display_number`): it survives renumbering and is never
     // reused after a removal
     let display_number = {
-        let mut next = state.next_display_number.lock().unwrap();
+        let mut next = state.next_display_number.lock_safe();
         let n = *next;
-        *next += 1;
+        *next = next.wrapping_add(1).max(1);
         n
     };
 
     let mut synth = template.to_synth(id);
     synth.display_number = display_number;
-    state.synths.lock().unwrap().insert(id, synth.clone());
+    state.synths.lock_safe().insert(id, synth.clone());
 
     Ok(SynthView::from(&synth))
 }
@@ -102,16 +104,29 @@ pub fn copy_synth_params(
     from_id: u32,
     to_id: u32,
     state: State<SynthState>,
+    midi_state: State<MidiState>,
 ) -> Result<SynthView, AppError> {
-    let mut synths = state.synths.lock().unwrap();
+    let mut synths = state.synths.lock_safe();
+    // The mode, articulation or enabled voices may change under the
+    // target's sounding notes: release them first (the next step
+    // re-articulates with the new parameters)
+    synths
+        .get_mut(&to_id)
+        .ok_or_else(|| synth_not_found(to_id))?
+        .release_notes(&midi_state);
     copy_config_between(&mut synths, from_id, to_id)?;
     let target = synths.get(&to_id).ok_or_else(|| synth_not_found(to_id))?;
     Ok(SynthView::from(target))
 }
 
+/// Removes a synthesizer, first releasing every note it is sounding (and
+/// cancelling its deferred Note Offs), so a removal never leaves a stuck
+/// note — whatever the caller did before.
 #[tauri::command]
-pub fn remove_synth(id: u32, state: State<SynthState>) {
-    state.synths.lock().unwrap().remove(&id);
+pub fn remove_synth(id: u32, state: State<SynthState>, midi_state: State<MidiState>) {
+    if let Some(mut synth) = state.synths.lock_safe().remove(&id) {
+        synth.stop_playback(&midi_state);
+    }
 }
 
 /// Reassigns the synthesizers' ids 1..N following the given display order
@@ -149,14 +164,14 @@ pub fn renumber_synths(
 /// after every change in the stack's composition or order.
 #[tauri::command]
 pub fn set_synth_order(order: Vec<u32>, state: State<SynthState>) -> Result<(), AppError> {
-    let mut synths = state.synths.lock().unwrap();
-    let mut next_id = state.next_id.lock().unwrap();
+    let mut synths = state.synths.lock_safe();
+    let mut next_id = state.next_id.lock_safe();
     renumber_synths(&mut synths, &mut next_id, &order)
 }
 
 #[tauri::command]
 pub fn reset_synth_cursor(id: u32, state: State<SynthState>) -> Result<(), AppError> {
-    let mut synths = state.synths.lock().unwrap();
+    let mut synths = state.synths.lock_safe();
     match synths.get_mut(&id) {
         Some(synth) => {
             synth.playback.cursor = 0;
@@ -175,7 +190,7 @@ pub fn start_synth(
     state: State<SynthState>,
     midi_state: State<MidiState>,
 ) -> Result<(), AppError> {
-    let mut synths = state.synths.lock().unwrap();
+    let mut synths = state.synths.lock_safe();
     match synths.get_mut(&id) {
         Some(synth) => {
             synth.playback.playing = true;
@@ -205,68 +220,33 @@ pub fn stop_synth(
     state: State<SynthState>,
     midi_state: State<MidiState>,
 ) -> Result<(), AppError> {
-    let mut synths = state.synths.lock().unwrap();
-    match synths.get_mut(&id) {
-        Some(synth) => {
-            synth.playback.playing = false;
-            synth.playback.end_pending = false;
-            synth.playback.tempo_accumulator = 0.0;
-            synth.playback.start_pending = false;
-            synth.playback.wakes_since_step = 0;
-            // Cancel any pizzicato gate scheduled for the notes released below
-            synth.playback.note_generation = synth.playback.note_generation.wrapping_add(1);
-
-            // Immediately turn off the current mono note, if it is still sounding
-            if synth.playback.note_is_on {
-                midi_state.note_off(
-                    synth.config.midi_port,
-                    synth.config.channel,
-                    synth.playback.note,
-                );
-                synth.playback.note_is_on = false;
-            }
-
-            // Turn off any currently sounding polyphonic voices
-            for voice in synth.playback.poly_voices.iter_mut() {
-                if voice.note_is_on {
-                    midi_state.note_off(synth.config.midi_port, synth.config.channel, voice.note);
-                    voice.note_is_on = false;
-                }
-            }
-            Ok(())
-        }
-        None => Err(synth_not_found(id)),
-    }
+    let mut synths = state.synths.lock_safe();
+    let synth = synths.get_mut(&id).ok_or_else(|| synth_not_found(id))?;
+    synth.stop_playback(&midi_state);
+    Ok(())
 }
 
 /// Kill switch: stops every synthesizer and immediately turns off all
-/// sounding notes (mono + polyphonic voices). The note generation is
-/// bumped so pending delayed Note Offs cancel themselves.
+/// sounding notes (mono + polyphonic voices), then sends All Sound Off
+/// (CC 120) and All Notes Off (CC 123) on every channel of every output
+/// port in use — so even a note the app lost track of (a device
+/// reconnected, an earlier failed send) is silenced. The note generation
+/// is bumped so pending delayed Note Offs cancel themselves.
 #[tauri::command]
 pub fn panic_all(state: State<SynthState>, midi_state: State<MidiState>) {
-    let mut synths = state.synths.lock().unwrap();
-    for synth in synths.values_mut() {
-        synth.playback.playing = false;
-        synth.playback.end_pending = false;
-        synth.playback.tempo_accumulator = 0.0;
-        synth.playback.start_pending = false;
-        synth.playback.wakes_since_step = 0;
-        synth.playback.note_generation += 1;
-
-        if synth.playback.note_is_on {
-            midi_state.note_off(
-                synth.config.midi_port,
-                synth.config.channel,
-                synth.playback.note,
-            );
-            synth.playback.note_is_on = false;
-        }
-        for voice in synth.playback.poly_voices.iter_mut() {
-            if voice.note_is_on {
-                midi_state.note_off(synth.config.midi_port, synth.config.channel, voice.note);
-                voice.note_is_on = false;
+    let mut ports: Vec<usize> = Vec::new();
+    {
+        let mut synths = state.synths.lock_safe();
+        for synth in synths.values_mut() {
+            synth.stop_playback(&midi_state);
+            if !ports.contains(&synth.config.midi_port) {
+                ports.push(synth.config.midi_port);
             }
         }
+    }
+    // Outside the synth lock: 32 messages per port
+    for port in ports {
+        midi_state.all_notes_off(port);
     }
 }
 
@@ -274,24 +254,30 @@ pub fn panic_all(state: State<SynthState>, midi_state: State<MidiState>) {
 pub fn is_synth_playing(id: u32, state: State<SynthState>) -> bool {
     state
         .synths
-        .lock()
-        .unwrap()
+        .lock_safe()
         .get(&id)
         .map(|s| s.playback.playing)
         .unwrap_or(false)
 }
 
+/// Sets the synth's MIDI channel (0-15). The notes sounding on the old
+/// channel are released first: once the channel changed, nothing would
+/// ever turn them off.
 #[tauri::command]
-pub fn set_synth_channel(id: u32, channel: u8, state: State<SynthState>) -> Result<(), AppError> {
+pub fn set_synth_channel(
+    id: u32,
+    channel: u8,
+    state: State<SynthState>,
+    midi_state: State<MidiState>,
+) -> Result<(), AppError> {
     let clamped = channel.min(15);
-    let mut synths = state.synths.lock().unwrap();
-    match synths.get_mut(&id) {
-        Some(synth) => {
-            synth.config.channel = clamped;
-            Ok(())
-        }
-        None => Err(synth_not_found(id)),
+    let mut synths = state.synths.lock_safe();
+    let synth = synths.get_mut(&id).ok_or_else(|| synth_not_found(id))?;
+    if synth.config.channel != clamped {
+        synth.release_notes(&midi_state);
+        synth.config.channel = clamped;
     }
+    Ok(())
 }
 
 /// Sets the MIDI output port a synthesizer sends its notes to (see
@@ -303,36 +289,15 @@ pub fn set_synth_midi_port(
     state: State<SynthState>,
     midi_state: State<MidiState>,
 ) -> Result<(), AppError> {
-    let mut synths = state.synths.lock().unwrap();
-    match synths.get_mut(&id) {
-        Some(synth) => {
-            if synth.config.midi_port != port {
-                // Turn off any sounding note on the old port first, to
-                // avoid a stuck note on the device it is connected to.
-                if synth.playback.note_is_on {
-                    midi_state.note_off(
-                        synth.config.midi_port,
-                        synth.config.channel,
-                        synth.playback.note,
-                    );
-                    synth.playback.note_is_on = false;
-                }
-                for voice in synth.playback.poly_voices.iter_mut() {
-                    if voice.note_is_on {
-                        midi_state.note_off(
-                            synth.config.midi_port,
-                            synth.config.channel,
-                            voice.note,
-                        );
-                        voice.note_is_on = false;
-                    }
-                }
-                synth.config.midi_port = port;
-            }
-            Ok(())
-        }
-        None => Err(synth_not_found(id)),
+    let mut synths = state.synths.lock_safe();
+    let synth = synths.get_mut(&id).ok_or_else(|| synth_not_found(id))?;
+    if synth.config.midi_port != port {
+        // Turn off any sounding note on the old port first, to avoid a
+        // stuck note on the device it is connected to.
+        synth.release_notes(&midi_state);
+        synth.config.midi_port = port;
     }
+    Ok(())
 }
 
 /// Sends the bank (letters A–P in the UI) and program selection of the
@@ -350,7 +315,7 @@ pub fn set_synth_program(
     state: State<SynthState>,
 ) -> Result<ProgramState, AppError> {
     let (port, channel) = {
-        let synths = state.synths.lock().unwrap();
+        let synths = state.synths.lock_safe();
         let synth = synths.get(&id).ok_or_else(|| synth_not_found(id))?;
         (synth.config.midi_port, synth.config.channel)
     };
@@ -374,7 +339,7 @@ pub fn set_synth_volume(
 ) -> Result<(), AppError> {
     let volume = volume.min(127);
     let (port, channel) = {
-        let mut synths = state.synths.lock().unwrap();
+        let mut synths = state.synths.lock_safe();
         let (port, channel) = match synths.get(&id) {
             Some(synth) => (synth.config.midi_port, synth.config.channel),
             None => return Err(synth_not_found(id)),
@@ -409,7 +374,7 @@ pub fn set_synth_velocity_relative(
     enabled: bool,
     state: State<SynthState>,
 ) -> Result<(), AppError> {
-    let mut synths = state.synths.lock().unwrap();
+    let mut synths = state.synths.lock_safe();
     match synths.get_mut(&id) {
         Some(synth) => {
             synth.config.velocity_relative = enabled;
@@ -426,7 +391,7 @@ pub fn set_synth_velocity_range(
     velocity_max: u8,
     state: State<SynthState>,
 ) -> Result<(), AppError> {
-    let mut synths = state.synths.lock().unwrap();
+    let mut synths = state.synths.lock_safe();
     match synths.get_mut(&id) {
         Some(synth) => {
             // Keep a usable range: min below 127, max between min and 127
@@ -440,10 +405,10 @@ pub fn set_synth_velocity_range(
 
 #[tauri::command]
 pub fn set_synth_tempo(id: u32, tempo: f64, state: State<SynthState>) -> Result<(), AppError> {
-    let mut synths = state.synths.lock().unwrap();
+    let mut synths = state.synths.lock_safe();
     match synths.get_mut(&id) {
         Some(synth) => {
-            synth.config.tempo_ratio = tempo.clamp(TEMPO_RATIO_MIN, TEMPO_RATIO_MAX);
+            synth.config.tempo_ratio = normalize_tempo_ratio(tempo);
             Ok(())
         }
         None => Err(synth_not_found(id)),
@@ -460,7 +425,7 @@ pub fn set_synth_quantize(
     enabled: bool,
     state: State<SynthState>,
 ) -> Result<(), AppError> {
-    let mut synths = state.synths.lock().unwrap();
+    let mut synths = state.synths.lock_safe();
     match synths.get_mut(&id) {
         Some(synth) => {
             synth.config.quantize = enabled;
@@ -477,7 +442,7 @@ pub fn set_synth_quantize_beats(
     beats: u8,
     state: State<SynthState>,
 ) -> Result<(), AppError> {
-    let mut synths = state.synths.lock().unwrap();
+    let mut synths = state.synths.lock_safe();
     match synths.get_mut(&id) {
         Some(synth) => {
             synth.config.quantize_beats = beats.clamp(1, 8);
@@ -493,7 +458,7 @@ pub fn set_synth_loop(
     loop_enabled: bool,
     state: State<SynthState>,
 ) -> Result<(), AppError> {
-    let mut synths = state.synths.lock().unwrap();
+    let mut synths = state.synths.lock_safe();
     match synths.get_mut(&id) {
         Some(synth) => {
             synth.config.loop_enabled = loop_enabled;
@@ -517,7 +482,7 @@ pub fn set_synth_back_n_forth(
     enabled: bool,
     state: State<SynthState>,
 ) -> Result<(), AppError> {
-    let mut synths = state.synths.lock().unwrap();
+    let mut synths = state.synths.lock_safe();
     match synths.get_mut(&id) {
         Some(synth) => {
             synth.config.back_and_forth = enabled;
@@ -577,7 +542,7 @@ pub fn set_synth_mode(
     state: State<SynthState>,
     midi_state: State<MidiState>,
 ) -> Result<(), AppError> {
-    let mut synths = state.synths.lock().unwrap();
+    let mut synths = state.synths.lock_safe();
     match synths.get_mut(&id) {
         Some(synth) => {
             if synth.config.mode == mode {
@@ -585,20 +550,7 @@ pub fn set_synth_mode(
             }
             // Turn off all currently sounding notes before switching modes,
             // to avoid stuck notes when toggling.
-            if synth.playback.note_is_on {
-                midi_state.note_off(
-                    synth.config.midi_port,
-                    synth.config.channel,
-                    synth.playback.note,
-                );
-                synth.playback.note_is_on = false;
-            }
-            for voice in synth.playback.poly_voices.iter_mut() {
-                if voice.note_is_on {
-                    midi_state.note_off(synth.config.midi_port, synth.config.channel, voice.note);
-                    voice.note_is_on = false;
-                }
-            }
+            synth.release_notes(&midi_state);
             synth.config.mode = mode;
             Ok(())
         }
@@ -612,10 +564,10 @@ pub fn set_synth_note_lengths(
     lengths: Vec<NoteLength>,
     state: State<SynthState>,
 ) -> Result<(), AppError> {
-    let mut synths = state.synths.lock().unwrap();
+    let mut synths = state.synths.lock_safe();
     match synths.get_mut(&id) {
         Some(synth) => {
-            synth.config.note_lengths = lengths;
+            synth.config.note_lengths = normalize_note_lengths(&lengths);
             Ok(())
         }
         None => Err(synth_not_found(id)),
@@ -628,7 +580,7 @@ pub fn set_synth_note_length_reversed(
     reversed: bool,
     state: State<SynthState>,
 ) -> Result<(), AppError> {
-    let mut synths = state.synths.lock().unwrap();
+    let mut synths = state.synths.lock_safe();
     match synths.get_mut(&id) {
         Some(synth) => {
             synth.config.note_length_reversed = reversed;
@@ -647,7 +599,7 @@ pub fn set_synth_note_length_ternary(
     ternary: bool,
     state: State<SynthState>,
 ) -> Result<(), AppError> {
-    let mut synths = state.synths.lock().unwrap();
+    let mut synths = state.synths.lock_safe();
     match synths.get_mut(&id) {
         Some(synth) => {
             synth.config.note_length_ternary = ternary;
@@ -670,34 +622,16 @@ pub fn set_synth_note_sustain(
     state: State<SynthState>,
     midi_state: State<MidiState>,
 ) -> Result<(), AppError> {
-    let mut synths = state.synths.lock().unwrap();
+    let mut synths = state.synths.lock_safe();
     match synths.get_mut(&id) {
         Some(synth) => {
             if synth.config.note_sustain != sustain {
-                // A pending pizzicato gate is now stale: either the notes
-                // are released below (sustain turned off), or the switch to
-                // sustain must not cut the now-held note.
-                synth.playback.note_generation = synth.playback.note_generation.wrapping_add(1);
-            }
-            if synth.config.note_sustain && !sustain {
-                if synth.playback.note_is_on {
-                    midi_state.note_off(
-                        synth.config.midi_port,
-                        synth.config.channel,
-                        synth.playback.note,
-                    );
-                    synth.playback.note_is_on = false;
-                }
-                for voice in synth.playback.poly_voices.iter_mut() {
-                    if voice.note_is_on {
-                        midi_state.note_off(
-                            synth.config.midi_port,
-                            synth.config.channel,
-                            voice.note,
-                        );
-                        voice.note_is_on = false;
-                    }
-                }
+                // Either way the sounding notes are released: turning the
+                // sustain off must not let a held note ring on, and turning
+                // it on must not leave a gated pizzicato note (whose Note
+                // Off is now cancelled) held forever. The generation bump
+                // inside cancels the stale gates.
+                synth.release_notes(&midi_state);
             }
             synth.config.note_sustain = sustain;
             Ok(())
@@ -717,7 +651,7 @@ pub fn set_synth_note_legato(
     legato: bool,
     state: State<SynthState>,
 ) -> Result<(), AppError> {
-    let mut synths = state.synths.lock().unwrap();
+    let mut synths = state.synths.lock_safe();
     match synths.get_mut(&id) {
         Some(synth) => {
             synth.config.note_legato = legato;
@@ -737,7 +671,7 @@ pub fn set_synth_note_ranges(
     voices: [[bool; 3]; 3],
     state: State<SynthState>,
 ) -> Result<(), AppError> {
-    let mut synths = state.synths.lock().unwrap();
+    let mut synths = state.synths.lock_safe();
     match synths.get_mut(&id) {
         Some(synth) => {
             synth.config.mono_note_range = mono;
@@ -758,11 +692,11 @@ pub fn set_synth_scale(
     root: u8,
     state: State<SynthState>,
 ) -> Result<(), AppError> {
-    let mut synths = state.synths.lock().unwrap();
+    let mut synths = state.synths.lock_safe();
     match synths.get_mut(&id) {
         Some(synth) => {
             synth.config.scale = scale;
-            synth.config.scale_root = root.min(11);
+            synth.config.scale_root = root % 12;
             Ok(())
         }
         None => Err(synth_not_found(id)),
@@ -775,7 +709,7 @@ pub fn set_synth_hue_shift(
     hue_shift: u16,
     state: State<SynthState>,
 ) -> Result<(), AppError> {
-    let mut synths = state.synths.lock().unwrap();
+    let mut synths = state.synths.lock_safe();
     match synths.get_mut(&id) {
         Some(synth) => {
             synth.config.hue_shift = hue_shift.min(360);
@@ -796,17 +730,26 @@ pub fn set_synth_channel_enabled(
     if channel_index > 2 {
         return Err(err("invalid_channel_index"));
     }
-    let mut synths = state.synths.lock().unwrap();
+    let mut synths = state.synths.lock_safe();
     match synths.get_mut(&id) {
         Some(synth) => {
             synth.config.channel_enabled[channel_index] = enabled;
-            // If disabling a channel whose voice is still sounding, turn it off immediately.
+            // If disabling a channel whose voice is still sounding, turn it
+            // off immediately — unless another voice also sounds that
+            // pitch (a pitch shared by several voices is played once).
             if !enabled {
+                let note = synth.playback.poly_voices[channel_index].note;
+                let shared = synth
+                    .playback
+                    .poly_voices
+                    .iter()
+                    .enumerate()
+                    .any(|(i, v)| i != channel_index && v.note_is_on && v.note == note);
                 let voice = &mut synth.playback.poly_voices[channel_index];
-                if voice.note_is_on {
+                if voice.note_is_on && !shared {
                     midi_state.note_off(synth.config.midi_port, synth.config.channel, voice.note);
-                    voice.note_is_on = false;
                 }
+                voice.note_is_on = false;
             }
             Ok(())
         }
@@ -821,6 +764,7 @@ pub fn set_synth_zones(
     state: State<SynthState>,
     image_state: State<ImageState>,
 ) -> Result<(), AppError> {
+    let zones = normalize_zones(zones)?;
     // Image then synths, in the mandated order (see locks.rs).
     crate::locks::with_locked_synth(&image_state, &state, id, |synth, image| {
         // Keep the playhead on the same pixel across zone edits (instead of
@@ -865,7 +809,8 @@ pub fn set_synth_mute_zones(
     zones: Vec<Zone>,
     state: State<SynthState>,
 ) -> Result<(), AppError> {
-    let mut synths = state.synths.lock().unwrap();
+    let zones = normalize_zones(zones)?;
+    let mut synths = state.synths.lock_safe();
     match synths.get_mut(&id) {
         Some(synth) => {
             synth.mute_zones = zones;

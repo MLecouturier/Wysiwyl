@@ -1,8 +1,10 @@
 use image::DynamicImage;
-use midir::MidiOutputConnection;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
+
+use crate::locks::MutexExt;
 
 /// Mode used to translate pixels into notes.
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug)]
@@ -113,6 +115,11 @@ impl Default for ChannelVoice {
 pub struct ImageState {
     pub original: Mutex<Option<DynamicImage>>,
     pub processed: Mutex<Option<DynamicImage>>,
+    /// Bumped (under the `original` lock) every time the original image is
+    /// replaced. The image commands run concurrently off the main thread:
+    /// a grid render started on an older original must not install its
+    /// result over the new one (see `apply_image_adjustments`).
+    pub generation: AtomicU64,
 }
 
 impl Default for ImageState {
@@ -120,7 +127,23 @@ impl Default for ImageState {
         Self {
             original: Mutex::new(None),
             processed: Mutex::new(None),
+            generation: AtomicU64::new(0),
         }
+    }
+}
+
+impl ImageState {
+    /// Replaces the original image and clears the processed grid (it no
+    /// longer matches: the frontend re-renders it right after). Bumps the
+    /// generation so an in-flight render of the previous original is
+    /// discarded.
+    pub fn replace_original(&self, img: DynamicImage) {
+        {
+            let mut original = self.original.lock_safe();
+            *original = Some(img);
+            self.generation.fetch_add(1, Ordering::AcqRel);
+        }
+        *self.processed.lock_safe() = None;
     }
 }
 
@@ -135,11 +158,20 @@ pub struct CachedSequence {
     pub sequence: Vec<usize>,
 }
 
+/// Source of [`Synth::uid`]: process-wide, monotonic, never reused.
+static NEXT_SYNTH_UID: AtomicU64 = AtomicU64::new(1);
+
 /// State of an individual synthesizer. Internal state: the UI receives a
 /// [`SynthView`] (configuration flattened) rather than this struct.
 #[derive(Clone)]
 pub struct Synth {
     pub id: u32,
+    /// Internal identity, unique for the process lifetime and never
+    /// renumbered (unlike `id`, which follows the display order). Deferred
+    /// work captured against a synth — the pizzicato gates and the manual
+    /// step cutoffs — targets this uid, so a reorder in the meantime can
+    /// never redirect it to another synth.
+    pub uid: u64,
     /// Number shown in the default title ("Synth #n"). Attributed once
     /// at creation from a dedicated counter, never changed nor reused:
     /// unlike the id (renumbered with the stack's display order), it is
@@ -160,6 +192,7 @@ impl Synth {
     pub fn new(id: u32) -> Self {
         Self {
             id,
+            uid: NEXT_SYNTH_UID.fetch_add(1, Ordering::Relaxed),
             // Fallback: callers that build a synth without an explicit
             // number (template, session restore) set it right after
             display_number: id,
@@ -177,12 +210,66 @@ impl Synth {
     pub fn invalidate_sequence(&mut self) {
         self.playback.cached_sequence = None;
     }
+
+    /// Turns off every sounding note of the synth (monophonic note and
+    /// polyphonic voices) on its current port and channel, clears their
+    /// flags, and bumps the note generation so any deferred Note Off
+    /// (pizzicato gate, manual step cutoff) scheduled for them is
+    /// cancelled. The single release path of the crate: every place that
+    /// changes the routing, the mode, or drops a synth goes through it, so
+    /// no note is ever left hanging.
+    pub fn release_notes(&mut self, midi: &MidiState) {
+        let (port, channel) = (self.config.midi_port, self.config.channel);
+        if self.playback.note_is_on {
+            midi.note_off(port, channel, self.playback.note);
+            self.playback.note_is_on = false;
+        }
+        for voice in self.playback.poly_voices.iter_mut() {
+            if voice.note_is_on {
+                midi.note_off(port, channel, voice.note);
+                voice.note_is_on = false;
+            }
+        }
+        self.playback.note_generation = self.playback.note_generation.wrapping_add(1);
+    }
+
+    /// Stops the playback (playhead state reset) and releases its notes.
+    pub fn stop_playback(&mut self, midi: &MidiState) {
+        self.playback.playing = false;
+        self.playback.end_pending = false;
+        self.playback.tempo_accumulator = 0.0;
+        self.playback.start_pending = false;
+        self.playback.wakes_since_step = 0;
+        self.release_notes(midi);
+    }
 }
 
 /// Bounds of the per-synth tempo ratio offered by the UI (1/2 to 3/2 of the
 /// global metronome tempo). Kept in sync with the `.synth-tempo` options.
 pub const TEMPO_RATIO_MIN: f64 = 0.5;
 pub const TEMPO_RATIO_MAX: f64 = 1.5;
+
+/// The exact ratios offered by the `.synth-tempo` select. Older sessions
+/// and config files stored 2/3 and 4/3 as the truncated decimals 0.66 and
+/// 1.33, which put the synth slightly off the master grid (a 0.66 synth
+/// needs 19 wakes per step instead of 18): they are snapped back here.
+pub const TEMPO_RATIOS: [f64; 7] = [0.5, 2.0 / 3.0, 0.75, 1.0, 1.25, 4.0 / 3.0, 1.5];
+
+/// Clamps a tempo ratio to the UI range and snaps it to the exact UI
+/// fraction it approximates (within 0.02). An arbitrary hand-edited ratio
+/// away from every fraction is kept as-is. A non-finite value (never sent
+/// through JSON, defensive) falls back to 1.
+pub fn normalize_tempo_ratio(ratio: f64) -> f64 {
+    if !ratio.is_finite() {
+        return 1.0;
+    }
+    let clamped = ratio.clamp(TEMPO_RATIO_MIN, TEMPO_RATIO_MAX);
+    TEMPO_RATIOS
+        .iter()
+        .copied()
+        .find(|exact| (exact - clamped).abs() < 0.02)
+        .unwrap_or(clamped)
+}
 
 /// Per-synth configuration: every field saved in a session's synth entry
 /// and offered as the config file's default synth template. Serializable,
@@ -254,22 +341,49 @@ impl SynthConfig {
     /// hand-editable values (config file / session) as the old template did.
     pub fn to_synth(&self, id: u32) -> Synth {
         let mut synth = Synth::new(id);
-        synth.config = self.clone();
-        synth.config.loop_enabled = self.loop_enabled && !self.back_and_forth;
-        synth.config.tempo_ratio = self.tempo_ratio.clamp(TEMPO_RATIO_MIN, TEMPO_RATIO_MAX);
-        synth.config.volume = self.volume.min(127);
-        if self.note_lengths.is_empty() {
-            synth.config.note_lengths = vec![NoteLength::Quarter];
-        }
-        synth.config.scale_root = self.scale_root.min(11);
-        synth.config.quantize_beats = self.quantize_beats.clamp(1, 8);
+        synth.config = self.sanitized();
         synth
+    }
+
+    /// A copy with every hand-editable value (config file / session)
+    /// brought into the range the commands themselves enforce, so a synth
+    /// restored from a file never holds a value the UI could not set.
+    pub fn sanitized(&self) -> Self {
+        let mut config = self.clone();
+        config.loop_enabled = self.loop_enabled && !self.back_and_forth;
+        config.tempo_ratio = normalize_tempo_ratio(self.tempo_ratio);
+        config.channel = self.channel.min(15);
+        config.volume = self.volume.min(127);
+        config.velocity_min = self.velocity_min.min(126);
+        config.velocity_max = self.velocity_max.clamp(config.velocity_min, 127);
+        config.hue_shift = self.hue_shift.min(360);
+        config.note_lengths = normalize_note_lengths(&self.note_lengths);
+        config.scale_root = self.scale_root.min(11);
+        config.quantize_beats = self.quantize_beats.clamp(1, 8);
+        config
     }
 
     /// The configuration of an existing synth.
     pub fn from_synth(synth: &Synth) -> Self {
         synth.config.clone()
     }
+}
+
+/// Deduplicates the enabled note lengths (keeping their first
+/// occurrence), and replaces an empty list by a single quarter note: the
+/// UI always keeps at least one length enabled, and an empty list must
+/// mean the same thing live and after a save/reload.
+pub fn normalize_note_lengths(lengths: &[NoteLength]) -> Vec<NoteLength> {
+    let mut out: Vec<NoteLength> = Vec::with_capacity(lengths.len());
+    for &length in lengths {
+        if !out.contains(&length) {
+            out.push(length);
+        }
+    }
+    if out.is_empty() {
+        out.push(NoteLength::Quarter);
+    }
+    out
 }
 
 /// Volatile playback state of a synth: rebuilt while playing, derived from
@@ -368,7 +482,10 @@ impl Default for SynthState {
 /// available port is opened automatically at startup; the other ports are
 /// opened lazily, on first use by a synthesizer.
 pub struct MidiState {
-    pub connections: Mutex<HashMap<usize, MidiOutputConnection>>,
+    pub connections: Mutex<HashMap<usize, crate::midi::OutputConnection>>,
+    /// Instant of the last failed open per port index: the port is not
+    /// retried on every note while it is missing (see `with_connection`).
+    pub failed_opens: Mutex<HashMap<usize, std::time::Instant>>,
     /// Last known program per (output port, channel), learned from the
     /// MIDI input or set by the app itself. Survives synth removal: it is
     /// channel state, not synth state.
@@ -376,7 +493,9 @@ pub struct MidiState {
     /// Open MIDI input connections (one per input port), kept alive for
     /// the app's lifetime so Program Change / Bank Select messages sent
     /// by the instruments keep being tracked.
-    pub input_connections: Mutex<Vec<midir::MidiInputConnection<()>>>,
+    /// Each with the stable OS id of its port ("" for the app's virtual
+    /// input), so the hot-plug watcher only opens the new ports.
+    pub input_connections: Mutex<Vec<(String, midir::MidiInputConnection<()>)>>,
     /// Cache of the output-port indices used by the master clock
     /// broadcast, with the instant it was built: refreshed at most once
     /// per second (see `midi::broadcast_realtime`).
@@ -387,6 +506,7 @@ impl Default for MidiState {
     fn default() -> Self {
         Self {
             connections: Mutex::new(HashMap::new()),
+            failed_opens: Mutex::new(HashMap::new()),
             known_programs: Mutex::new(HashMap::new()),
             input_connections: Mutex::new(Vec::new()),
             broadcast_ports: Mutex::new(None),

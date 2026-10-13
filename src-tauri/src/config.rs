@@ -4,8 +4,15 @@ use std::path::PathBuf;
 use tauri::{AppHandle, Manager, State};
 
 use crate::error::{err, AppError};
+use crate::locks::MutexExt;
 use crate::metronome::{ClockMode, MetronomeState};
 use crate::state::{Scale, SynthConfig};
+
+/// Hard cap on the longest side of any image held by the app (import,
+/// session load, transform results): beyond it the grid rendering and the
+/// IPC payloads exhaust memory. `max_image_size = 0` (unlimited) is capped
+/// to it too.
+pub const MAX_IMAGE_SIDE: u32 = 8192;
 
 /// Default bounds of the three note-range filters, in MIDI note numbers.
 pub const DEFAULT_NOTE_RANGE_BOUNDS: [(u8, u8); 3] = [(21, 47), (48, 71), (72, 108)];
@@ -41,7 +48,7 @@ fn default_enabled_scales() -> Vec<Scale> {
     ]
 }
 
-fn is_valid_hex_color(s: &str) -> bool {
+pub(crate) fn is_valid_hex_color(s: &str) -> bool {
     let bytes = s.as_bytes();
     bytes.len() == 7 && bytes[0] == b'#' && bytes[1..].iter().all(|c| c.is_ascii_hexdigit())
 }
@@ -163,6 +170,20 @@ impl AppConfig {
         self.pizzicato_gate_ms = self.pizzicato_gate_ms.min(1000);
         // Undo history depth: at least one step, capped to stay reasonable
         self.undo_depth = self.undo_depth.clamp(1, 500);
+        // Startup tempo: the metronome's range (a 0 or a huge value would
+        // stall or spin the metronome thread)
+        self.default_bpm = self.default_bpm.clamp(20, 300);
+        // Imported image size: 0 = unlimited, else at least a usable size
+        // and at most MAX_IMAGE_SIDE (memory)
+        if self.max_image_size != 0 {
+            self.max_image_size = self.max_image_size.clamp(16, MAX_IMAGE_SIDE);
+        }
+        self.clock_source = self
+            .clock_source
+            .take()
+            .map(|s| s.chars().take(256).collect());
+        // The default synth template gets the same bounds as the commands
+        self.default_synth = self.default_synth.sanitized();
     }
 }
 
@@ -195,41 +216,104 @@ fn covers_fields(raw: &serde_json::Value, full: &serde_json::Value) -> bool {
 /// Loads the configuration from the app config directory, falling back to
 /// the defaults if the file is missing or unreadable. Fields absent from
 /// the file (e.g. added by a newer version) are materialized in it with
-/// their default value, so the user always sees every configurable value;
-/// existing values and formatting of other fields are left untouched. A
-/// file that fails to parse is never rewritten.
+/// their default value, so the user always sees every configurable value.
+///
+/// A file that fails to parse is preserved: it is copied aside as
+/// `config.json.bak` (a later save writes the defaults over
+/// `config.json`, the user's hand edits must not be lost with it).
+/// Individual fields of the wrong type fall back to their default instead
+/// of discarding the whole file.
 pub fn load_config(app: &AppHandle) -> AppConfig {
     let Some(path) = config_path(app) else {
         return AppConfig::default();
     };
-    match fs::read_to_string(&path) {
-        Ok(content) => match serde_json::from_str::<AppConfig>(&content) {
-            Ok(parsed) => {
-                let mut config = parsed;
-                config.sanitize();
-                let raw = serde_json::from_str::<serde_json::Value>(&content).unwrap_or_default();
-                let full = serde_json::to_value(&config).unwrap_or_default();
-                if !covers_fields(&raw, &full) {
-                    save_config(app, &config);
+    let Ok(content) = fs::read_to_string(&path) else {
+        return AppConfig::default();
+    };
+    match parse_config(&content) {
+        Some((mut config, complete)) => {
+            config.sanitize();
+            let raw = serde_json::from_str::<serde_json::Value>(&content).unwrap_or_default();
+            let full = serde_json::to_value(&config).unwrap_or_default();
+            if !complete || !covers_fields(&raw, &full) {
+                if !complete {
+                    backup_config(&path);
                 }
-                config
+                save_config(app, &config);
             }
-            Err(_) => AppConfig::default(), // corrupt: left untouched
-        },
-        Err(_) => AppConfig::default(),
+            config
+        }
+        None => {
+            // Not even valid JSON: keep it aside, run on the defaults
+            backup_config(&path);
+            AppConfig::default()
+        }
     }
 }
 
-/// Persists the configuration, creating the config directory if needed.
-/// A write failure is not fatal: the app keeps running with the in-memory
-/// configuration.
+/// Parses a config file leniently: a valid JSON object whose fields do
+/// not all deserialize keeps the valid ones (each invalid field falls back
+/// to its default). Returns the config and whether every field was valid;
+/// None when the content is not a JSON object at all.
+fn parse_config(content: &str) -> Option<(AppConfig, bool)> {
+    if let Ok(config) = serde_json::from_str::<AppConfig>(content) {
+        return Some((config, true));
+    }
+    let raw: serde_json::Value = serde_json::from_str(content).ok()?;
+    let raw = raw.as_object()?;
+    let mut merged = serde_json::to_value(AppConfig::default()).ok()?;
+    let target = merged.as_object_mut()?;
+    for (key, value) in raw {
+        if !target.contains_key(key) {
+            continue;
+        }
+        // Accept the field only if the config still parses with it
+        let previous = target.insert(key.clone(), value.clone());
+        let candidate = serde_json::Value::Object(target.clone());
+        if serde_json::from_value::<AppConfig>(candidate).is_err() {
+            match previous {
+                Some(v) => target.insert(key.clone(), v),
+                None => target.remove(key),
+            };
+        }
+    }
+    let config = serde_json::from_value(merged).ok()?;
+    Some((config, false))
+}
+
+/// Copies a config file aside as `<name>.bak` before it gets rewritten.
+fn backup_config(path: &std::path::Path) {
+    let backup = path.with_extension("json.bak");
+    if let Err(e) = fs::copy(path, &backup) {
+        eprintln!("Unable to back up the config file: {e}");
+    } else {
+        eprintln!(
+            "Invalid config file: kept a copy as {}",
+            backup.to_string_lossy()
+        );
+    }
+}
+
+/// Persists the configuration atomically, creating the config directory if
+/// needed. A write failure is not fatal (the app keeps running with the
+/// in-memory configuration) but it is reported on stderr. Never call it
+/// while holding the config lock (clone the config first): the metronome
+/// reads the config on every wake.
 pub fn save_config(app: &AppHandle, config: &AppConfig) {
     let Some(path) = config_path(app) else { return };
     if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
+        if let Err(e) = fs::create_dir_all(parent) {
+            eprintln!("Unable to create the config directory: {e}");
+            return;
+        }
     }
-    if let Ok(json) = serde_json::to_string_pretty(config) {
-        let _ = fs::write(&path, json);
+    match serde_json::to_string_pretty(config) {
+        Ok(json) => {
+            if let Err(e) = crate::fsutil::write_atomic(&path, json.as_bytes()) {
+                eprintln!("Unable to save the config file: {e}");
+            }
+        }
+        Err(e) => eprintln!("Unable to serialize the config: {e}"),
     }
 }
 
@@ -241,7 +325,7 @@ pub fn save_config(app: &AppHandle, config: &AppConfig) {
 pub fn open_config_file(app: AppHandle, state: State<'_, ConfigState>) -> Result<(), AppError> {
     let path = config_path(&app).ok_or_else(|| err("config_unavailable"))?;
     if !path.exists() {
-        let config = state.config.lock().unwrap().clone();
+        let config = state.config.lock_safe().clone();
         save_config(&app, &config);
     }
     tauri_plugin_opener::open_path(&path, None::<&str>)
@@ -251,14 +335,20 @@ pub fn open_config_file(app: AppHandle, state: State<'_, ConfigState>) -> Result
 
 #[tauri::command]
 pub fn get_config(state: State<'_, ConfigState>) -> AppConfig {
-    state.config.lock().unwrap().clone()
+    state.config.lock_safe().clone()
 }
 
+/// Sets the longest side allowed for imported images (0 = unlimited,
+/// capped to `MAX_IMAGE_SIDE` anyway) and persists it.
 #[tauri::command]
 pub fn set_max_image_size(app: AppHandle, max_image_size: u32, state: State<'_, ConfigState>) {
-    let mut config = state.config.lock().unwrap();
-    config.max_image_size = max_image_size;
-    save_config(&app, &config);
+    let snapshot = {
+        let mut config = state.config.lock_safe();
+        config.max_image_size = max_image_size;
+        config.sanitize();
+        config.clone()
+    };
+    save_config(&app, &snapshot);
 }
 
 #[tauri::command]
@@ -269,9 +359,12 @@ pub fn set_default_bpm(
     metronome: State<'_, MetronomeState>,
 ) {
     let clamped = bpm.clamp(20, 300);
-    let mut config = state.config.lock().unwrap();
-    config.default_bpm = clamped;
-    save_config(&app, &config);
+    let snapshot = {
+        let mut config = state.config.lock_safe();
+        config.default_bpm = clamped;
+        config.clone()
+    };
+    save_config(&app, &snapshot);
     metronome
         .bpm
         .store(clamped, std::sync::atomic::Ordering::Relaxed);
@@ -287,15 +380,18 @@ pub fn set_default_synth_from(
     config_state: State<'_, ConfigState>,
 ) -> Result<(), AppError> {
     let template = {
-        let synths = synth_state.synths.lock().unwrap();
+        let synths = synth_state.synths.lock_safe();
         let synth = synths
             .get(&id)
             .ok_or_else(|| err("synth_not_found").with_param("id", id))?;
         SynthConfig::from_synth(synth)
     };
-    let mut config = config_state.config.lock().unwrap();
-    config.default_synth = template;
-    save_config(&app, &config);
+    let snapshot = {
+        let mut config = config_state.config.lock_safe();
+        config.default_synth = template;
+        config.clone()
+    };
+    save_config(&app, &snapshot);
     Ok(())
 }
 
@@ -529,6 +625,51 @@ mod tests {
         let config: AppConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.undo_depth, 25);
         assert_eq!(AppConfig::default().undo_depth, 25);
+    }
+
+    #[test]
+    fn sanitize_clamps_bpm_image_size_and_the_default_synth() {
+        let mut config = AppConfig {
+            default_bpm: 9000,
+            max_image_size: 100_000,
+            ..AppConfig::default()
+        };
+        config.default_synth.channel = 40;
+        config.default_synth.tempo_ratio = 0.66;
+        config.sanitize();
+        assert_eq!(config.default_bpm, 300);
+        assert_eq!(config.max_image_size, MAX_IMAGE_SIDE);
+        assert_eq!(config.default_synth.channel, 15);
+        assert_eq!(config.default_synth.tempo_ratio, 2.0 / 3.0);
+
+        let mut config = AppConfig {
+            default_bpm: 0,
+            max_image_size: 0, // unlimited stays unlimited (capped at use)
+            ..AppConfig::default()
+        };
+        config.sanitize();
+        assert_eq!(config.default_bpm, 20);
+        assert_eq!(config.max_image_size, 0);
+    }
+
+    #[test]
+    fn a_field_of_the_wrong_type_only_resets_that_field() {
+        let json = r##"{
+            "default_bpm": "fast",
+            "undo_depth": 42,
+            "clock_mode": "nonsense"
+        }"##;
+        let (config, complete) = parse_config(json).unwrap();
+        assert!(!complete);
+        assert_eq!(config.default_bpm, AppConfig::default().default_bpm);
+        assert_eq!(config.clock_mode, ClockMode::Auto);
+        // The valid fields survive
+        assert_eq!(config.undo_depth, 42);
+        // Not JSON at all: nothing to salvage
+        assert!(parse_config("{ not json").is_none());
+        // A clean file is complete
+        let (_, complete) = parse_config(r#"{ "undo_depth": 3 }"#).unwrap();
+        assert!(complete);
     }
 
     #[test]

@@ -163,6 +163,48 @@ export function playAllStatus(total, playing) {
     return 'selective';
 }
 
+// ---------- Tempo ratio ----------
+// The per-synth tempo ratios offered by the `.synth-tempo` select, as
+// exact fractions. The select's option values are short strings ("2/3");
+// the backend holds the exact float (0.6666…), so both directions go
+// through these helpers instead of a raw String(number) comparison.
+export const TEMPO_RATIOS = [
+    ['3/2', 3 / 2], ['4/3', 4 / 3], ['5/4', 5 / 4], ['1', 1],
+    ['3/4', 3 / 4], ['2/3', 2 / 3], ['1/2', 1 / 2],
+];
+
+// Ratio of a select value ("2/3", or a legacy decimal like "0.66").
+export function parseTempoRatio(value) {
+    const text = String(value).trim();
+    const fraction = text.match(/^(\d+)\s*\/\s*(\d+)$/);
+    const ratio = fraction ? Number(fraction[1]) / Number(fraction[2]) : Number(text);
+    return Number.isFinite(ratio) && ratio > 0 ? ratio : 1;
+}
+
+// Select value of the offered ratio nearest to `ratio` (the backend's
+// float, possibly a legacy 0.66/1.33 approximation).
+export function tempoRatioOption(ratio) {
+    const r = Number(ratio);
+    let best = TEMPO_RATIOS[3];
+    for (const entry of TEMPO_RATIOS) {
+        if (Math.abs(entry[1] - r) < Math.abs(best[1] - r)) best = entry;
+    }
+    return best[0];
+}
+
+// ---------- BPM ----------
+export const BPM_MIN = 20;
+export const BPM_MAX = 300;
+
+// Clamps a tempo to the metronome's range as a whole number (the backend
+// takes an integer BPM: a typed "120.5" must not fail the IPC call).
+// Non-numeric input falls back to `fallback`.
+export function clampBpm(value, fallback = 120) {
+    const n = Math.round(Number(value));
+    if (!Number.isFinite(n)) return fallback;
+    return Math.min(BPM_MAX, Math.max(BPM_MIN, n));
+}
+
 // Value the mute toggle should apply. `current` is the synth's volume:
 // a positive value is muted (returns 0), a zero value is unmuted (returns
 // the memorised `previous`, or `fallback` when there is none). Pure so it

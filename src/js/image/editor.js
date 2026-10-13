@@ -137,11 +137,22 @@ export function syncLabels() {
 
 // ---------- Refresh ----------
 let pending = false;
+let rerun = false; // a refresh was requested while one was in flight
 let lastDimensionsInfo = null; // remembers the last result, to retranslate on locale change
 
+// Renders the processed grid. The backend runs the render off the main
+// thread, so requests can overlap: one requested while another is in
+// flight is not dropped but replayed once the first completes (with the
+// then-current settings) — a reshape's refresh must never be lost behind
+// a slider's.
 export async function refresh() {
-  if (!viewer.hasImage || pending) return;
+  if (!viewer.hasImage) return;
+  if (pending) {
+    rerun = true;
+    return;
+  }
   pending = true;
+  rerun = false;
 
   try {
     const prevW = viewer.gridW;
@@ -172,11 +183,18 @@ export async function refresh() {
     };
     dimensionsInfo.textContent = t('controls.dimensionsInfo', lastDimensionsInfo);
   } catch (err) {
-    console.error('Error while processing:', err);
-    dimensionsInfo.textContent = translateError(err);
+    // The original changed under this render (a reshape raced it): the
+    // replayed refresh below renders the new one
+    if (err?.code === 'image_changed') {
+      rerun = true;
+    } else {
+      console.error('Error while processing:', err);
+      dimensionsInfo.textContent = translateError(err);
+    }
   } finally {
     pending = false;
   }
+  if (rerun) await refresh();
 }
 
 let debounceId = null;

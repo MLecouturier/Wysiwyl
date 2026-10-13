@@ -652,7 +652,10 @@ async function openSession() {
 
     try {
         // Stop everything and clear the current synths
-        await invoke('stop_metronome');
+        // load_session already stopped every synth and released their
+        // notes on the backend side
+        await invoke('stop_metronome')
+            .catch(err => console.error('Error in stop_metronome:', err));
         exitCropMode();
         closeTransformPanel();
         metronome.markStopped();
@@ -722,7 +725,8 @@ async function openSession() {
             redrawAllHighlights();
             // Normalize the ids of legacy session files (possible gaps after
             // deletions): the ids must match the display order again
-            await renumberSynthIds();
+            await renumberSynthIds()
+                .catch(err => console.error('Error in set_synth_order:', err));
         }
 
     } finally {
@@ -930,7 +934,9 @@ playAllBtn.addEventListener('click', async () => {
 // Kill switch: stop every synthesizer and cut all sounding notes
 const panicBtn = document.querySelector('#panic-btn');
 panicBtn.addEventListener('click', async () => {
-    await invoke('panic_all');
+    // Whatever happens, the UI ends up stopped: a kill switch must never
+    // leave a card shown as playing
+    await invoke('panic_all').catch(err => console.error('Error in panic_all:', err));
     synthListBody.querySelectorAll('.synth-block').forEach(el => {
         setSynthPlaying(Number(el.dataset.synthId), false);
         setSynthControlsLocked(el, false);

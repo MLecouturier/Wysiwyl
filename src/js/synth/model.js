@@ -6,7 +6,7 @@ import { zonesPixelCount } from '../core/geometry.js';
 import { applyTranslations, getLocale, t } from '../core/i18n.js';
 import { createStore, synthDisplayNumbers, synthHighlights, synthNames, viewer } from '../core/state.js';
 import { noteLengthBeats, formatDurationClock, zonesTotalBeats } from '../core/timing.js';
-import { midiNoteName, midiNoteNameHtml } from '../core/utils.js';
+import { midiNoteName, midiNoteNameHtml, parseTempoRatio } from '../core/utils.js';
 
 // Configurable synth options: the color palette, the note-range bounds
 // and the enabled scales, all replaceable at startup from config.json
@@ -572,7 +572,7 @@ function synthZonesTotalBeats(id, el) {
         lengths.reverse();
     }
 
-    const ratio = Number(el.querySelector('.synth-tempo').value) || 1;
+    const ratio = parseTempoRatio(el.querySelector('.synth-tempo').value);
     return zonesTotalBeats(hi.zones, viewer.processedPixels, lengths, ratio);
 }
 

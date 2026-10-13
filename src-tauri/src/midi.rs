@@ -1,8 +1,10 @@
 use midir::{MidiInput, MidiOutput, MidiOutputConnection};
 use serde::Serialize;
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use crate::locks::MutexExt;
 use crate::metronome::{self, MetronomeState};
 use crate::state::{MidiState, ProgramState, SynthState};
 
@@ -16,6 +18,7 @@ pub const MIDI_CLOCK: u8 = 0xF8;
 pub const MIDI_START: u8 = 0xFA;
 pub const MIDI_CONTINUE: u8 = 0xFB;
 pub const MIDI_STOP: u8 = 0xFC;
+pub const MIDI_SONG_POSITION: u8 = 0xF2;
 
 /// Index of the app's virtual MIDI output port. A sentinel far above any
 /// physical port index: it must stay well below 2^53 to survive the
@@ -50,13 +53,26 @@ pub struct MidiInputPortInfo {
     pub is_virtual: bool,
 }
 
+/// An open output connection, with the stable OS identifier of the port
+/// it was opened on (empty for the app's virtual port). Port indexes are
+/// positional: after a hot-plug the same index may designate another
+/// device, so the identifier tells a still-valid connection from a stale
+/// one.
+pub struct OutputConnection {
+    pub conn: MidiOutputConnection,
+    pub port_id: String,
+}
+
 /// Opens the connection to the given output port index, or None if the
 /// port doesn't exist or can't be opened. On unix, the virtual port
 /// sentinel is created on demand instead of connected.
 #[cfg(unix)]
-fn open_connection(port_index: usize) -> Option<MidiOutputConnection> {
+fn open_connection(port_index: usize) -> Option<OutputConnection> {
     if port_index == VIRTUAL_PORT_INDEX {
-        return create_virtual_connection();
+        return create_virtual_connection().map(|conn| OutputConnection {
+            conn,
+            port_id: String::new(),
+        });
     }
     open_physical_connection(port_index)
 }
@@ -64,13 +80,13 @@ fn open_connection(port_index: usize) -> Option<MidiOutputConnection> {
 /// Opens the connection to the given output port index, or None if the
 /// port doesn't exist or can't be opened.
 #[cfg(not(unix))]
-fn open_connection(port_index: usize) -> Option<MidiOutputConnection> {
+fn open_connection(port_index: usize) -> Option<OutputConnection> {
     open_physical_connection(port_index)
 }
 
 /// Opens the connection to the given physical output port index, or None
 /// if the port doesn't exist or can't be opened.
-fn open_physical_connection(port_index: usize) -> Option<MidiOutputConnection> {
+fn open_physical_connection(port_index: usize) -> Option<OutputConnection> {
     let midi_out = match MidiOutput::new("Wysiwyl") {
         Ok(m) => m,
         Err(e) => {
@@ -96,11 +112,12 @@ fn open_physical_connection(port_index: usize) -> Option<MidiOutputConnection> {
     let port_name = midi_out
         .port_name(port)
         .unwrap_or_else(|_| "unknown port".to_string());
+    let port_id = port.id();
 
     match midi_out.connect(port, "wysiwyl-out") {
         Ok(conn) => {
             println!("Connected to MIDI port {port_index}: {port_name}");
-            Some(conn)
+            Some(OutputConnection { conn, port_id })
         }
         Err(e) => {
             eprintln!("Failed to connect to MIDI port {port_index} ({port_name}): {e}");
@@ -133,23 +150,85 @@ fn create_virtual_connection() -> Option<MidiOutputConnection> {
     }
 }
 
+/// After a failed open, the port is not retried before this delay: a
+/// missing device must not cost a full OS enumeration on every note,
+/// inside the metronome tick.
+const FAILED_OPEN_RETRY: Duration = Duration::from_secs(2);
+
 impl MidiState {
     /// Runs `f` with the open connection for the given port, opening it
     /// lazily on first use. Notes are silently dropped if the port is
-    /// unavailable.
-    fn with_connection(&self, port_index: usize, f: impl FnOnce(&mut MidiOutputConnection)) {
-        let mut connections = self.connections.lock().unwrap();
+    /// unavailable; a failed open is retried at most every
+    /// `FAILED_OPEN_RETRY`. A send error (device unplugged) drops the
+    /// connection, so the next message reopens the port. `f` returns
+    /// whether every send succeeded.
+    fn with_connection(
+        &self,
+        port_index: usize,
+        f: impl FnOnce(&mut MidiOutputConnection) -> bool,
+    ) {
+        {
+            let failed = self.failed_opens.lock_safe();
+            if failed
+                .get(&port_index)
+                .is_some_and(|at| at.elapsed() < FAILED_OPEN_RETRY)
+            {
+                return;
+            }
+        }
+        let mut connections = self.connections.lock_safe();
         if let std::collections::hash_map::Entry::Vacant(entry) = connections.entry(port_index) {
             match open_connection(port_index) {
                 Some(conn) => {
                     entry.insert(conn);
+                    self.failed_opens.lock_safe().remove(&port_index);
                 }
-                None => return,
+                None => {
+                    self.failed_opens
+                        .lock_safe()
+                        .insert(port_index, Instant::now());
+                    return;
+                }
             }
         }
-        if let Some(conn) = connections.get_mut(&port_index) {
-            f(conn);
+        if let Some(out) = connections.get_mut(&port_index) {
+            if !f(&mut out.conn) {
+                eprintln!("MIDI send failed on port {port_index}: connection dropped");
+                connections.remove(&port_index);
+            }
         }
+    }
+
+    /// Drops the output connections whose port disappeared or whose index
+    /// now designates another device (hot-plug), so the next message
+    /// reopens the right one. `current` maps each physical port index to
+    /// its stable OS identifier. Also forgets the failed opens, so a
+    /// device plugged back in is picked up right away.
+    pub fn reconcile_outputs(&self, current: &HashMap<usize, String>) {
+        let mut connections = self.connections.lock_safe();
+        connections.retain(|index, out| {
+            #[cfg(unix)]
+            if *index == VIRTUAL_PORT_INDEX {
+                return true;
+            }
+            let valid = current.get(index) == Some(&out.port_id);
+            if !valid {
+                println!("MIDI output port {index} changed or disappeared: connection dropped");
+            }
+            valid
+        });
+        self.failed_opens.lock_safe().clear();
+    }
+
+    /// Sends All Sound Off (CC 120) and All Notes Off (CC 123) on the 16
+    /// channels of an output port: silences every note, including those the
+    /// app lost track of.
+    pub fn all_notes_off(&self, port_index: usize) {
+        self.with_connection(port_index, |conn| {
+            (0..16u8).all(|ch| {
+                conn.send(&[0xB0 | ch, 120, 0]).is_ok() && conn.send(&[0xB0 | ch, 123, 0]).is_ok()
+            })
+        });
     }
 
     /// Sends a Note On message on the given output port (0x90 | channel).
@@ -168,7 +247,8 @@ impl MidiState {
     /// channel. `volume` is the raw MIDI value (0–127), sent as-is.
     pub fn send_channel_volume(&self, port_index: usize, channel: u8, volume: u8) {
         self.with_connection(port_index, |conn| {
-            let _ = conn.send(&[0xB0 | (channel & 0x0F), 7, volume & 0x7F]);
+            conn.send(&[0xB0 | (channel & 0x0F), 7, volume & 0x7F])
+                .is_ok()
         });
     }
 
@@ -185,16 +265,24 @@ impl MidiState {
         bank_msb: Option<u8>,
         bank_lsb: Option<u8>,
     ) -> ProgramState {
+        let channel = channel & 0x0F;
+        let (program, bank_msb, bank_lsb) = (
+            program.map(|v| v & 0x7F),
+            bank_msb.map(|v| v & 0x7F),
+            bank_lsb.map(|v| v & 0x7F),
+        );
         self.with_connection(port_index, |conn| {
+            let mut ok = true;
             if let Some(msb) = bank_msb {
-                let _ = conn.send(&[0xB0 | (channel & 0x0F), 0, msb & 0x7F]);
+                ok &= conn.send(&[0xB0 | channel, 0, msb]).is_ok();
             }
             if let Some(lsb) = bank_lsb {
-                let _ = conn.send(&[0xB0 | (channel & 0x0F), 32, lsb & 0x7F]);
+                ok &= conn.send(&[0xB0 | channel, 32, lsb]).is_ok();
             }
             if let Some(p) = program {
-                let _ = conn.send(&[0xC0 | (channel & 0x0F), p & 0x7F]);
+                ok &= conn.send(&[0xC0 | channel, p]).is_ok();
             }
+            ok
         });
         let updated = ProgramState {
             bank_msb,
@@ -202,8 +290,7 @@ impl MidiState {
             program,
         };
         self.known_programs
-            .lock()
-            .unwrap()
+            .lock_safe()
             .insert((port_index, channel), updated);
         updated
     }
@@ -216,20 +303,22 @@ impl MidiState {
 /// usable even without a MIDI device connected.
 pub fn auto_connect(state: &MidiState) {
     #[cfg(unix)]
-    state.with_connection(VIRTUAL_PORT_INDEX, |_| {});
-    state.with_connection(0, |_| {});
+    state.with_connection(VIRTUAL_PORT_INDEX, |_| true);
+    state.with_connection(0, |_| true);
 }
 
 /// Sends a Note On message (0x90 | channel, note, velocity).
-pub fn send_note_on(conn: &mut MidiOutputConnection, channel: u8, note: u8, velocity: u8) {
+pub fn send_note_on(conn: &mut MidiOutputConnection, channel: u8, note: u8, velocity: u8) -> bool {
     let status = 0x90 | (channel & 0x0F);
-    let _ = conn.send(&[status, note & 0x7F, velocity & 0x7F]);
+    // Velocity 0 would be read as a Note Off by the receiver
+    conn.send(&[status, note & 0x7F, (velocity & 0x7F).max(1)])
+        .is_ok()
 }
 
 /// Sends a Note Off message (0x80 | channel, note, velocity=0).
-pub fn send_note_off(conn: &mut MidiOutputConnection, channel: u8, note: u8) {
+pub fn send_note_off(conn: &mut MidiOutputConnection, channel: u8, note: u8) -> bool {
     let status = 0x80 | (channel & 0x0F);
-    let _ = conn.send(&[status, note & 0x7F, 0]);
+    conn.send(&[status, note & 0x7F, 0]).is_ok()
 }
 
 /// Lists the available MIDI output ports. The index of each entry is the
@@ -238,7 +327,14 @@ pub fn send_note_off(conn: &mut MidiOutputConnection, channel: u8, note: u8) {
 /// through their hardware interfaces.
 #[tauri::command]
 pub fn list_midi_ports() -> Vec<MidiPortInfo> {
+    scan_output_ports().0
+}
+
+/// Enumerates the output ports: the list offered to the UI, and the stable
+/// OS identifier of every physical port index (for `reconcile_outputs`).
+fn scan_output_ports() -> (Vec<MidiPortInfo>, HashMap<usize, String>) {
     let mut ports = Vec::new();
+    let mut ids = HashMap::new();
 
     #[cfg(unix)]
     ports.push(MidiPortInfo {
@@ -249,6 +345,7 @@ pub fn list_midi_ports() -> Vec<MidiPortInfo> {
 
     if let Ok(midi_out) = MidiOutput::new("Wysiwyl") {
         for (index, port) in midi_out.ports().iter().enumerate() {
+            ids.insert(index, port.id());
             let name = midi_out
                 .port_name(port)
                 .unwrap_or_else(|_| format!("Port {index}"));
@@ -268,12 +365,7 @@ pub fn list_midi_ports() -> Vec<MidiPortInfo> {
             });
         }
     }
-    ports
-}
-
-#[tauri::command]
-pub fn is_midi_connected(state: State<'_, MidiState>) -> bool {
-    !state.connections.lock().unwrap().is_empty()
+    (ports, ids)
 }
 
 /// How long the broadcast port list stays valid before the MIDI devices
@@ -281,31 +373,48 @@ pub fn is_midi_connected(state: State<'_, MidiState>) -> bool {
 /// second, while the 24 pulses-per-beat master clock stays cheap).
 const BROADCAST_PORTS_TTL: Duration = Duration::from_secs(1);
 
-/// Sends a system realtime byte (MIDI clock, Start, Stop) to every
-/// output port, opening the connections lazily — used by the metronome
-/// in master mode. The port list is cached in `MidiState` for a second:
-/// enumerating the OS's MIDI devices on every pulse would be far too
-/// expensive.
-pub fn broadcast_realtime(state: &MidiState, byte: u8) {
+/// Sends a system realtime byte (MIDI clock, Start, Stop) to the output
+/// ports the synths use, plus the app's virtual port (the DAW route) —
+/// used by the metronome in master mode. Ports no synth uses are left
+/// alone: opening every device of the system just to clock it could grab
+/// interfaces other applications need (exclusive drivers). The port list
+/// is cached in `MidiState` for a second; the caller must not hold the
+/// synth lock.
+pub fn broadcast_realtime(app: &AppHandle, byte: u8) {
+    let state = app.state::<MidiState>();
     let ports = {
-        let mut cache = state.broadcast_ports.lock().unwrap();
+        let mut cache = state.broadcast_ports.lock_safe();
         let fresh = cache
             .as_ref()
             .is_some_and(|(at, _)| at.elapsed() < BROADCAST_PORTS_TTL);
         if !fresh {
-            let ports = list_midi_ports()
-                .into_iter()
-                .map(|port| port.index)
-                .collect::<Vec<_>>();
-            *cache = Some((Instant::now(), ports));
+            *cache = Some((Instant::now(), clock_target_ports(app)));
         }
-        cache.as_ref().expect("just refreshed").1.clone()
+        cache
+            .as_ref()
+            .map(|(_, ports)| ports.clone())
+            .unwrap_or_default()
     };
     for index in ports {
-        state.with_connection(index, |conn| {
-            let _ = conn.send(&[byte]);
-        });
+        state.with_connection(index, |conn| conn.send(&[byte]).is_ok());
     }
+}
+
+/// Output ports receiving the master clock: those of the synths, plus the
+/// virtual port, deduplicated.
+fn clock_target_ports(app: &AppHandle) -> Vec<usize> {
+    let mut ports: Vec<usize> = app
+        .state::<SynthState>()
+        .synths
+        .lock_safe()
+        .values()
+        .map(|synth| synth.config.midi_port)
+        .collect();
+    #[cfg(unix)]
+    ports.push(VIRTUAL_PORT_INDEX);
+    ports.sort_unstable();
+    ports.dedup();
+    ports
 }
 
 /// Lists the available MIDI input ports, offered as the metronome's clock
@@ -392,6 +501,16 @@ fn output_port_for_input(input_name: &str) -> Option<usize> {
 /// `midi-program` events. Not a blocking error: the app works the same
 /// without any input device.
 pub fn start_midi_input_listeners(app: &AppHandle, state: &MidiState) {
+    connect_new_inputs(app, state);
+    if state.input_connections.lock_safe().is_empty() {
+        println!("No MIDI input port available (or none could be opened).");
+    }
+}
+
+/// Opens a listener on every input port not listened to yet (identified by
+/// its stable OS id), and drops the listeners of the ports that
+/// disappeared. Called at startup and by the hot-plug watcher.
+fn connect_new_inputs(app: &AppHandle, state: &MidiState) {
     // midir::MidiInput::connect consumes the input, so one instance is
     // created per port to keep listening to all of them simultaneously.
     let ports = match MidiInput::new("Wysiwyl") {
@@ -405,8 +524,14 @@ pub fn start_midi_input_listeners(app: &AppHandle, state: &MidiState) {
             .collect::<Vec<_>>(),
         Err(_) => return,
     };
-    let mut connections = state.input_connections.lock().unwrap();
+    let mut connections = state.input_connections.lock_safe();
+    // Drop the listeners of vanished ports (the virtual input, id "", stays)
+    connections.retain(|(id, _)| id.is_empty() || ports.iter().any(|(p, _)| &p.id() == id));
     for (port, port_name) in ports {
+        let port_id = port.id();
+        if connections.iter().any(|(id, _)| id == &port_id) {
+            continue;
+        }
         // The app's own virtual output port is a source on macOS and Linux:
         // listening to it would only echo our own outgoing messages back.
         // The DAW's clock arrives through the dedicated virtual input
@@ -431,13 +556,51 @@ pub fn start_midi_input_listeners(app: &AppHandle, state: &MidiState) {
         match connected {
             Ok(conn) => {
                 println!("Listening to MIDI input: '{port_name}'");
-                connections.push(conn);
+                connections.push((port_id, conn));
             }
             Err(e) => eprintln!("Failed to listen to MIDI input '{port_name}': {e}"),
         }
     }
-    if connections.is_empty() {
-        println!("No MIDI input port available (or none could be opened).");
+}
+
+/// Interval of the MIDI hot-plug watcher.
+const PORT_WATCH_INTERVAL: Duration = Duration::from_secs(2);
+
+/// Starts the MIDI hot-plug watcher: every `PORT_WATCH_INTERVAL` it
+/// enumerates the ports, drops the output connections whose index now
+/// designates another device (or none), and listens to newly plugged
+/// input ports. Runs for the app's lifetime, outside every app lock
+/// except briefly the MIDI ones.
+pub fn start_port_watcher(app: AppHandle) {
+    let spawned = std::thread::Builder::new()
+        .name("wysiwyl-midi-watch".into())
+        .spawn(move || {
+            let mut last_outputs: Option<HashMap<usize, String>> = None;
+            let mut last_inputs: Option<Vec<String>> = None;
+            loop {
+                std::thread::sleep(PORT_WATCH_INTERVAL);
+                let state = app.state::<MidiState>();
+                let (_, outputs) = scan_output_ports();
+                if last_outputs.as_ref() != Some(&outputs) {
+                    if last_outputs.is_some() {
+                        state.reconcile_outputs(&outputs);
+                        *state.broadcast_ports.lock_safe() = None;
+                    }
+                    last_outputs = Some(outputs);
+                }
+                let inputs: Vec<String> = MidiInput::new("Wysiwyl")
+                    .map(|m| m.ports().iter().map(|p| p.id()).collect())
+                    .unwrap_or_default();
+                if last_inputs.as_ref() != Some(&inputs) {
+                    if last_inputs.is_some() {
+                        connect_new_inputs(&app, &state);
+                    }
+                    last_inputs = Some(inputs);
+                }
+            }
+        });
+    if let Err(e) = spawned {
+        eprintln!("Failed to start the MIDI port watcher: {e}");
     }
 }
 
@@ -462,9 +625,8 @@ pub fn start_virtual_input_listener(app: &AppHandle) {
         Ok(conn) => {
             app.state::<MidiState>()
                 .input_connections
-                .lock()
-                .unwrap()
-                .push(conn);
+                .lock_safe()
+                .push((String::new(), conn));
             println!("Virtual MIDI input port '{VIRTUAL_PORT_NAME}' created (DAW sync)");
         }
         Err(e) => eprintln!("Failed to create the virtual MIDI input port: {e}"),
@@ -479,6 +641,85 @@ pub fn start_virtual_input_listener(app: &AppHandle) {
 /// is ever sent back in response. Single-byte system realtime messages
 /// (a DAW's MIDI clock) are dispatched to the metronome's clock sync.
 fn handle_input_message(app: &AppHandle, input_name: &str, data: &[u8]) {
+    for message in split_midi_messages(data) {
+        handle_one_message(app, input_name, &message);
+    }
+}
+
+/// Splits a buffer delivered by the OS into individual MIDI messages: a
+/// single callback may carry several (CoreMIDI packets, e.g. Bank Select
+/// MSB + LSB + Program Change at once), with running status, and realtime
+/// bytes (0xF8...) may be interleaved anywhere, even inside another
+/// message (they are emitted on their own, before the message they
+/// interrupt completes). SysEx and orphan data bytes are skipped.
+fn split_midi_messages(data: &[u8]) -> Vec<Vec<u8>> {
+    let mut out: Vec<Vec<u8>> = Vec::new();
+    // Message being assembled, and the running status
+    let mut current: Vec<u8> = Vec::new();
+    let mut running: Option<u8> = None;
+    let mut in_sysex = false;
+    for &byte in data {
+        if byte >= 0xF8 {
+            // Realtime: single byte, never interrupts running status
+            out.push(vec![byte]);
+            continue;
+        }
+        if in_sysex {
+            // SysEx payload is skipped; End Of Exclusive (0xF7) closes it,
+            // and any other status byte ends a truncated SysEx (handled
+            // below as a regular status byte)
+            if byte & 0x80 == 0 {
+                continue;
+            }
+            in_sysex = false;
+            if byte == 0xF7 {
+                continue;
+            }
+        }
+        if byte & 0x80 != 0 {
+            current.clear();
+            match byte {
+                0xF0 => {
+                    in_sysex = true;
+                    running = None;
+                    continue;
+                }
+                0xF7 => continue,
+                0xF1..=0xF6 => running = None,
+                _ => running = Some(byte),
+            }
+            current.push(byte);
+        } else {
+            if current.is_empty() {
+                match running {
+                    Some(status) => current.push(status),
+                    None => continue, // orphan data byte
+                }
+            }
+            current.push(byte);
+        }
+        if current.len() == midi_message_len(current[0]) {
+            out.push(std::mem::take(&mut current));
+        }
+    }
+    out
+}
+
+/// Total length (status included) of a MIDI message from its status byte.
+fn midi_message_len(status: u8) -> usize {
+    match status & 0xF0 {
+        0x80 | 0x90 | 0xA0 | 0xB0 | 0xE0 => 3,
+        0xC0 | 0xD0 => 2,
+        _ => match status {
+            0xF2 => 3,        // Song Position Pointer
+            0xF1 | 0xF3 => 2, // MTC quarter frame, Song Select
+            _ => 1,
+        },
+    }
+}
+
+/// Handles one complete MIDI message (see `handle_input_message`).
+fn handle_one_message(app: &AppHandle, input_name: &str, data: &[u8]) {
     // System realtime messages (single byte): MIDI clock from a DAW or
     // any external device drives the metronome's tempo. A Stop message
     // (0xFC) is honored too, for an immediate fallback to the internal
@@ -488,10 +729,19 @@ fn handle_input_message(app: &AppHandle, input_name: &str, data: &[u8]) {
         let metronome = app.state::<MetronomeState>();
         match data[0] {
             MIDI_CLOCK => metronome::on_clock_pulse(&metronome, input_name),
-            MIDI_START | MIDI_CONTINUE => metronome::on_clock_start(&metronome, input_name),
+            MIDI_START => metronome::on_clock_start(&metronome, input_name),
+            MIDI_CONTINUE => metronome::on_clock_continue(&metronome, input_name),
             MIDI_STOP => metronome::on_clock_stop(&metronome, input_name),
             _ => {}
         }
+        return;
+    }
+
+    // Song Position Pointer: the position the next Continue resumes from
+    if data.len() == 3 && data[0] == MIDI_SONG_POSITION {
+        let sixteenths = (data[1] as u16 & 0x7F) | ((data[2] as u16 & 0x7F) << 7);
+        let metronome = app.state::<MetronomeState>();
+        metronome::on_song_position(&metronome, input_name, sixteenths);
         return;
     }
 
@@ -527,8 +777,7 @@ fn handle_input_message(app: &AppHandle, input_name: &str, data: &[u8]) {
         let synth_state = app.state::<SynthState>();
         synth_state
             .synths
-            .lock()
-            .unwrap()
+            .lock_safe()
             .values_mut()
             .filter(|synth| synth.config.midi_port == port && synth.config.channel == channel)
             .for_each(|synth| synth.config.volume = value);
@@ -545,7 +794,7 @@ fn handle_input_message(app: &AppHandle, input_name: &str, data: &[u8]) {
 
     let midi_state = app.state::<MidiState>();
     let updated = {
-        let mut known = midi_state.known_programs.lock().unwrap();
+        let mut known = midi_state.known_programs.lock_safe();
         let entry = known.entry((port, channel)).or_default();
         match channel_message {
             Message::Program(p) => entry.program = Some(p),
@@ -605,8 +854,7 @@ pub struct KnownProgram {
 pub fn get_known_programs(state: State<'_, MidiState>) -> Vec<KnownProgram> {
     state
         .known_programs
-        .lock()
-        .unwrap()
+        .lock_safe()
         .iter()
         .map(|(&(port, channel), &program)| KnownProgram {
             port,
@@ -614,4 +862,66 @@ pub fn get_known_programs(state: State<'_, MidiState>) -> Vec<KnownProgram> {
             program,
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_buffer_carrying_several_messages_is_split() {
+        // Bank Select MSB + LSB + Program Change in one CoreMIDI packet
+        let data = [0xB2, 0, 1, 0xB2, 32, 5, 0xC2, 41];
+        assert_eq!(
+            split_midi_messages(&data),
+            vec![vec![0xB2, 0, 1], vec![0xB2, 32, 5], vec![0xC2, 41]]
+        );
+    }
+
+    #[test]
+    fn running_status_is_honored() {
+        // CC 0 then CC 32 sharing one status byte, then a Program Change
+        let data = [0xB0, 0, 1, 32, 2, 0xC0, 7];
+        assert_eq!(
+            split_midi_messages(&data),
+            vec![vec![0xB0, 0, 1], vec![0xB0, 32, 2], vec![0xC0, 7]]
+        );
+    }
+
+    #[test]
+    fn realtime_bytes_are_extracted_even_inside_a_message() {
+        // A clock pulse interleaved inside a Control Change
+        let data = [0xB0, 7, MIDI_CLOCK, 100, MIDI_START];
+        assert_eq!(
+            split_midi_messages(&data),
+            vec![vec![MIDI_CLOCK], vec![0xB0, 7, 100], vec![MIDI_START]]
+        );
+    }
+
+    #[test]
+    fn sysex_song_position_and_orphan_bytes() {
+        // SysEx skipped, then a Song Position Pointer (3 bytes)
+        let data = [0xF0, 0x7E, 0x01, 0xF7, MIDI_SONG_POSITION, 0x10, 0x00];
+        assert_eq!(
+            split_midi_messages(&data),
+            vec![vec![MIDI_SONG_POSITION, 0x10, 0x00]]
+        );
+        // Data bytes without any status are dropped, a truncated message
+        // is never emitted
+        assert!(split_midi_messages(&[0x10, 0x20]).is_empty());
+        assert!(split_midi_messages(&[0xB0, 7]).is_empty());
+        // A system common message cancels the running status
+        assert_eq!(
+            split_midi_messages(&[0xC0, 1, 0xF6, 2]),
+            vec![vec![0xC0, 1], vec![0xF6]]
+        );
+    }
+
+    #[test]
+    fn port_names_normalize_across_in_and_out() {
+        assert_eq!(normalize_port_name("Digitakt In"), "digitakt");
+        assert_eq!(normalize_port_name("Digitakt Out"), "digitakt");
+        assert_eq!(normalize_port_name("MIDI Output"), "midi");
+        assert_eq!(normalize_port_name("Synth"), "synth");
+    }
 }

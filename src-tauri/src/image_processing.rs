@@ -1,11 +1,71 @@
-use crate::config::ConfigState;
+use crate::config::{ConfigState, MAX_IMAGE_SIDE};
 use crate::error::{err, AppError};
+use crate::locks::MutexExt;
 use crate::state::ImageState;
 use base64::{engine::general_purpose, Engine as _};
 use image::{DynamicImage, GenericImageView, ImageFormat};
 use serde::{Deserialize, Serialize};
 use std::io::Cursor;
-use tauri::State;
+use std::sync::atomic::Ordering;
+use tauri::{AppHandle, Manager};
+
+/// Decoding limits of every image entering the app (file import, session
+/// load): a decompression bomb (a tiny file declaring a huge canvas) is
+/// refused before any allocation.
+fn decode_limits() -> image::Limits {
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(DECODE_MAX_SIDE);
+    limits.max_image_height = Some(DECODE_MAX_SIDE);
+    limits.max_alloc = Some(1024 * 1024 * 1024);
+    limits
+}
+
+/// Largest side accepted at decode time: imports are downscaled right
+/// after (to `max_image_size`, at most `MAX_IMAGE_SIDE`), so the original
+/// file may be larger than what the app keeps — but not unboundedly.
+const DECODE_MAX_SIDE: u32 = 16_384;
+
+/// Decodes an in-memory image (any supported format) within the app's
+/// decoding limits.
+pub(crate) fn decode_image_bounded(bytes: &[u8]) -> image::ImageResult<DynamicImage> {
+    let mut reader = image::ImageReader::new(Cursor::new(bytes)).with_guessed_format()?;
+    reader.limits(decode_limits());
+    reader.decode()
+}
+
+/// Opens an image file within the app's decoding limits.
+fn open_image_bounded(path: &std::path::Path) -> image::ImageResult<DynamicImage> {
+    let mut reader = image::ImageReader::open(path)?.with_guessed_format()?;
+    reader.limits(decode_limits());
+    reader.decode()
+}
+
+/// Downscales an image whose longest side exceeds `max_size` (0 =
+/// unlimited), and in any case `MAX_IMAGE_SIDE`, keeping its ratio.
+pub(crate) fn fit_image_size(img: DynamicImage, max_size: u32) -> DynamicImage {
+    let limit = if max_size == 0 {
+        MAX_IMAGE_SIDE
+    } else {
+        max_size.min(MAX_IMAGE_SIDE)
+    };
+    let (w, h) = img.dimensions();
+    if w.max(h) > limit {
+        img.resize(limit, limit, image::imageops::FilterType::Lanczos3)
+    } else {
+        img
+    }
+}
+
+/// Runs a CPU-heavy image job on the blocking thread pool: synchronous
+/// commands run on the main thread, where a large transform would freeze
+/// the whole UI (and the projection mirror) for its duration.
+async fn blocking<T: Send + 'static>(
+    job: impl FnOnce() -> Result<T, AppError> + Send + 'static,
+) -> Result<T, AppError> {
+    tauri::async_runtime::spawn_blocking(job)
+        .await
+        .map_err(|e| err("processing_failed").with_param("details", e))?
+}
 
 #[derive(Serialize)]
 pub struct LoadedImageInfo {
@@ -50,46 +110,41 @@ fn rgba_ipc_response(img: &DynamicImage) -> tauri::ipc::Response {
 }
 
 #[tauri::command]
-pub async fn load_image(
-    app_handle: tauri::AppHandle,
-    state: State<'_, ImageState>,
-    config_state: State<'_, ConfigState>,
-) -> Result<LoadedImageInfo, AppError> {
-    use tauri_plugin_dialog::DialogExt;
+pub async fn load_image(app: AppHandle) -> Result<LoadedImageInfo, AppError> {
+    blocking(move || {
+        use tauri_plugin_dialog::DialogExt;
 
-    let file_path = app_handle
-        .dialog()
-        .file()
-        .add_filter("Images", &["png", "jpg", "jpeg", "bmp", "gif"])
-        .blocking_pick_file();
+        let file_path = app
+            .dialog()
+            .file()
+            .add_filter("Images", &["png", "jpg", "jpeg", "bmp", "gif"])
+            .blocking_pick_file();
 
-    let path = file_path.ok_or_else(|| err("no_file_selected"))?;
+        let path = file_path.ok_or_else(|| err("no_file_selected"))?;
+        let path_buf = path.as_path().ok_or_else(|| err("invalid_file_path"))?;
 
-    let path_buf = path.as_path().ok_or_else(|| err("invalid_file_path"))?;
+        let img = open_image_bounded(path_buf)
+            .map_err(|e| err("image_load_error").with_param("details", e))?;
 
-    let mut img =
-        image::open(path_buf).map_err(|e| err("image_load_error").with_param("details", e))?;
+        // Downscale oversized originals so the app stays responsive
+        let max_size = app.state::<ConfigState>().config.lock_safe().max_image_size;
+        let img = fit_image_size(img, max_size);
 
-    // Downscale oversized originals so the app stays responsive
-    let max_size = config_state.config.lock().unwrap().max_image_size;
-    if max_size > 0 {
-        let (w, h) = img.dimensions();
-        if w.max(h) > max_size {
-            img = img.resize(max_size, max_size, image::imageops::FilterType::Lanczos3);
-        }
-    }
+        let (width, height) = img.dimensions();
+        let base64_png = encode_to_base64_png(&img)?;
 
-    let (width, height) = img.dimensions();
-    let base64_png = encode_to_base64_png(&img)?;
+        // The grid is re-rendered by the frontend right after
+        // (apply_image_adjustments): until then no synth may read the
+        // full-resolution original as its grid
+        app.state::<ImageState>().replace_original(img);
 
-    *state.original.lock().unwrap() = Some(img.clone());
-    *state.processed.lock().unwrap() = Some(img);
-
-    Ok(LoadedImageInfo {
-        base64_png,
-        orig_width: width,
-        orig_height: height,
+        Ok(LoadedImageInfo {
+            base64_png,
+            orig_width: width,
+            orig_height: height,
+        })
     })
+    .await
 }
 
 #[derive(Deserialize)]
@@ -321,105 +376,107 @@ fn apply_transform(img: &DynamicImage, params: &TransformParams) -> DynamicImage
     out
 }
 
-/// Crops the stored original image in place, in original pixel coordinates.
-#[tauri::command]
-pub fn crop_image(
-    state: State<'_, ImageState>,
-    x: u32,
-    y: u32,
-    width: u32,
-    height: u32,
-) -> Result<LoadedImageInfo, AppError> {
-    let mut original_guard = state.original.lock().unwrap();
-    let original = original_guard
-        .as_mut()
-        .ok_or_else(|| err("no_image_loaded"))?;
-
-    let (ow, oh) = original.dimensions();
-    let x = x.min(ow.saturating_sub(1));
-    let y = y.min(oh.saturating_sub(1));
-    let width = width.clamp(1, ow - x);
-    let height = height.clamp(1, oh - y);
-
-    let cropped = image::imageops::crop_imm(original, x, y, width, height).to_image();
-    let img = DynamicImage::ImageRgba8(cropped);
-    *original = img.clone();
-    drop(original_guard);
-
-    let (w, h) = img.dimensions();
-    let base64_png = encode_to_base64_png(&img)?;
-    *state.processed.lock().unwrap() = Some(img);
-
-    Ok(LoadedImageInfo {
-        base64_png,
-        orig_width: w,
-        orig_height: h,
-    })
-}
-
-/// Computes the transformed image for preview purposes, without touching
-/// the stored state.
-#[tauri::command]
-pub fn preview_image_transform(
-    state: State<'_, ImageState>,
-    params: TransformParams,
-) -> Result<tauri::ipc::Response, AppError> {
-    let guard = state.original.lock().unwrap();
-    let original = guard.as_ref().ok_or_else(|| err("no_image_loaded"))?;
-
-    let img = apply_transform(original, &params);
-    Ok(rgba_ipc_response(&img))
-}
-
-/// Applies the transform chain to the stored original image, in place.
-#[tauri::command]
-pub fn apply_image_transform(
-    state: State<'_, ImageState>,
-    params: TransformParams,
-) -> Result<LoadedImageInfo, AppError> {
-    let mut original_guard = state.original.lock().unwrap();
-    let original = original_guard
-        .as_mut()
-        .ok_or_else(|| err("no_image_loaded"))?;
-
-    let img = apply_transform(original, &params);
-    *original = img.clone();
-    drop(original_guard);
-
+/// Replaces the stored original by `img` (after a reshape) and returns
+/// its info. The processed grid is cleared until the frontend re-renders
+/// it: the old grid no longer matches the original.
+fn install_original(state: &ImageState, img: DynamicImage) -> Result<LoadedImageInfo, AppError> {
     let (width, height) = img.dimensions();
     let base64_png = encode_to_base64_png(&img)?;
-    *state.processed.lock().unwrap() = Some(img);
-
+    state.replace_original(img);
     Ok(LoadedImageInfo {
         base64_png,
         orig_width: width,
         orig_height: height,
     })
+}
+
+/// A copy of the stored original, taken under its lock (released right
+/// away: the heavy work runs on the copy).
+fn original_copy(state: &ImageState) -> Result<DynamicImage, AppError> {
+    state
+        .original
+        .lock_safe()
+        .clone()
+        .ok_or_else(|| err("no_image_loaded"))
+}
+
+/// Crops the stored original image in place, in original pixel coordinates.
+#[tauri::command]
+pub async fn crop_image(
+    app: AppHandle,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+) -> Result<LoadedImageInfo, AppError> {
+    blocking(move || {
+        let state = app.state::<ImageState>();
+        let original = original_copy(&state)?;
+        let (ow, oh) = original.dimensions();
+        if ow == 0 || oh == 0 {
+            return Err(err("no_image_loaded"));
+        }
+        let x = x.min(ow - 1);
+        let y = y.min(oh - 1);
+        let width = width.clamp(1, ow - x);
+        let height = height.clamp(1, oh - y);
+
+        let cropped = image::imageops::crop_imm(&original, x, y, width, height).to_image();
+        install_original(&state, DynamicImage::ImageRgba8(cropped))
+    })
+    .await
+}
+
+/// Computes the transformed image for preview purposes, without touching
+/// the stored state. The preview is computed on a copy downscaled to the
+/// preview size (the viewer never shows more), which keeps the live
+/// slider drag responsive on large originals.
+#[tauri::command]
+pub async fn preview_image_transform(
+    app: AppHandle,
+    params: TransformParams,
+) -> Result<tauri::ipc::Response, AppError> {
+    blocking(move || {
+        let original = original_copy(&app.state::<ImageState>())?;
+        let source = fit_image_size(original, PREVIEW_MAX_SIDE);
+        let img = apply_transform(&source, &params);
+        Ok(rgba_ipc_response(&img))
+    })
+    .await
+}
+
+/// Longest side of the live transform preview.
+const PREVIEW_MAX_SIDE: u32 = 1024;
+
+/// Applies the transform chain to the stored original image, in place. The
+/// result is capped to the configured image size: a fine rotation enlarges
+/// the canvas, and repeated applies would otherwise grow it without bound.
+#[tauri::command]
+pub async fn apply_image_transform(
+    app: AppHandle,
+    params: TransformParams,
+) -> Result<LoadedImageInfo, AppError> {
+    blocking(move || {
+        let state = app.state::<ImageState>();
+        let original = original_copy(&state)?;
+        let img = apply_transform(&original, &params);
+        let max_size = app.state::<ConfigState>().config.lock_safe().max_image_size;
+        install_original(&state, fit_image_size(img, max_size))
+    })
+    .await
 }
 
 /// Rotates the loaded original image by 90° clockwise, in place: the
 /// stored original becomes the rotated image, so subsequent adjustments
 /// (and the grid deduced from its ratio) apply to the rotated version.
 #[tauri::command]
-pub fn rotate_image(state: State<'_, ImageState>) -> Result<LoadedImageInfo, AppError> {
-    let mut original_guard = state.original.lock().unwrap();
-    let original = original_guard
-        .as_mut()
-        .ok_or_else(|| err("no_image_loaded"))?;
-
-    *original = original.rotate90();
-    let img = original.clone();
-    drop(original_guard);
-
-    let (width, height) = img.dimensions();
-    let base64_png = encode_to_base64_png(&img)?;
-    *state.processed.lock().unwrap() = Some(img);
-
-    Ok(LoadedImageInfo {
-        base64_png,
-        orig_width: width,
-        orig_height: height,
+pub async fn rotate_image(app: AppHandle) -> Result<LoadedImageInfo, AppError> {
+    blocking(move || {
+        let state = app.state::<ImageState>();
+        let original = original_copy(&state)?;
+        install_original(&state, original.rotate90())
     })
+    .await
 }
 
 /// Renders the grid image from the original: downsampling to the
@@ -431,10 +488,13 @@ pub(crate) fn render_processed(original: &DynamicImage, params: &AdjustmentParam
 
     // --- Actual downsampling: grid_width becomes the number of columns/notes ---
     // The ratio is always deduced from the original image (no independent grid_height).
-    let target_w = params.grid_width.max(1);
-    let target_h = ((orig_h as f64) * (target_w as f64) / (orig_w as f64))
+    // The grid can never have more columns than the original has pixels
+    // (an unbounded value would allocate gigabytes), nor rows beyond the
+    // original's
+    let target_w = params.grid_width.clamp(1, orig_w.max(1));
+    let target_h = ((orig_h as f64) * (target_w as f64) / (orig_w.max(1) as f64))
         .round()
-        .max(1.0) as u32;
+        .clamp(1.0, orig_h.max(1) as f64) as u32;
 
     let mut img = original.resize_exact(target_w, target_h, image::imageops::FilterType::Nearest);
 
@@ -479,24 +539,42 @@ pub(crate) fn render_processed(original: &DynamicImage, params: &AdjustmentParam
     img
 }
 
+/// Renders the grid from the original (see `render_processed`) and makes
+/// it the image the synths read. Runs off the main thread: it is called
+/// continuously while a slider is dragged.
 #[tauri::command]
-pub fn apply_image_adjustments(
-    state: State<'_, ImageState>,
+pub async fn apply_image_adjustments(
+    app: AppHandle,
     params: AdjustmentParams,
 ) -> Result<tauri::ipc::Response, AppError> {
-    let original_guard = state.original.lock().unwrap();
-    let original = original_guard
-        .as_ref()
-        .ok_or_else(|| err("no_image_loaded"))?;
-
-    let img = render_processed(original, &params);
-
-    let response = rgba_ipc_response(&img);
-
-    drop(original_guard);
-    *state.processed.lock().unwrap() = Some(img);
-
-    Ok(response)
+    blocking(move || {
+        let state = app.state::<ImageState>();
+        // Render from a snapshot of the original (its lock is released
+        // during the render), remembering which original it was
+        let (original, generation) = {
+            let original = state.original.lock_safe();
+            let generation = state.generation.load(Ordering::Acquire);
+            (
+                original.clone().ok_or_else(|| err("no_image_loaded"))?,
+                generation,
+            )
+        };
+        let img = render_processed(&original, &params);
+        drop(original);
+        let response = rgba_ipc_response(&img);
+        // Install the grid only if the original did not change meanwhile
+        // (a reshape or a new image racing this render): checked under the
+        // original lock, so no reshape can slip in between
+        {
+            let _original = state.original.lock_safe();
+            if state.generation.load(Ordering::Acquire) != generation {
+                return Err(err("image_changed"));
+            }
+            *state.processed.lock_safe() = Some(img);
+        }
+        Ok(response)
+    })
+    .await
 }
 
 /// Adjusts color vibrance. Like saturation, but softer: `factor` is a

@@ -1,14 +1,19 @@
 use base64::{engine::general_purpose, Engine as _};
-use image::{DynamicImage, GenericImageView, ImageFormat};
+use image::{GenericImageView, ImageFormat};
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Cursor;
-use tauri::{AppHandle, State};
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use tauri::{AppHandle, Manager};
 
+use crate::config::ConfigState;
 use crate::error::{err, AppError};
-use crate::image_processing::encode_to_base64_png;
-use crate::state::SynthConfig;
-use crate::state::{ImageState, MidiState, ProgramState, SynthState, Zone};
+use crate::image_processing::{decode_image_bounded, encode_to_base64_png, fit_image_size};
+use crate::locks::MutexExt;
+use crate::state::{ImageState, MidiState, ProgramState, Synth, SynthConfig, SynthState, Zone};
+use crate::zone::normalize_zones;
 
 /// Frontend-owned state passed on save: metronome tempo, image processing
 /// sliders, and the synths' display colors (in list order).
@@ -176,24 +181,121 @@ pub struct LoadedSession {
     pub synths: Vec<SessionSynth>,
 }
 
+/// Session files the user picked through a native dialog during this run
+/// (opened or saved as). `save_session` only writes to a path given by the
+/// webview when it is one of these: the webview can update the current
+/// session file, but never choose an arbitrary path on disk (a script
+/// injected in the page could otherwise overwrite any user file).
+#[derive(Default)]
+pub struct SessionPaths {
+    paths: Mutex<HashSet<PathBuf>>,
+}
+
+impl SessionPaths {
+    fn allow(&self, path: &Path) {
+        self.paths.lock_safe().insert(path.to_path_buf());
+    }
+
+    fn is_allowed(&self, path: &Path) -> bool {
+        self.paths.lock_safe().contains(path)
+    }
+}
+
+/// Validated restore data of one session synth (see `validate_session`).
+struct RestoredSynth {
+    synth: Synth,
+    program: Option<ProgramState>,
+}
+
+/// A synth color as stored in / restored from a session: a "#rrggbb" hex
+/// string, anything else (it ends up in a CSS property) falls back to a
+/// neutral default.
+fn session_color(color: &str) -> String {
+    if crate::config::is_valid_hex_color(color) {
+        color.to_ascii_lowercase()
+    } else {
+        "#808080".into()
+    }
+}
+
+/// Synth ids and display numbers must stay well below the counters' range.
+const MAX_SESSION_ID: u32 = 1 << 20;
+
+/// Longest custom synth name kept on load.
+const MAX_NAME_CHARS: usize = 200;
+
+/// A session file larger than this is refused before being read (the
+/// image of a session is capped to `MAX_IMAGE_SIDE` anyway).
+const MAX_SESSION_BYTES: u64 = 512 * 1024 * 1024;
+
+/// Checks a parsed session file and builds its synths, rejecting what the
+/// app could never have produced (`session_invalid`): duplicate synth
+/// ids, ids or display numbers at the edge of the counters, malformed
+/// zones. Hand-editable values are brought into range (see
+/// `SynthConfig::sanitized`), so a restored synth never holds a value the
+/// UI could not set.
+fn validate_session(file: &SessionFile) -> Result<Vec<RestoredSynth>, AppError> {
+    let invalid = |details: &str| err("session_invalid").with_param("details", details);
+    let mut ids = HashSet::new();
+    let mut restored = Vec::with_capacity(file.synths.len());
+    for entry in &file.synths {
+        if entry.id == 0 || entry.id >= MAX_SESSION_ID || !ids.insert(entry.id) {
+            return Err(invalid("synth id"));
+        }
+        let display_number = entry.display_number.unwrap_or(entry.id);
+        if display_number == 0 || display_number >= MAX_SESSION_ID {
+            return Err(invalid("display number"));
+        }
+        let mut synth = entry.settings.to_synth(entry.id);
+        synth.display_number = display_number;
+        synth.name = entry
+            .name
+            .as_deref()
+            .map(str::trim)
+            .filter(|n| !n.is_empty())
+            .map(|n| n.chars().take(MAX_NAME_CHARS).collect());
+        synth.zones = normalize_zones(entry.zones.clone()).map_err(|_| invalid("zones"))?;
+        synth.mute_zones =
+            normalize_zones(entry.mute_zones.clone()).map_err(|_| invalid("mute zones"))?;
+        let program = entry.program.map(|p| ProgramState {
+            bank_msb: p.bank_msb.map(|v| v & 0x7F),
+            bank_lsb: p.bank_lsb.map(|v| v & 0x7F),
+            program: p.program.map(|v| v & 0x7F),
+        });
+        restored.push(RestoredSynth { synth, program });
+    }
+    Ok(restored)
+}
+
 /// Saves the current work session to a `.wysiwyl` file. When `path` is
 /// provided the session is written there directly (updating a previously
-/// loaded one); otherwise a native save dialog is shown. Returns the
-/// path actually written, or `None` when the dialog was canceled (not an
-/// error).
+/// loaded or saved one) — it must be a file picked through a dialog during
+/// this run, otherwise a native save dialog is shown. Returns the path
+/// actually written, or `None` when the dialog was canceled (not an
+/// error). The write is atomic: a crash mid-save never destroys the
+/// previous version of the file.
 #[tauri::command]
 pub async fn save_session(
     app: AppHandle,
     ui: SessionUi,
     path: Option<String>,
-    image_state: State<'_, ImageState>,
-    synth_state: State<'_, SynthState>,
-    midi_state: State<'_, MidiState>,
+) -> Result<Option<String>, AppError> {
+    tauri::async_runtime::spawn_blocking(move || save_session_blocking(&app, ui, path))
+        .await
+        .map_err(|e| err("session_write_error").with_param("details", e))?
+}
+
+fn save_session_blocking(
+    app: &AppHandle,
+    ui: SessionUi,
+    path: Option<String>,
 ) -> Result<Option<String>, AppError> {
     use tauri_plugin_dialog::DialogExt;
 
-    let path = match path {
-        Some(p) => std::path::PathBuf::from(p),
+    let allowed = app.state::<SessionPaths>();
+    let known = path.map(PathBuf::from).filter(|p| allowed.is_allowed(p));
+    let path = match known {
+        Some(p) => p,
         None => {
             let file_path = app
                 .dialog()
@@ -211,47 +313,60 @@ pub async fn save_session(
         }
     };
 
-    // Encode the original image (the processed grid is re-derived from it)
-    let image_guard = image_state.original.lock().unwrap();
-    let Some(img) = image_guard.as_ref() else {
-        return Err(err("no_image_loaded"));
+    // Snapshot the state under the locks, then release them before the
+    // (slow) encoding and the disk write: the metronome and the image
+    // commands must not wait for a save.
+    let original = app
+        .state::<ImageState>()
+        .original
+        .lock_safe()
+        .clone()
+        .ok_or_else(|| err("no_image_loaded"))?;
+
+    // Synths in display order, as given by the frontend's color list
+    let synths: Vec<SessionSynth> = {
+        let synth_state = app.state::<SynthState>();
+        let midi_state = app.state::<MidiState>();
+        let synths_guard = synth_state.synths.lock_safe();
+        let known_programs = midi_state.known_programs.lock_safe();
+        let mut seen = HashSet::new();
+        ui.synth_colors
+            .iter()
+            .filter(|entry| seen.insert(entry.id))
+            .filter_map(|entry| {
+                let synth = synths_guard.get(&entry.id)?;
+                Some(SessionSynth {
+                    id: entry.id,
+                    display_number: Some(synth.display_number),
+                    name: synth.name.clone(),
+                    color: session_color(&entry.color),
+                    zones: synth.zones.clone(),
+                    mute_zones: synth.mute_zones.clone(),
+                    // Snapshot of the channel state, so the session restores
+                    // the same sounds even if the synths changed channels
+                    program: known_programs
+                        .get(&(synth.config.midi_port, synth.config.channel))
+                        .copied()
+                        .filter(|p| p.is_known()),
+                    settings: SynthConfig::from_synth(synth),
+                })
+            })
+            .collect()
     };
+
     let mut buffer = Vec::new();
-    img.write_to(&mut Cursor::new(&mut buffer), ImageFormat::Png)
+    original
+        .write_to(&mut Cursor::new(&mut buffer), ImageFormat::Png)
         .map_err(|e| err("png_encoding_error").with_param("details", e))?;
+    drop(original);
     let image = SessionImage {
         data: general_purpose::STANDARD.encode(&buffer),
     };
-
-    // Synths in display order, as given by the frontend's color list
-    let synths_guard = synth_state.synths.lock().unwrap();
-    let known_programs = midi_state.known_programs.lock().unwrap();
-    let synths = ui
-        .synth_colors
-        .iter()
-        .filter_map(|entry| {
-            let synth = synths_guard.get(&entry.id)?;
-            Some(SessionSynth {
-                id: entry.id,
-                display_number: Some(synth.display_number),
-                name: synth.name.clone(),
-                color: entry.color.clone(),
-                zones: synth.zones.clone(),
-                mute_zones: synth.mute_zones.clone(),
-                // Snapshot of the channel state, so the session restores the
-                // same sounds even if the synths changed channels since
-                program: known_programs
-                    .get(&(synth.config.midi_port, synth.config.channel))
-                    .copied()
-                    .filter(|p| p.is_known()),
-                settings: SynthConfig::from_synth(synth),
-            })
-        })
-        .collect();
+    drop(buffer);
 
     let file = SessionFile {
         version: SESSION_VERSION,
-        bpm: ui.bpm,
+        bpm: ui.bpm.clamp(20, 300),
         image,
         image_settings: SessionImageSettings {
             grid_slider: ui.grid_slider,
@@ -270,21 +385,27 @@ pub async fn save_session(
 
     let json = serde_json::to_string_pretty(&file)
         .map_err(|e| err("session_write_error").with_param("details", e))?;
-    fs::write(&path, json).map_err(|e| err("session_write_error").with_param("details", e))?;
+    crate::fsutil::write_atomic(&path, json.as_bytes())
+        .map_err(|e| err("session_write_error").with_param("details", e))?;
 
+    allowed.allow(&path);
     Ok(Some(path.to_string_lossy().into_owned()))
 }
-/// Loads a `.wysiwyl` (or legacy `.soundmap`) file picked through a native open dialog and
-/// reinstalls its whole state (image, synths) into the backend. Returns
-/// the session's content for the frontend to rebuild its UI; `None` means
-/// the dialog was canceled.
+
+/// Loads a `.wysiwyl` (or legacy `.soundmap`) file picked through a native
+/// open dialog and reinstalls its whole state (image, synths) into the
+/// backend. Returns the session's content for the frontend to rebuild its
+/// UI; `None` means the dialog was canceled. The file is fully parsed,
+/// decoded and validated before anything is replaced: a refused file
+/// leaves the current session untouched.
 #[tauri::command]
-pub async fn load_session(
-    app: AppHandle,
-    image_state: State<'_, ImageState>,
-    synth_state: State<'_, SynthState>,
-    midi_state: State<'_, MidiState>,
-) -> Result<Option<LoadedSession>, AppError> {
+pub async fn load_session(app: AppHandle) -> Result<Option<LoadedSession>, AppError> {
+    tauri::async_runtime::spawn_blocking(move || load_session_blocking(&app))
+        .await
+        .map_err(|e| err("session_read_error").with_param("details", e))?
+}
+
+fn load_session_blocking(app: &AppHandle) -> Result<Option<LoadedSession>, AppError> {
     use tauri_plugin_dialog::DialogExt;
 
     let file_path = app
@@ -296,10 +417,19 @@ pub async fn load_session(
     let Some(path) = file_path else {
         return Ok(None); // canceled
     };
-    let path = path.as_path().ok_or_else(|| err("invalid_file_path"))?;
+    let path = path
+        .as_path()
+        .ok_or_else(|| err("invalid_file_path"))?
+        .to_path_buf();
 
-    let content =
-        fs::read_to_string(path).map_err(|e| err("session_read_error").with_param("details", e))?;
+    let size = fs::metadata(&path)
+        .map_err(|e| err("session_read_error").with_param("details", e))?
+        .len();
+    if size > MAX_SESSION_BYTES {
+        return Err(err("session_invalid").with_param("details", "file size"));
+    }
+    let content = fs::read_to_string(&path)
+        .map_err(|e| err("session_read_error").with_param("details", e))?;
 
     // Version gate, before any struct parsing: a session of an older
     // format (rectangular zones, versions 1-2) is refused with a clear
@@ -307,6 +437,7 @@ pub async fn load_session(
     // structure cannot be trusted enough to migrate reliably.
     let raw: serde_json::Value = serde_json::from_str(&content)
         .map_err(|e| err("session_parse_error").with_param("details", e))?;
+    drop(content);
     let version = raw
         .get("version")
         .and_then(|v| v.as_u64())
@@ -315,111 +446,105 @@ pub async fn load_session(
         return Err(err("session_version_unsupported").with_param("version", version));
     }
 
-    let file: SessionFile = serde_json::from_value(raw)
+    let mut file: SessionFile = serde_json::from_value(raw)
         .map_err(|e| err("session_parse_error").with_param("details", e))?;
+    let restored = validate_session(&file)?;
 
-    // Decode the original image
+    // Decode the original image, within the app's size limits
     let bytes = general_purpose::STANDARD
-        .decode(&file.image.data)
+        .decode(std::mem::take(&mut file.image.data))
         .map_err(|e| err("session_parse_error").with_param("details", e))?;
-    let img: DynamicImage = image::load_from_memory(&bytes)
+    let img = decode_image_bounded(&bytes)
         .map_err(|e| err("session_parse_error").with_param("details", e))?;
+    drop(bytes);
+    let max_size = app.state::<ConfigState>().config.lock_safe().max_image_size;
+    let img = fit_image_size(img, max_size);
     let (orig_width, orig_height) = img.dimensions();
     let image_base64 = encode_to_base64_png(&img)?;
 
     // Reinstall the image first, then the synths (same lock order as the
-    // metronome thread: image, then synths)
-    {
-        let mut original = image_state.original.lock().unwrap();
-        let mut processed = image_state.processed.lock().unwrap();
-        *original = Some(img.clone());
-        *processed = Some(img);
-    }
+    // metronome thread: image, then synths). The processed grid is reset:
+    // the frontend re-renders it right after (apply_image_adjustments), and
+    // until then no synth can read a full-resolution image as its grid.
+    let image_state = app.state::<ImageState>();
+    let synth_state = app.state::<SynthState>();
+    let midi_state = app.state::<MidiState>();
+    image_state.replace_original(img);
 
+    let mut to_send = HashMap::<(usize, u8), ProgramState>::new();
+    let synths_view: Vec<SessionSynth>;
     {
-        let mut synths = synth_state.synths.lock().unwrap();
-        // Turn off any sounding note before dropping the old synths
+        let mut synths = synth_state.synths.lock_safe();
+        // Turn off any sounding note (and pending gate) before dropping
+        // the old synths
         for synth in synths.values_mut() {
-            if synth.playback.note_is_on {
-                midi_state.note_off(
-                    synth.config.midi_port,
-                    synth.config.channel,
-                    synth.playback.note,
-                );
-                synth.playback.note_is_on = false;
-            }
-            for voice in synth.playback.poly_voices.iter_mut() {
-                if voice.note_is_on {
-                    midi_state.note_off(synth.config.midi_port, synth.config.channel, voice.note);
-                    voice.note_is_on = false;
-                }
-            }
+            synth.stop_playback(&midi_state);
         }
         synths.clear();
         let mut max_id = 0;
         let mut max_display_number = 0;
-        for entry in &file.synths {
-            let mut synth = entry.settings.to_synth(entry.id);
-            synth.name = entry.name.clone();
-            synth.zones = entry.zones.clone();
-            synth.invalidate_sequence();
-            synth.mute_zones = entry.mute_zones.clone();
-            // Sessions predating the display number: fall back to the
-            // saved id, itself stable across this session's lifetime
-            synth.display_number = entry.display_number.unwrap_or(entry.id);
-            max_id = max_id.max(entry.id);
+        for RestoredSynth { synth, program } in restored {
+            max_id = max_id.max(synth.id);
             max_display_number = max_display_number.max(synth.display_number);
-            synths.insert(entry.id, synth);
+            // Reconfigure the instruments: each saved program once per
+            // (port, channel) — when several synths share a channel with
+            // conflicting programs, the last one in file order wins
+            if let Some(program) = program {
+                to_send.insert((synth.config.midi_port, synth.config.channel), program);
+            }
+            synths.insert(synth.id, synth);
         }
-        *synth_state.next_id.lock().unwrap() = max_id + 1;
+        *synth_state.next_id.lock_safe() = max_id + 1;
         // The display-number counter continues past the highest restored
         // number, so a newly created synth never collides with an
         // existing default title
-        *synth_state.next_display_number.lock().unwrap() = max_display_number + 1;
+        *synth_state.next_display_number.lock_safe() = max_display_number + 1;
+
+        // The frontend rebuilds its UI from the validated, sanitized state
+        synths_view = file
+            .synths
+            .iter()
+            .filter_map(|entry| {
+                let synth = synths.get(&entry.id)?;
+                Some(SessionSynth {
+                    id: synth.id,
+                    display_number: Some(synth.display_number),
+                    name: synth.name.clone(),
+                    color: session_color(&entry.color),
+                    zones: synth.zones.clone(),
+                    mute_zones: synth.mute_zones.clone(),
+                    program: entry.program,
+                    settings: synth.config.clone(),
+                })
+            })
+            .collect();
     }
 
-    // Reconfigure the instruments: send each saved program once per
-    // (port, channel) — when several synths share a channel with
-    // conflicting programs, the last one in file order wins. Ports that
-    // no longer exist silently skip the send (the program is still
-    // remembered and displayed).
-    {
-        let mut to_send = std::collections::HashMap::<(usize, u8), ProgramState>::new();
-        for entry in &file.synths {
-            let Some(program) = entry.program else {
-                continue;
-            };
-            let (port, channel) = {
-                let synths = synth_state.synths.lock().unwrap();
-                let Some(synth) = synths.get(&entry.id) else {
-                    continue;
-                };
-                (synth.config.midi_port, synth.config.channel)
-            };
-            to_send.insert((port, channel), program);
-        }
-        for (&(port, channel), &program) in &to_send {
-            // Banks travel with the program in one explicit send: the
-            // instrument is reconfigured even if it transmits nothing.
-            midi_state.send_program_change(
-                port,
-                channel,
-                program.program,
-                program.bank_msb,
-                program.bank_lsb,
-            );
-        }
+    // Outside the synth lock. Ports that no longer exist silently skip the
+    // send (the program is still remembered and displayed). Banks travel
+    // with the program in one explicit send: the instrument is
+    // reconfigured even if it transmits nothing.
+    for (&(port, channel), &program) in &to_send {
+        midi_state.send_program_change(
+            port,
+            channel,
+            program.program,
+            program.bank_msb,
+            program.bank_lsb,
+        );
     }
+
+    app.state::<SessionPaths>().allow(&path);
 
     Ok(Some(LoadedSession {
         version: file.version,
         path: path.to_string_lossy().into_owned(),
-        bpm: file.bpm,
+        bpm: file.bpm.clamp(20, 300),
         image_base64,
         orig_width,
         orig_height,
         image_settings: file.image_settings,
-        synths: file.synths,
+        synths: synths_view,
     }))
 }
 
@@ -551,6 +676,79 @@ mod tests {
             "mirror_zones_mode": "sometimes"
         }"##;
         assert!(serde_json::from_str::<SessionImageSettings>(invalid).is_err());
+    }
+
+    fn session_with(synths: Vec<SessionSynth>) -> SessionFile {
+        SessionFile {
+            version: SESSION_VERSION,
+            bpm: 120,
+            image: SessionImage {
+                data: String::new(),
+            },
+            image_settings: serde_json::from_str(
+                r#"{ "grid_slider": 1, "contrast": 0, "brightness": 0, "posterize_levels": null }"#,
+            )
+            .unwrap(),
+            synths,
+        }
+    }
+
+    fn session_synth(id: u32) -> SessionSynth {
+        SessionSynth {
+            id,
+            display_number: None,
+            name: None,
+            color: "#3498db".into(),
+            zones: vec![],
+            mute_zones: vec![],
+            program: None,
+            settings: SynthConfig::default(),
+        }
+    }
+
+    #[test]
+    fn validate_session_rejects_duplicate_and_extreme_ids() {
+        let dup = session_with(vec![session_synth(1), session_synth(1)]);
+        assert_eq!(
+            validate_session(&dup).err().unwrap().code,
+            "session_invalid"
+        );
+        let huge = session_with(vec![session_synth(u32::MAX)]);
+        assert_eq!(
+            validate_session(&huge).err().unwrap().code,
+            "session_invalid"
+        );
+        let zero = session_with(vec![session_synth(0)]);
+        assert!(validate_session(&zero).is_err());
+        let ok = session_with(vec![session_synth(2), session_synth(1)]);
+        assert_eq!(validate_session(&ok).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn validate_session_sanitizes_hand_edited_values() {
+        let mut entry = session_synth(1);
+        entry.settings.channel = 99;
+        entry.settings.tempo_ratio = 1.33;
+        entry.settings.note_lengths = vec![];
+        entry.name = Some("   ".into());
+        entry.zones = vec![Zone {
+            order: 0,
+            runs: vec![
+                crate::zone::RowRun { y: 1, x0: 3, x1: 1 },
+                crate::zone::RowRun { y: 0, x0: 0, x1: 0 },
+            ],
+        }];
+        let restored = validate_session(&session_with(vec![entry])).unwrap();
+        let synth = &restored[0].synth;
+        assert_eq!(synth.config.channel, 15);
+        assert_eq!(synth.config.tempo_ratio, 4.0 / 3.0);
+        assert_eq!(synth.config.note_lengths, vec![NoteLength::Quarter]);
+        assert_eq!(synth.name, None);
+        assert_eq!(synth.zones[0].runs[0].y, 0);
+        assert_eq!(
+            (synth.zones[0].runs[1].x0, synth.zones[0].runs[1].x1),
+            (1, 3)
+        );
     }
 
     /// Round-trip check: a synth's full parameter set survives a

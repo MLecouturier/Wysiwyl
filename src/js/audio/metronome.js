@@ -2,6 +2,7 @@
 // and the master/slave clock mode selects.
 
 import { t } from '../core/i18n.js';
+import { clampBpm } from '../core/utils.js';
 
 // Metronome domain: the BPM controls, the tick LED and the DAW-sync /
 // master-clock badge. Owns the BPM input; the caller injects the
@@ -9,12 +10,8 @@ import { t } from '../core/i18n.js';
 // the play-state probe before stopping, and the cleanup run when the
 // metronome goes idle).
 
-const BPM_MIN = 20;
-const BPM_MAX = 300;
-
-export function clampBpm(value) {
-    return Math.min(BPM_MAX, Math.max(BPM_MIN, value));
-}
+// Whole-number clamp to 20–300, shared with the session code
+export { clampBpm };
 
 // Current tempo as shown in the BPM input (the UI source of truth), for
 // modules that need the tempo without holding the metronome instance.
@@ -41,32 +38,57 @@ export function createMetronome({ isPlaying, updateZonesLabels, onIdle }) {
     let synced = false;
     let master = false;
 
-    const getBpm = () => Number(bpmInput.value);
-    const setBpm = (value) => { bpmInput.value = clampBpm(value); };
+    const getBpm = () => clampBpm(bpmInput.value);
+
+    // Pushes the tempo to the backend whether or not the metronome runs:
+    // the manual step of a paused synth reads the backend's BPM too.
+    function pushBpm(bpm) {
+        return invoke('set_metronome_bpm', { bpm })
+            .catch(err => console.error('Error in set_metronome_bpm:', err));
+    }
+
+    // Programmatic tempo change (config default, session restore)
+    const setBpm = (value) => {
+        const bpm = clampBpm(value);
+        bpmInput.value = bpm;
+        pushBpm(bpm);
+    };
 
     async function applyBpm(newBpm) {
-        const clamped = clampBpm(newBpm);
+        const clamped = clampBpm(newBpm, getBpm());
         bpmInput.value = clamped;
-        if (running) {
-            await invoke('set_metronome_bpm', { bpm: clamped });
-        }
+        await pushBpm(clamped);
         updateZonesLabels();
     }
 
-    // Starts the Rust metronome if it's not already running
+    // Starts the Rust metronome if it's not already running. The local
+    // flag is resynchronized with the backend first: a failed call
+    // earlier must not leave the two believing different things.
     async function ensureStarted() {
-        if (running) return;
-        await invoke('set_metronome_bpm', { bpm: clampBpm(Number(bpmInput.value)) });
+        if (running) {
+            running = await invoke('is_metronome_running').catch(() => false);
+            if (running) return;
+        }
+        await pushBpm(getBpm());
         await invoke('start_metronome');
         running = true;
     }
 
     // Stops the Rust metronome if no synth is playing anymore
     async function stopIfIdle() {
-        if (!running) return;
         if (isPlaying()) return;
+        if (!running) {
+            // Defensive: the backend may still run after a failed stop
+            running = await invoke('is_metronome_running').catch(() => false);
+            if (!running) return;
+        }
 
-        await invoke('stop_metronome');
+        try {
+            await invoke('stop_metronome');
+        } catch (err) {
+            console.error('Error in stop_metronome:', err);
+            return;
+        }
         running = false;
         onIdle?.();
     }
@@ -74,6 +96,7 @@ export function createMetronome({ isPlaying, updateZonesLabels, onIdle }) {
     function setSynced(value, bpm) {
         synced = value;
         if (value && Number.isFinite(bpm)) {
+            // Display only: the backend already follows the measured tempo
             bpmInput.value = clampBpm(bpm);
         }
         bpmInput.disabled = value;
@@ -131,10 +154,13 @@ export function createMetronome({ isPlaying, updateZonesLabels, onIdle }) {
     // disabled — the backend pushes the measured BPM so the display keeps
     // showing the DAW's tempo. In master mode the app broadcasts its own
     // clock: the badge shows the master state, and the controls stay active.
+    // Each event only carries the fields of its transition: a master-only
+    // event must not reset the sync state, and vice versa.
     listen('metronome-sync', (event) => {
-        const { synced: s, bpm, master: m } = event.payload;
+        const { synced: s, bpm, master: m } = event.payload ?? {};
         if (m !== undefined) master = Boolean(m);
-        setSynced(Boolean(s), Number(bpm));
+        if (s !== undefined) setSynced(Boolean(s), Number(bpm));
+        else refreshBadge();
     });
 
     return {
@@ -144,6 +170,7 @@ export function createMetronome({ isPlaying, updateZonesLabels, onIdle }) {
         ensureStarted,
         stopIfIdle,
         markStopped: () => { running = false; },
+        isRunning: () => running,
         refreshBadge,
     };
 }
@@ -218,9 +245,11 @@ export function createClockSource() {
     // (the backend opens every input port for the app's lifetime). The
     // app's own virtual port is the route a DAW's MIDI clock takes.
     invoke('list_midi_input_ports').then(ports => {
-        clockSourceSelect.innerHTML = ports.map(p =>
-            `<option value="${p.name}">${p.isVirtual ? t('metronome.virtualSource') : p.name}</option>`
-        ).join('');
+        // Port names come from the OS: built as text nodes, never parsed
+        // as HTML (an arbitrary virtual port name must not inject markup)
+        clockSourceSelect.replaceChildren(...ports.map(p =>
+            new Option(p.isVirtual ? t('metronome.virtualSource') : p.name, p.name)
+        ));
         // Without any input port the "Source…" mode is meaningless
         clockModeSelect.querySelector('option[value="input"]').disabled = ports.length === 0;
         clockPortsLoaded = true;

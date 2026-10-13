@@ -10,6 +10,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use crate::config::ConfigState;
 use crate::error::{err, AppError};
 use crate::gate::{GateOff, GateState};
+use crate::locks::MutexExt;
 use crate::midi;
 use crate::state::{
     CachedSequence, ImageState, MidiState, NoteLength, ReadingDirection, RowRun, Scale, Synth,
@@ -262,69 +263,133 @@ fn process_polyphonic(
     manual_mute: bool,
 ) {
     let channel_values = [r, g, b];
-    let channel_midi = synth.config.channel;
     let global_in_range = !manual_mute;
 
-    let mut voices_payload = Vec::with_capacity(3);
-
+    // Pitch of each voice: rescale the channel value proportionally across
+    // this voice's enabled range filters, then quantize to the synth's
+    // scale (the pitch rises gradually from the low to the high bound of
+    // the allowed range as the channel value increases, landing only on
+    // scale degrees). `None` = the voice is silent on this pixel.
+    let mut notes = [0u8; 3];
+    let mut desired = [None; 3];
     for (i, &value) in channel_values.iter().enumerate() {
-        let enabled = synth.config.channel_enabled[i];
-        let raw_note = channel_to_midi_note(value);
-        // Rescale the channel value proportionally across this voice's
-        // enabled range filters, then quantize to the synth's scale: the
-        // pitch rises gradually from the low to the high bound of the
-        // allowed range as the channel value increases, landing only on
-        // scale degrees.
-        let effective_note = effective_note_for(
+        notes[i] = effective_note_for(
             synth,
             value as f32 / 255.0,
             note_range_bounds,
             &synth.config.voice_note_ranges[i],
         );
-        let voice = &mut synth.playback.poly_voices[i];
-
-        let in_range = enabled && global_in_range;
-
-        let note_changed = effective_note != voice.note || retrigger;
-        let needs_off = voice.note_is_on && (note_changed || !in_range);
-        let needs_on = in_range && (!voice.note_is_on || note_changed);
-
-        if needs_off {
-            midi.note_off(synth.config.midi_port, channel_midi, voice.note);
-            voice.note_is_on = false;
+        if synth.config.channel_enabled[i] && global_in_range {
+            desired[i] = Some(notes[i]);
         }
-
-        voice.note = effective_note;
-
-        if needs_on {
-            midi.note_on(
-                synth.config.midi_port,
-                channel_midi,
-                effective_note,
-                velocity,
-            );
-            voice.note_is_on = true;
-            synth.playback.note_generation = synth.playback.note_generation.wrapping_add(1);
-        }
-
-        voices_payload.push(VoiceTick {
-            enabled,
-            note: effective_note,
-            raw_note,
-            muted: !in_range,
-        });
     }
 
+    let port = synth.config.midi_port;
+    let channel = synth.config.channel;
+    let plan = plan_poly_voices(&synth.playback.poly_voices, desired, retrigger);
+    for &note in &plan.note_offs {
+        midi.note_off(port, channel, note);
+    }
+    for &note in &plan.note_ons {
+        midi.note_on(port, channel, note, velocity);
+    }
+    if !plan.note_ons.is_empty() {
+        synth.playback.note_generation = synth.playback.note_generation.wrapping_add(1);
+    }
+    for (i, voice) in synth.playback.poly_voices.iter_mut().enumerate() {
+        voice.note = notes[i];
+        voice.note_is_on = plan.sounding[i];
+    }
+
+    let voices_payload = (0..3)
+        .map(|i| VoiceTick {
+            enabled: synth.config.channel_enabled[i],
+            note: notes[i],
+            raw_note: channel_to_midi_note(channel_values[i]),
+            muted: desired[i].is_none(),
+        })
+        .collect();
+
     // global active_note: true if at least one voice is sounding (useful for the highlight/UI)
-    synth.playback.active_note = synth
-        .playback
-        .poly_voices
-        .iter()
-        .enumerate()
-        .any(|(i, v)| v.note_is_on && synth.config.channel_enabled[i]);
+    synth.playback.active_note = synth.playback.poly_voices.iter().any(|v| v.note_is_on);
 
     payload.voices = Some(voices_payload);
     payload.muted = !global_in_range;
+}
+
+/// MIDI messages of one polyphonic step, and the resulting `note_is_on`
+/// flag of each R/G/B voice.
+#[derive(Debug, PartialEq, Eq)]
+struct PolyPlan {
+    note_offs: Vec<u8>,
+    note_ons: Vec<u8>,
+    sounding: [bool; 3],
+}
+
+/// Plans the MIDI messages of a polyphonic step from the voices' current
+/// state and the pitch each one wants to sound (`None` = silent). All the
+/// voices share one MIDI channel, so a pitch wanted by several voices is
+/// played only once: one Note On, owned by a single voice (the one already
+/// holding it when sustained, else the first). Two Note Ons of the same
+/// pitch on one channel would otherwise be cut together by the first Note
+/// Off, leaving the other voice believing its note still sounds.
+///
+/// A pitch that keeps sounding is held without re-articulation (legato),
+/// unless `retrigger` forces a fresh attack (note lengths, gated
+/// pizzicato). Every Note Off is sent before the Note Ons.
+fn plan_poly_voices(
+    voices: &[crate::state::ChannelVoice; 3],
+    desired: [Option<u8>; 3],
+    retrigger: bool,
+) -> PolyPlan {
+    let mut plan = PolyPlan {
+        note_offs: Vec::new(),
+        note_ons: Vec::new(),
+        sounding: [false; 3],
+    };
+    let wanted = |note: u8| desired.contains(&Some(note));
+
+    // Pitches currently sounding (deduplicated: legacy state may hold the
+    // same pitch on two voices, a single Note Off releases both)
+    let mut held: Vec<u8> = Vec::new();
+    for voice in voices.iter().filter(|v| v.note_is_on) {
+        if !held.contains(&voice.note) {
+            held.push(voice.note);
+        }
+    }
+
+    // Release what is no longer wanted, or everything on a retrigger
+    for &note in &held {
+        if retrigger || !wanted(note) {
+            plan.note_offs.push(note);
+        }
+    }
+
+    // Assign each wanted pitch to a single owner voice
+    let mut assigned: Vec<u8> = Vec::new();
+    // Sustained pitches first stay with the voice already holding them
+    for (i, voice) in voices.iter().enumerate() {
+        let Some(note) = desired[i] else { continue };
+        if !retrigger && voice.note_is_on && voice.note == note && !assigned.contains(&note) {
+            plan.sounding[i] = true;
+            assigned.push(note);
+        }
+    }
+    for (i, wanted_note) in desired.iter().enumerate() {
+        let Some(note) = *wanted_note else { continue };
+        if assigned.contains(&note) {
+            continue;
+        }
+        plan.sounding[i] = true;
+        assigned.push(note);
+        // Held by another voice and not released above: it keeps sounding,
+        // only its owner changes
+        let still_held = held.contains(&note) && !plan.note_offs.contains(&note);
+        if !still_held {
+            plan.note_ons.push(note);
+        }
+    }
+    plan
 }
 
 /// True when the pixel at (x, y) is covered by one of the given zones
@@ -668,6 +733,71 @@ fn articulation_retrigger(
     (note_lengths_enabled && !note_legato) || (!note_sustain && gate_ms > 0)
 }
 
+/// Queues a deferred Note Off, after `delay`, for every note the synth is
+/// currently sounding (see gate.rs). Cancelled automatically if a newer
+/// articulation or a release bumps the note generation in the meantime.
+fn schedule_note_offs(app: &AppHandle, synth: &Synth, delay: Duration, skip_if_playing: bool) {
+    let mono = synth.playback.note_is_on.then_some(synth.playback.note);
+    let poly: Vec<u8> = synth
+        .playback
+        .poly_voices
+        .iter()
+        .filter(|voice| voice.note_is_on)
+        .map(|voice| voice.note)
+        .collect();
+    if mono.is_none() && poly.is_empty() {
+        return;
+    }
+    app.state::<GateState>().schedule(GateOff {
+        synth_uid: synth.uid,
+        generation: synth.playback.note_generation,
+        port: synth.config.midi_port,
+        channel: synth.config.channel,
+        mono,
+        poly,
+        deadline: Instant::now() + delay,
+        skip_if_playing,
+    });
+}
+
+/// Global configuration values read by every step, snapshotted once per
+/// wake before the image and synth locks are taken: the config lock is
+/// never held under them (see locks.rs), so a config save on disk can no
+/// longer stall the tick.
+#[derive(Clone, Copy)]
+struct TickConfig {
+    note_range_bounds: [(u8, u8); 3],
+    gate_ms: u32,
+}
+
+impl TickConfig {
+    fn read(app: &AppHandle) -> Self {
+        let config = app.state::<ConfigState>();
+        let config = config.config.lock_safe();
+        Self {
+            note_range_bounds: config.note_range_bounds,
+            gate_ms: config.pizzicato_gate_ms,
+        }
+    }
+}
+
+/// Sequence index of the pixel under the playhead once the grid
+/// dimensions changed. Zones are grid coordinates, kept (clipped) as-is
+/// across a column-count change, so the playhead stays on the same (x, y)
+/// cell when it still exists in the new sequence; otherwise it restarts.
+fn cursor_after_resize(old: &CachedSequence, cursor: usize, new: &CachedSequence) -> usize {
+    if old.sequence.is_empty() || old.width == 0 {
+        return 0;
+    }
+    let pixel = old.sequence[cursor % old.sequence.len()];
+    let (x, y) = (pixel % old.width, pixel / old.width);
+    if x >= new.width || y >= new.height {
+        return 0;
+    }
+    let target = y * new.width + x;
+    new.sequence.iter().position(|&p| p == target).unwrap_or(0)
+}
+
 /// Plays the pixel at the synth's current playhead position, then advances
 /// the playhead by one pixel in its zone sequence (MIDI notes + UI payload),
 /// exactly like a metronome tick would. Used both by the metronome thread
@@ -682,6 +812,7 @@ fn step_synth_once(
     synth: &mut Synth,
     image: &DynamicImage,
     midi: &MidiState,
+    tick: TickConfig,
 ) -> Option<f64> {
     let width = image.width() as usize;
     let height = image.height() as usize;
@@ -709,11 +840,17 @@ fn step_synth_once(
             synth.config.reading_direction,
             synth.config.sorted_reading,
         );
-        synth.playback.cached_sequence = Some(CachedSequence {
+        let rebuilt = CachedSequence {
             width,
             height,
             sequence,
-        });
+        };
+        // A grid resize (not an explicit invalidation, which remaps the
+        // cursor itself): keep the playhead on the same cell
+        if let Some(old) = synth.playback.cached_sequence.as_ref() {
+            synth.playback.cursor = cursor_after_resize(old, synth.playback.cursor, &rebuilt);
+        }
+        synth.playback.cached_sequence = Some(rebuilt);
     }
     let sequence = &synth
         .playback
@@ -731,27 +868,11 @@ fn step_synth_once(
     // sounding note on forever and the UI in its playing state.
     if seq_len == 0 || (synth.playback.end_pending && !synth.config.loop_enabled) {
         if synth.playback.playing {
-            synth.playback.playing = false;
+            // Stop, release the sounding notes (cancelling any pending
+            // gate) and rewind for the next start
+            synth.stop_playback(midi);
             synth.playback.cursor = 0;
-            synth.playback.tempo_accumulator = 0.0;
-            // Cancel any pizzicato gate scheduled for the notes released below
-            synth.playback.note_generation = synth.playback.note_generation.wrapping_add(1);
-            // Turn off the current mono note if it is still sounding
-            if synth.playback.note_is_on {
-                midi.note_off(
-                    synth.config.midi_port,
-                    synth.config.channel,
-                    synth.playback.note,
-                );
-                synth.playback.note_is_on = false;
-            }
-            // Turn off any currently sounding polyphonic voices
-            for voice in synth.playback.poly_voices.iter_mut() {
-                if voice.note_is_on {
-                    midi.note_off(synth.config.midi_port, synth.config.channel, voice.note);
-                    voice.note_is_on = false;
-                }
-            }
+            synth.playback.play_forward = true;
             let _ = app.emit("synth-stopped", SynthStopped { id: synth.id });
         }
         return None;
@@ -793,12 +914,11 @@ fn step_synth_once(
     };
 
     // User-configurable note-range bounds (bass, medium, treble) and the
-    // pizzicato minimum gate, both from the global configuration.
-    let (note_range_bounds, gate_ms) = {
-        let config = app.state::<ConfigState>();
-        let config = config.config.lock().unwrap();
-        (config.note_range_bounds, config.pizzicato_gate_ms)
-    };
+    // pizzicato minimum gate, both from the global configuration snapshot.
+    let TickConfig {
+        note_range_bounds,
+        gate_ms,
+    } = tick;
 
     // Pizzicato with a minimum gate keeps `note_is_on` set until the
     // scheduled Note Off, so it must force a re-articulation on every pixel:
@@ -878,41 +998,9 @@ fn step_synth_once(
     // rhythm is unchanged: note lengths still pace the pixels.
     if !synth.config.note_sustain {
         if gate_ms == 0 {
-            if synth.playback.note_is_on {
-                midi.note_off(
-                    synth.config.midi_port,
-                    synth.config.channel,
-                    synth.playback.note,
-                );
-                synth.playback.note_is_on = false;
-            }
-            for voice in synth.playback.poly_voices.iter_mut() {
-                if voice.note_is_on {
-                    midi.note_off(synth.config.midi_port, synth.config.channel, voice.note);
-                    voice.note_is_on = false;
-                }
-            }
+            synth.release_notes(midi);
         } else {
-            let mono = synth.playback.note_is_on.then_some(synth.playback.note);
-            let poly: Vec<(usize, u8)> = synth
-                .playback
-                .poly_voices
-                .iter()
-                .enumerate()
-                .filter(|(_, voice)| voice.note_is_on)
-                .map(|(index, voice)| (index, voice.note))
-                .collect();
-            if mono.is_some() || !poly.is_empty() {
-                app.state::<GateState>().schedule(GateOff {
-                    synth_id: synth.id,
-                    generation: synth.playback.note_generation,
-                    port: synth.config.midi_port,
-                    channel: synth.config.channel,
-                    mono,
-                    poly,
-                    deadline: Instant::now() + Duration::from_millis(gate_ms as u64),
-                });
-            }
+            schedule_note_offs(app, synth, Duration::from_millis(gate_ms as u64), false);
         }
     }
 
@@ -1012,30 +1100,6 @@ fn should_hold_for_quantize(wake: u64, beats: u64, interval_wakes: u32) -> bool 
         return false;
     }
     next_resync_boundary(wake, beats) - wake < interval_wakes.max(1) as u64
-}
-
-/// Turns off every sounding note of a synth (mono + polyphonic voices) and
-/// clears their `note_is_on` flags. Used when the quantize holds a step:
-/// the note that just finished its duration is released instead of being
-/// extended until the boundary.
-fn release_sounding_notes(synth: &mut Synth, midi: &MidiState) {
-    if synth.playback.note_is_on {
-        midi.note_off(
-            synth.config.midi_port,
-            synth.config.channel,
-            synth.playback.note,
-        );
-        synth.playback.note_is_on = false;
-    }
-    for voice in synth.playback.poly_voices.iter_mut() {
-        if voice.note_is_on {
-            midi.note_off(synth.config.midi_port, synth.config.channel, voice.note);
-            voice.note_is_on = false;
-        }
-    }
-    // Any pizzicato gate scheduled for the released notes is now stale:
-    // bump the generation so the scheduler cancels it.
-    synth.playback.note_generation = synth.playback.note_generation.wrapping_add(1);
 }
 
 /// Duration of a note length, in beats of the synth's own tempo. When
@@ -1292,13 +1356,60 @@ pub struct ClockState {
     /// Smoothed pulse period (ns), an exponential moving average of the
     /// observed intervals — the tempo is derived from it.
     pub period_ns: Arc<AtomicU64>,
-    /// Set by a Start/Continue message: the metronome thread re-anchors
-    /// the grid and resets its beat counter on the next wake.
+    /// Set by a Start/Continue message: the metronome thread adopts
+    /// `start_wake` as its wake counter (the anchor is already set by the
+    /// input handler so the next wake fires on the sender's next pulse).
     pub started: Arc<AtomicBool>,
+    /// Wake counter (position within the beat, 0..12) of the first wake
+    /// after a Start (0) or a Continue (the Song Position Pointer's).
+    pub start_wake: Arc<AtomicU64>,
+    /// The sender's beat phase, learned from its last Start/Continue:
+    /// `phase + 1`, 0 = unknown. The pulse that makes the counter reach `n`
+    /// sits at position `(n - phase) mod 24` within the sender's beat.
+    pub beat_phase: Arc<AtomicU64>,
+    /// Last Song Position Pointer received (in MIDI beats = sixteenth
+    /// notes), `+ 1`, 0 = none pending. Consumed by the next Continue.
+    pub song_position: Arc<AtomicU64>,
     /// Set by a MIDI Stop message (0xFC): the metronome thread falls back
     /// to its internal tempo immediately instead of waiting for the pulse
     /// timeout. Cleared by a pulse or a Start/Continue message.
     pub stopped: Arc<AtomicBool>,
+}
+
+/// MIDI clock pulses per beat (24 ppqn).
+const PULSES_PER_BEAT: u64 = 24;
+
+/// MIDI clock pulses per Song Position Pointer unit (a sixteenth note).
+const PULSES_PER_SPP_UNIT: u64 = 6;
+
+impl ClockState {
+    /// The sender's beat phase (see `beat_phase`), if a transport message
+    /// taught it.
+    fn beat_origin(&self) -> Option<u64> {
+        self.beat_phase.load(Ordering::Acquire).checked_sub(1)
+    }
+
+    /// Re-anchors the grid on a transport message: the next pulse is at
+    /// `position` (0..24, a multiple of PULSES_PER_WAKE) within the
+    /// sender's beat. The next wake fires on that pulse.
+    fn anchor_transport(&self, position: u64) {
+        let pulses = self.pulses.load(Ordering::Acquire);
+        let position = position % PULSES_PER_BEAT;
+        self.anchor
+            .store(pulses.wrapping_sub(PULSES_PER_WAKE - 1), Ordering::Release);
+        self.start_wake
+            .store(position / PULSES_PER_WAKE, Ordering::Release);
+        let phase = (pulses % PULSES_PER_BEAT + 1 + PULSES_PER_BEAT - position) % PULSES_PER_BEAT;
+        self.beat_phase.store(phase + 1, Ordering::Release);
+        self.started.store(true, Ordering::Release);
+        self.stopped.store(false, Ordering::Relaxed);
+    }
+}
+
+/// Position within the beat (0..24) of the pulse that made the counter
+/// reach `count`, for a sender of the given beat phase.
+fn pulse_position(count: u64, phase: u64) -> u64 {
+    (count % PULSES_PER_BEAT + PULSES_PER_BEAT - phase % PULSES_PER_BEAT) % PULSES_PER_BEAT
 }
 
 /// Internal timing resolution: one "wake" is 1/12 of a beat (a
@@ -1369,17 +1480,42 @@ pub fn on_clock_pulse(state: &MetronomeState, input_name: &str) {
     state.clock.stopped.store(false, Ordering::Relaxed);
 }
 
-/// Handles a MIDI Start (0xFA) or Continue (0xFB) message: re-anchors the
-/// pulse grid so the metronome's quarter-beats align with the sender's
-/// beats, starting from the next pulse.
+/// Handles a MIDI Start (0xFA) message: the sender's song restarts, its
+/// next pulse is the first of a beat — re-anchors the grid so the
+/// metronome's beats align with the sender's.
 pub fn on_clock_start(state: &MetronomeState, input_name: &str) {
     if !state.clock_accepts(input_name) {
         return;
     }
-    let pulses = state.clock.pulses.load(Ordering::Relaxed);
-    state.clock.anchor.store(pulses, Ordering::Relaxed);
-    state.clock.started.store(true, Ordering::Relaxed);
-    state.clock.stopped.store(false, Ordering::Relaxed);
+    state.clock.song_position.store(0, Ordering::Release);
+    state.clock.anchor_transport(0);
+}
+
+/// Handles a MIDI Continue (0xFB) message: the sender resumes from the
+/// position given by its last Song Position Pointer (the start of a beat
+/// when none was received) — re-anchors the grid on that position.
+pub fn on_clock_continue(state: &MetronomeState, input_name: &str) {
+    if !state.clock_accepts(input_name) {
+        return;
+    }
+    let spp = state
+        .clock
+        .song_position
+        .swap(0, Ordering::AcqRel)
+        .saturating_sub(1);
+    state.clock.anchor_transport(spp * PULSES_PER_SPP_UNIT);
+}
+
+/// Handles a MIDI Song Position Pointer (0xF2): remembers the position
+/// (in sixteenth notes) the next Continue resumes from.
+pub fn on_song_position(state: &MetronomeState, input_name: &str, sixteenths: u16) {
+    if !state.clock_accepts(input_name) {
+        return;
+    }
+    state
+        .clock
+        .song_position
+        .store(sixteenths as u64 + 1, Ordering::Release);
 }
 
 /// Handles a MIDI Stop (0xFC) message: marks the clock stopped so the
@@ -1405,7 +1541,14 @@ fn measured_bpm(clock: &ClockState) -> u32 {
 }
 
 pub struct MetronomeState {
+    /// True while a metronome thread should be running. The thread owning
+    /// the current `generation` resets it when it exits.
     pub running: Arc<AtomicBool>,
+    /// Incremented by every start and every stop: a thread keeps looping
+    /// only while the generation it was spawned with is still current, so
+    /// a stop immediately followed by a start can never leave two threads
+    /// stepping the synths (the old one sees a stale generation and exits).
+    generation: Arc<AtomicU64>,
     pub bpm: Arc<AtomicU32>,
     /// MIDI clock sync state, fed by the MIDI input callbacks and consumed
     /// by the metronome thread.
@@ -1423,6 +1566,7 @@ impl Default for MetronomeState {
     fn default() -> Self {
         Self {
             running: Arc::new(AtomicBool::new(false)),
+            generation: Arc::new(AtomicU64::new(0)),
             bpm: Arc::new(AtomicU32::new(120)),
             clock: ClockState::default(),
             mode: Arc::new(AtomicU8::new(ClockMode::Auto.encode())),
@@ -1441,12 +1585,12 @@ impl MetronomeState {
     /// mode.
     pub fn apply_clock_mode(&self, mode: ClockMode, source: Option<String>) {
         self.mode.store(mode.encode(), Ordering::Relaxed);
-        *self.source.lock().unwrap() = source;
+        *self.source.lock_safe() = source;
     }
 
     /// The input port name the clock sync follows in `Input` mode.
     pub fn clock_source(&self) -> Option<String> {
-        self.source.lock().unwrap().clone()
+        self.source.lock_safe().clone()
     }
 
     /// Whether an incoming clock message from `input_name` should be
@@ -1458,6 +1602,207 @@ impl MetronomeState {
             ClockMode::Off | ClockMode::Master => false,
         }
     }
+
+    /// Claims the right to start a metronome thread: returns the new
+    /// generation, or `None` when a thread is already running. Atomic, so
+    /// two concurrent starts spawn a single thread.
+    fn claim_start(&self) -> Option<u64> {
+        self.running
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .ok()?;
+        Some(self.generation.fetch_add(1, Ordering::AcqRel) + 1)
+    }
+
+    /// Requests the running thread to stop (it exits at its next wake).
+    fn request_stop(&self) {
+        self.generation.fetch_add(1, Ordering::AcqRel);
+        self.running.store(false, Ordering::Release);
+    }
+}
+
+/// Clears `running` when the metronome thread exits — normally or by a
+/// panic — unless a newer thread has been started meanwhile. Without it a
+/// panicking thread would leave `running` stuck at true, and every later
+/// `start_metronome` would return early: the metronome could never run
+/// again.
+struct RunningGuard {
+    running: Arc<AtomicBool>,
+    generation: Arc<AtomicU64>,
+    mine: u64,
+}
+
+impl Drop for RunningGuard {
+    fn drop(&mut self) {
+        if self.generation.load(Ordering::Acquire) == self.mine {
+            self.running.store(false, Ordering::Release);
+        }
+    }
+}
+
+/// Duration of one wake (1/12 beat) at `bpm`, in nanoseconds — exact to
+/// the nanosecond: the historical whole-millisecond division
+/// (`60000 / bpm / 12`) truncated twice and ran 1.6 % fast at 120 BPM
+/// (41 ms instead of 41.67 ms) and up to 4 % fast at 300 BPM.
+fn wake_period_ns(bpm: u32) -> u64 {
+    60_000_000_000 / (bpm.max(1) as u64 * WAKES_PER_BEAT)
+}
+
+/// Absolute-deadline pacer: wakes are scheduled on a fixed timeline
+/// (`next += period`) instead of sleeping a fixed duration after the work,
+/// so the processing time of a wake (locks, MIDI, events) is absorbed
+/// instead of accumulating into a tempo drift. A wake that falls more than
+/// `MAX_LATE_WAKES` behind (system sleep, heavy load) re-anchors on the
+/// present rather than firing a burst of catch-up steps.
+struct Pacer {
+    next: Instant,
+}
+
+/// A pacer this many wakes late re-anchors instead of catching up.
+const MAX_LATE_WAKES: u32 = 4;
+
+impl Pacer {
+    fn new() -> Self {
+        Self {
+            next: Instant::now(),
+        }
+    }
+
+    /// Re-anchors the timeline on the present (after a clock-sync period,
+    /// where the pulses drove the wakes).
+    fn reset(&mut self) {
+        self.next = Instant::now();
+    }
+
+    /// Advances the timeline by `period` and returns the deadline to wait
+    /// for. `now` is passed in so the policy is testable.
+    fn advance(&mut self, period: Duration, now: Instant) -> Instant {
+        self.next += period;
+        if now > self.next + period * MAX_LATE_WAKES {
+            self.next = now;
+        }
+        self.next
+    }
+
+    /// Advances by `period` and sleeps until the new deadline.
+    fn wait(&mut self, period: Duration) {
+        let deadline = self.advance(period, Instant::now());
+        sleep_until(deadline);
+    }
+}
+
+/// Sleeps until `deadline`: a coarse OS sleep up to ~1 ms before it, then
+/// a short yield loop for the remainder, so the wake lands within tens of
+/// microseconds of the deadline whatever the OS timer granularity.
+fn sleep_until(deadline: Instant) {
+    const SPIN: Duration = Duration::from_micros(1_000);
+    loop {
+        let now = Instant::now();
+        if now >= deadline {
+            return;
+        }
+        let remaining = deadline - now;
+        if remaining > SPIN {
+            thread::sleep(remaining - SPIN);
+        } else {
+            thread::yield_now();
+        }
+    }
+}
+
+/// Advances one playing synth by one wake of the master grid: start sync,
+/// tempo accumulator, master-tempo quantize, and the step itself.
+fn tick_synth(
+    app: &AppHandle,
+    synth: &mut Synth,
+    image: &DynamicImage,
+    midi: &MidiState,
+    tick: TickConfig,
+    wake: u64,
+) {
+    // Start sync: the very first note waits for the next master beat
+    // (wake % WAKES_PER_BEAT == 0) so playback begins in phase with the
+    // metronome. With quantize on it waits for the next resync boundary
+    // instead, so the very first step already lands on the cycle-aligned
+    // grid (no initial held step). Nothing is accumulated while waiting;
+    // the wake then plays the first pixel.
+    if synth.playback.start_pending {
+        let period = if synth.config.quantize {
+            effective_quantize_period(synth.config.tempo_ratio, synth.config.quantize_beats)
+                * WAKES_PER_BEAT
+        } else {
+            WAKES_PER_BEAT
+        };
+        if !wake.is_multiple_of(period) {
+            return;
+        }
+        synth.playback.start_pending = false;
+        synth.playback.tempo_accumulator = 0.0;
+        synth.playback.wakes_since_step = 0;
+        if let Some(length_beats) = step_synth_once(app, synth, image, midi, tick) {
+            synth.playback.tempo_accumulator = 1.0 - length_beats;
+        }
+        return;
+    }
+
+    // Interval of the step being completed, in wakes: incremented on
+    // every wake, reset when the synth steps. Used by the quantize
+    // look-ahead below.
+    synth.playback.wakes_since_step = synth.playback.wakes_since_step.saturating_add(1);
+
+    // Tempo desynchronization: each wake adds a twelfth of the synth's
+    // tempo ratio to its accumulator (one beat = 12 wakes); the synth
+    // advances when at least one full step has accumulated (e.g. ratio
+    // 0.5 = one pixel every two beats).
+    synth.playback.tempo_accumulator += synth.config.tempo_ratio / WAKES_PER_BEAT as f64;
+    if synth.playback.tempo_accumulator < 1.0 - ACC_EPSILON {
+        return;
+    }
+
+    // Effective quantize period, in master beats: the user's period
+    // rounded up to the ratio's cycle, so a boundary always coincides with
+    // a natural step of the synth (see effective_quantize_period).
+    let quantize_period = if synth.config.quantize {
+        effective_quantize_period(synth.config.tempo_ratio, synth.config.quantize_beats)
+    } else {
+        0
+    };
+
+    // Master-tempo quantize: hold a due step until the next resync
+    // boundary when that boundary falls before the following step.
+    // Delay-only — a step is never advanced, so a sounding note is never
+    // cut. With note lengths enabled the note that just elapsed is
+    // released instead of being extended until the boundary — unless the
+    // legato tie is on, where the note is meant to hold.
+    if synth.config.quantize
+        && should_hold_for_quantize(wake, quantize_period, synth.playback.wakes_since_step)
+    {
+        if !synth.config.note_lengths.is_empty() && !synth.config.note_legato {
+            synth.release_notes(midi);
+        }
+        return;
+    }
+
+    // On a resync boundary the accumulator is reset cleanly (a fresh
+    // phase anchor); otherwise the step is consumed and the fractional
+    // overshoot carries over to the next step.
+    let on_boundary =
+        synth.config.quantize && wake.is_multiple_of(quantize_period * WAKES_PER_BEAT);
+    let carry = if on_boundary {
+        0.0
+    } else {
+        synth.playback.tempo_accumulator - 1.0
+    };
+    synth.playback.tempo_accumulator = carry;
+
+    if let Some(length_beats) = step_synth_once(app, synth, image, midi, tick) {
+        // Note lengths enabled: the played pixel occupies exactly its
+        // note's duration. Rewind the accumulator so the next pixel is due
+        // after `length_beats` beats of the synth's own tempo — keeping
+        // the overshoot of this step, so a ratio off the wake grid (4/3,
+        // 5/4...) does not drift against the master over time.
+        synth.playback.tempo_accumulator = 1.0 - length_beats + carry;
+    }
+    synth.playback.wakes_since_step = 0;
 }
 
 #[tauri::command]
@@ -1486,196 +1831,162 @@ pub fn set_clock_mode(
         mode => (mode, None),
     };
     metronome.apply_clock_mode(mode, source.clone());
-    let mut cfg = config.config.lock().unwrap();
-    cfg.clock_mode = mode;
-    cfg.clock_source = source;
-    crate::config::save_config(&app, &cfg);
+    // Snapshot under the lock, write the file outside of it (see locks.rs)
+    let snapshot = {
+        let mut cfg = config.config.lock_safe();
+        cfg.clock_mode = mode;
+        cfg.clock_source = source;
+        cfg.clone()
+    };
+    crate::config::save_config(&app, &snapshot);
 }
 
 #[tauri::command]
 pub fn start_metronome(app: AppHandle, state: tauri::State<MetronomeState>) {
-    if state.running.load(Ordering::Relaxed) {
+    let Some(my_generation) = state.claim_start() else {
         return; // already running
-    }
-    state.running.store(true, Ordering::Relaxed);
+    };
 
     let running = state.running.clone();
+    let generation = state.generation.clone();
     let bpm = state.bpm.clone();
     let clock = state.clock.clone();
     let mode = state.mode.clone();
 
-    thread::spawn(move || {
-        // One "wake" is 1/12 of a beat (a triplet-sixteenth note): wakes
-        // with wake % WAKES_PER_BEAT == 0 are beat boundaries, reported to
-        // the UI as metronome ticks. While a MIDI clock streams
-        // (clock_mode), the wakes are driven by its pulses
-        // (PULSES_PER_WAKE per wake); in master mode the thread broadcasts
-        // its own pulses (24 per quarter note); otherwise it sleeps on its
-        // own BPM.
-        let mut wake: u64 = 0;
-        let mut clock_mode = false;
-        let mut last_pulses: u64 = 0;
-        let mut last_synced_bpm: u32 = 0;
-        // Whether this wake is broadcasting the master clock; transport
-        // messages (Start/Stop) are sent on the engage/disengage
-        // transitions, including the thread's own start and exit.
-        let mut was_master = false;
+    let spawned = thread::Builder::new()
+        .name("wysiwyl-metronome".into())
+        .spawn(move || {
+            let _guard = RunningGuard {
+                running: running.clone(),
+                generation: generation.clone(),
+                mine: my_generation,
+            };
+            run_metronome(&app, &generation, my_generation, &bpm, &clock, &mode);
+        });
+    if spawned.is_err() {
+        // No thread: release the claim so a later start can retry
+        state.running.store(false, Ordering::Release);
+    }
+}
 
-        while running.load(Ordering::Relaxed) {
-            // --- Clock mode, read live so UI changes apply ---
-            let mode = ClockMode::decode(mode.load(Ordering::Relaxed));
-            let master = mode == ClockMode::Master;
-            if master != was_master {
-                let midi_state = app.state::<MidiState>();
-                if master {
-                    let _ = app.emit(
-                        "metronome-sync",
-                        MetronomeSync {
-                            master: Some(true),
-                            ..Default::default()
-                        },
-                    );
-                    midi::broadcast_realtime(&midi_state, midi::MIDI_START);
-                } else {
-                    let _ = app.emit(
-                        "metronome-sync",
-                        MetronomeSync {
-                            master: Some(false),
-                            ..Default::default()
-                        },
-                    );
-                    midi::broadcast_realtime(&midi_state, midi::MIDI_STOP);
-                }
-                was_master = master;
+/// Body of the metronome thread: loops while `my_generation` is current.
+fn run_metronome(
+    app: &AppHandle,
+    generation: &AtomicU64,
+    my_generation: u64,
+    bpm: &AtomicU32,
+    clock: &ClockState,
+    mode: &AtomicU8,
+) {
+    // One "wake" is 1/12 of a beat (a triplet-sixteenth note): wakes with
+    // wake % WAKES_PER_BEAT == 0 are beat boundaries, reported to the UI
+    // as metronome ticks. While a MIDI clock streams (clock_mode), the
+    // wakes are driven by its pulses (PULSES_PER_WAKE per wake); in master
+    // mode the thread broadcasts its own pulses (24 per quarter note) on
+    // the same absolute timeline; otherwise it paces itself on its BPM.
+    let mut wake: u64 = 0;
+    let mut clock_mode = false;
+    let mut last_pulses: u64 = 0;
+    let mut last_synced_bpm: u32 = 0;
+    let mut pacer = Pacer::new();
+    // Whether this wake is broadcasting the master clock; transport
+    // messages (Start/Stop) are sent on the engage/disengage transitions,
+    // including the thread's own start and exit.
+    let mut was_master = false;
+    let alive = || generation.load(Ordering::Acquire) == my_generation;
+
+    while alive() {
+        // --- Clock mode, read live so UI changes apply ---
+        let mode = ClockMode::decode(mode.load(Ordering::Relaxed));
+        let master = mode == ClockMode::Master;
+        if master != was_master {
+            let _ = app.emit(
+                "metronome-sync",
+                MetronomeSync {
+                    master: Some(master),
+                    ..Default::default()
+                },
+            );
+            if master {
+                // The followers start their bar on the first clock pulse
+                // after the Start message, sent right below with this
+                // wake's body: align our own grid on a beat too
+                wake = wake.next_multiple_of(WAKES_PER_BEAT);
+                midi::broadcast_realtime(app, midi::MIDI_START);
+            } else {
+                midi::broadcast_realtime(app, midi::MIDI_STOP);
             }
+            was_master = master;
+        }
 
-            // --- Wake body (shared by all timing sources) ---
-            if wake.is_multiple_of(WAKES_PER_BEAT) {
-                let _ = app.emit("metronome-tick", wake / WAKES_PER_BEAT);
-            }
+        // Master clock: the first of the wake's two pulses is sent with the
+        // wake body, so the pulse a follower counts as a beat coincides
+        // with our own beat (the second one is sent mid-wake, below)
+        if master {
+            midi::broadcast_realtime(app, midi::MIDI_CLOCK);
+        }
 
-            // --- Advancing active synths over the image ---
-            let image_state = app.state::<ImageState>();
-            let synth_state = app.state::<SynthState>();
-            let midi_state = app.state::<MidiState>();
+        // --- Wake body (shared by all timing sources) ---
+        if wake.is_multiple_of(WAKES_PER_BEAT) {
+            let _ = app.emit("metronome-tick", wake / WAKES_PER_BEAT);
+        }
 
-            // Image then synths, in the mandated order (see locks.rs):
-            // this loop holds both while stepping every synth.
-            if let Some(image) = image_state.processed.lock().unwrap().as_ref() {
-                let mut synths = synth_state.synths.lock().unwrap();
+        // --- Advancing active synths over the image ---
+        // The configuration snapshot is read before the image and synth
+        // locks: the config lock is never nested under them (locks.rs).
+        let tick = TickConfig::read(app);
+        let image_state = app.state::<ImageState>();
+        let synth_state = app.state::<SynthState>();
+        let midi_state = app.state::<MidiState>();
 
-                for synth in synths.values_mut() {
-                    if !synth.playback.playing {
-                        continue;
-                    }
-
-                    // Start sync: the very first note waits for the next
-                    // master beat (wake % WAKES_PER_BEAT == 0) so playback
-                    // begins in phase with the metronome. With quantize on it
-                    // waits for the next resync boundary instead, so the very
-                    // first step already lands on the cycle-aligned grid (no
-                    // initial held step). Nothing is accumulated while
-                    // waiting; the wake then plays the first pixel.
-                    if synth.playback.start_pending {
-                        let ready = if synth.config.quantize {
-                            let period = effective_quantize_period(
-                                synth.config.tempo_ratio,
-                                synth.config.quantize_beats,
-                            ) * WAKES_PER_BEAT;
-                            wake.is_multiple_of(period)
-                        } else {
-                            wake.is_multiple_of(WAKES_PER_BEAT)
-                        };
-                        if !ready {
-                            continue;
-                        }
-                        synth.playback.start_pending = false;
-                        synth.playback.tempo_accumulator = 0.0;
-                        synth.playback.wakes_since_step = 0;
-                        let played_length = step_synth_once(&app, synth, image, &midi_state);
-                        if let Some(length_beats) = played_length {
-                            synth.playback.tempo_accumulator = 1.0 - length_beats;
-                        }
-                        continue;
-                    }
-
-                    // Interval of the step being completed, in quarter-beat
-                    // wakes: incremented on every wake, reset when the synth
-                    // steps. Used by the quantize look-ahead below.
-                    synth.playback.wakes_since_step =
-                        synth.playback.wakes_since_step.saturating_add(1);
-
-                    // Tempo desynchronization: each wake adds a twelfth of the
-                    // synth's tempo ratio to its accumulator (one beat = 12
-                    // wakes); the synth advances when at least one full step
-                    // has accumulated (e.g. ratio 0.5 = one pixel every two
-                    // beats).
-                    synth.playback.tempo_accumulator +=
-                        synth.config.tempo_ratio / WAKES_PER_BEAT as f64;
-                    if synth.playback.tempo_accumulator < 1.0 - ACC_EPSILON {
-                        continue;
-                    }
-
-                    // Effective quantize period, in master beats: the user's
-                    // period rounded up to the ratio's cycle, so a boundary
-                    // always coincides with a natural step of the synth (see
-                    // effective_quantize_period). 0 when the quantize is off.
-                    let quantize_period = if synth.config.quantize {
-                        effective_quantize_period(
-                            synth.config.tempo_ratio,
-                            synth.config.quantize_beats,
-                        )
-                    } else {
-                        0
-                    };
-
-                    // Master-tempo quantize: hold a due step until the next
-                    // resync boundary when that boundary falls before the
-                    // following step. Delay-only — a step is never advanced,
-                    // so a sounding note is never cut. With note lengths
-                    // enabled the note that just elapsed is released instead
-                    // of being extended until the boundary — unless the legato
-                    // tie is on, where the note is meant to hold.
-                    if synth.config.quantize
-                        && should_hold_for_quantize(
-                            wake,
-                            quantize_period,
-                            synth.playback.wakes_since_step,
-                        )
-                    {
-                        if !synth.config.note_lengths.is_empty() && !synth.config.note_legato {
-                            release_sounding_notes(synth, &midi_state);
-                        }
-                        continue;
-                    }
-
-                    // On a resync boundary the accumulator is reset cleanly
-                    // (a fresh phase anchor) instead of subtracting the step.
-                    let on_boundary = synth.config.quantize
-                        && wake.is_multiple_of(quantize_period * WAKES_PER_BEAT);
-                    if on_boundary {
-                        synth.playback.tempo_accumulator = 0.0;
-                    } else {
-                        synth.playback.tempo_accumulator -= 1.0;
-                    }
-
-                    let played_length = step_synth_once(&app, synth, image, &midi_state);
-                    if let Some(length_beats) = played_length {
-                        // Note lengths enabled: the played pixel occupies
-                        // exactly its note's duration. Rewind the accumulator
-                        // so the next pixel is due after `length_beats` beats
-                        // of the synth's own tempo (i.e. length_beats / ratio
-                        // metronome beats).
-                        synth.playback.tempo_accumulator = 1.0 - length_beats;
-                    }
-                    synth.playback.wakes_since_step = 0;
+        // Image then synths, in the mandated order (see locks.rs): this
+        // loop holds both while stepping every synth.
+        if let Some(image) = image_state.processed.lock_safe().as_ref() {
+            let mut synths = synth_state.synths.lock_safe();
+            for synth in synths.values_mut() {
+                if synth.playback.playing {
+                    tick_synth(app, synth, image, &midi_state, tick, wake);
                 }
             }
+        }
 
-            wake += 1;
+        wake += 1;
 
-            // A mode change to Off or Master drops an active DAW sync
-            if clock_mode && !matches!(mode, ClockMode::Auto | ClockMode::Input) {
+        // A mode change to Off or Master drops an active DAW sync
+        if clock_mode && !matches!(mode, ClockMode::Auto | ClockMode::Input) {
+            clock_mode = false;
+            last_synced_bpm = 0;
+            pacer.reset();
+            let _ = app.emit(
+                "metronome-sync",
+                MetronomeSync {
+                    synced: Some(false),
+                    ..Default::default()
+                },
+            );
+        }
+
+        // --- Timing source: master broadcast, external MIDI clock, or
+        // internal pacing ---
+        if master {
+            // 24 pulses per quarter note = PULSES_PER_WAKE per wake, on the
+            // absolute timeline: one sent with the wake body (above), the
+            // other halfway. The BPM is re-read on every pulse so tempo
+            // changes apply live.
+            let half = Duration::from_nanos(wake_period_ns(bpm.load(Ordering::Relaxed)) / 2);
+            pacer.wait(half);
+            midi::broadcast_realtime(app, midi::MIDI_CLOCK);
+            let half = Duration::from_nanos(wake_period_ns(bpm.load(Ordering::Relaxed)) / 2);
+            pacer.wait(half);
+        } else if clock_mode {
+            let collected = wait_for_wake_pulse(clock, &alive, &mut wake);
+            if !alive() {
+                break;
+            }
+            if !collected {
+                // Clock stopped: fall back to the internal tempo, keeping
+                // the last synced BPM, and wait a regular wake before the
+                // next one
                 clock_mode = false;
                 last_synced_bpm = 0;
                 let _ = app.emit(
@@ -1685,140 +1996,165 @@ pub fn start_metronome(app: AppHandle, state: tauri::State<MetronomeState>) {
                         ..Default::default()
                     },
                 );
-            }
-
-            // --- Timing source: master broadcast, external MIDI clock,
-            // or internal sleep ---
-            if master {
-                // 24 pulses per quarter note = PULSES_PER_WAKE per wake.
-                // The BPM is re-read on every pulse so tempo changes
-                // apply live; nanosecond periods avoid the drift an
-                // integer-milliseconds division would introduce.
-                for _ in 0..PULSES_PER_WAKE {
-                    let current_bpm = bpm.load(Ordering::Relaxed).max(1);
-                    let pulse_ns = 60_000_000_000u64 / (current_bpm as u64 * 24);
-                    thread::sleep(Duration::from_nanos(pulse_ns));
-                    midi::broadcast_realtime(&midi_state, midi::MIDI_CLOCK);
-                }
-            } else if clock_mode {
-                // Wait for PULSES_PER_WAKE pulses past the anchor
-                // (24 ppqn → one wake)
-                if clock.started.swap(false, Ordering::Relaxed) {
-                    // Start/Continue received: realign the grid with the
-                    // sender's beats
-                    let pulses = clock.pulses.load(Ordering::Relaxed);
-                    clock.anchor.store(pulses, Ordering::Relaxed);
-                    wake = 0;
-                }
-                let target = clock.anchor.load(Ordering::Relaxed) + PULSES_PER_WAKE;
-                let deadline = Instant::now() + CLOCK_FALLBACK;
-                let mut collected = false;
-                while Instant::now() < deadline {
-                    // Explicit Stop message: fall back without waiting
-                    // for the timeout
-                    if clock.stopped.load(Ordering::Relaxed) {
-                        break;
-                    }
-                    if clock.pulses.load(Ordering::Relaxed) >= target {
-                        clock.anchor.store(target, Ordering::Relaxed);
-                        collected = true;
-                        break;
-                    }
-                    thread::sleep(Duration::from_millis(1));
-                }
-                if !collected {
-                    // Clock stopped: fall back to the internal tempo, keeping
-                    // the last synced BPM, and wait a regular wake before the
-                    // next one
-                    clock_mode = false;
-                    last_synced_bpm = 0;
-                    let _ = app.emit(
-                        "metronome-sync",
-                        MetronomeSync {
-                            synced: Some(false),
-                            ..Default::default()
-                        },
-                    );
-                    let current_bpm = bpm.load(Ordering::Relaxed).max(1);
-                    let beat_ms = 60_000u64 / current_bpm as u64;
-                    thread::sleep(Duration::from_millis(beat_ms / WAKES_PER_BEAT));
-                } else {
-                    // Tempo learned from the clock: propagate it to the
-                    // metronome's BPM so the UI display and an eventual
-                    // internal fallback both follow the DAW's project tempo.
-                    let measured = measured_bpm(&clock);
-                    if measured >= 20 {
-                        if measured != bpm.load(Ordering::Relaxed) {
-                            bpm.store(measured, Ordering::Relaxed);
-                        }
-                        if measured != last_synced_bpm {
-                            last_synced_bpm = measured;
-                            let _ = app.emit(
-                                "metronome-sync",
-                                MetronomeSync {
-                                    synced: Some(true),
-                                    bpm: Some(measured),
-                                    ..Default::default()
-                                },
-                            );
-                        }
-                    }
-                }
+                pacer.reset();
+                pacer.wait(Duration::from_nanos(wake_period_ns(
+                    bpm.load(Ordering::Relaxed),
+                )));
             } else {
-                let current_bpm = bpm.load(Ordering::Relaxed).max(1);
-                let beat_ms = 60_000u64 / current_bpm as u64;
-                thread::sleep(Duration::from_millis(beat_ms / WAKES_PER_BEAT));
-
-                // Opportunistic engagement (Auto and Input modes: in Input
-                // mode the pulses of non-selected ports are already
-                // filtered out by the input handlers): as soon as a clock
-                // streams, the next wakes follow its pulses instead of the
-                // internal BPM
-                let pulses = clock.pulses.load(Ordering::Relaxed);
-                let streaming = matches!(mode, ClockMode::Auto | ClockMode::Input)
-                    && pulses > 0
-                    && pulses != last_pulses
-                    && now_ns().saturating_sub(clock.last_pulse_ns.load(Ordering::Relaxed))
-                        < CLOCK_ENGAGE_WINDOW.as_nanos() as u64;
-                if streaming {
-                    clock_mode = true;
-                    clock.anchor.store(pulses, Ordering::Relaxed);
-                    last_synced_bpm = 0; // first synced event emitted on the next wake
+                // Tempo learned from the clock: propagate it to the
+                // metronome's BPM so the UI display and an eventual internal
+                // fallback both follow the DAW's project tempo.
+                let measured = measured_bpm(clock);
+                if measured >= 20 {
+                    if measured != bpm.load(Ordering::Relaxed) {
+                        bpm.store(measured, Ordering::Relaxed);
+                    }
+                    if measured != last_synced_bpm {
+                        last_synced_bpm = measured;
+                        let _ = app.emit(
+                            "metronome-sync",
+                            MetronomeSync {
+                                synced: Some(true),
+                                bpm: Some(measured),
+                                ..Default::default()
+                            },
+                        );
+                    }
                 }
-                last_pulses = pulses;
             }
-        }
+        } else {
+            pacer.wait(Duration::from_nanos(wake_period_ns(
+                bpm.load(Ordering::Relaxed),
+            )));
 
-        // The thread only lives while a synth plays: if it stops while the
-        // metronome is synced to a DAW clock, release the UI's tempo
-        // controls (a later restart re-engages the sync if the clock
-        // streams again), and stop broadcasting the master clock with a
-        // transport Stop so the followers halt too.
-        if was_master {
-            let _ = app.emit(
-                "metronome-sync",
-                MetronomeSync {
-                    master: Some(false),
-                    ..Default::default()
-                },
-            );
-            midi::broadcast_realtime(&app.state::<MidiState>(), midi::MIDI_STOP);
+            // Opportunistic engagement (Auto and Input modes: in Input mode
+            // the pulses of non-selected ports are already filtered out by
+            // the input handlers): as soon as a clock streams, the next
+            // wakes follow its pulses instead of the internal BPM
+            let pulses = clock.pulses.load(Ordering::Relaxed);
+            let streaming = matches!(mode, ClockMode::Auto | ClockMode::Input)
+                && pulses > 0
+                && pulses != last_pulses
+                && now_ns().saturating_sub(clock.last_pulse_ns.load(Ordering::Relaxed))
+                    < CLOCK_ENGAGE_WINDOW.as_nanos() as u64;
+            if streaming {
+                // Engage on the clock's next wake pulse rather than running
+                // a step off its grid, aligned on the sender's beat when its
+                // phase is known. A Start/Continue seen before the sync
+                // engaged is stale as an anchor (its pulse is long gone —
+                // following it would fire a burst of catch-up wakes), but
+                // the phase it taught is kept.
+                clock.started.store(false, Ordering::Release);
+                let (anchor, mut engaged_wake) =
+                    sync_engage_anchor(pulses, wake, clock.beat_origin());
+                clock.anchor.store(anchor, Ordering::Release);
+                if wait_for_wake_pulse(clock, &alive, &mut engaged_wake) {
+                    clock_mode = true;
+                    last_synced_bpm = 0; // first synced event emitted on the next wake
+                    wake = engaged_wake;
+                } else {
+                    pacer.reset();
+                }
+            }
+            last_pulses = pulses;
         }
-        if clock_mode {
-            let _ = app.emit(
-                "metronome-sync",
-                MetronomeSync {
-                    synced: Some(false),
-                    ..Default::default()
-                },
-            );
+    }
+
+    // The thread only lives while a synth plays: if it stops while the
+    // metronome is synced to a DAW clock, release the UI's tempo controls
+    // (a later restart re-engages the sync if the clock streams again),
+    // and stop broadcasting the master clock with a transport Stop so the
+    // followers halt too.
+    if was_master {
+        let _ = app.emit(
+            "metronome-sync",
+            MetronomeSync {
+                master: Some(false),
+                ..Default::default()
+            },
+        );
+        midi::broadcast_realtime(app, midi::MIDI_STOP);
+    }
+    if clock_mode {
+        let _ = app.emit(
+            "metronome-sync",
+            MetronomeSync {
+                synced: Some(false),
+                ..Default::default()
+            },
+        );
+    }
+}
+
+/// Waits until the MIDI clock reaches the next wake (PULSES_PER_WAKE
+/// pulses past the anchor, 24 ppqn → one wake), then advances the anchor.
+/// A Start/Continue received meanwhile re-anchors the grid on the sender's
+/// position: the anchor is set by the input handler, `wake` here. Returns
+/// false when the clock stopped (explicit Stop, or no pulse within
+/// `CLOCK_FALLBACK`) or the metronome is being stopped.
+fn wait_for_wake_pulse(clock: &ClockState, alive: &impl Fn() -> bool, wake: &mut u64) -> bool {
+    let deadline = Instant::now() + CLOCK_FALLBACK;
+    while Instant::now() < deadline && alive() {
+        if clock.started.swap(false, Ordering::AcqRel) {
+            *wake = clock.start_wake.load(Ordering::Acquire);
         }
-    });
+        // Explicit Stop message: fall back without waiting for the timeout
+        if clock.stopped.load(Ordering::Relaxed) {
+            return false;
+        }
+        let anchor = clock.anchor.load(Ordering::Acquire);
+        let target = anchor.wrapping_add(PULSES_PER_WAKE);
+        if clock.pulses.load(Ordering::Acquire) >= target
+            && clock
+                .anchor
+                .compare_exchange(anchor, target, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+        {
+            // A transport message landing between the swap above and the
+            // exchange: if it set the anchor this wake just consumed (the
+            // anchor is still ours), this wake is its first one. If it
+            // overwrote the anchor afterwards, the next wait handles it.
+            if clock.started.load(Ordering::Acquire)
+                && clock.anchor.load(Ordering::Acquire) == target
+                && clock.started.swap(false, Ordering::AcqRel)
+            {
+                *wake = clock.start_wake.load(Ordering::Acquire);
+            }
+            return true;
+        }
+        thread::sleep(Duration::from_micros(250));
+    }
+    false
+}
+
+/// Phase alignment when the sync engages on a clock that is already
+/// streaming. `phase` is the sender's beat phase learned from its last
+/// Start / Song Position Pointer + Continue (see `ClockState::beat_phase`):
+/// the next wake is anchored on the sender's next even pulse within the
+/// beat, and the wake counter adopts the sender's position, so the
+/// metronome's beats coincide with the sender's. Without a known phase (no
+/// transport message seen) the internal phase is kept — no arbitrary jump.
+/// Returns `(anchor, wake)`: the next wake runs with `wake` when the pulse
+/// counter reaches `anchor + PULSES_PER_WAKE`.
+fn sync_engage_anchor(pulses: u64, wake: u64, phase: Option<u64>) -> (u64, u64) {
+    let Some(phase) = phase else {
+        return (pulses, wake);
+    };
+    // Next pulse on the wake grid (even position), strictly after `pulses`
+    let next = if pulse_position(pulses + 1, phase).is_multiple_of(PULSES_PER_WAKE) {
+        pulses + 1
+    } else {
+        pulses + 2
+    };
+    (
+        next - PULSES_PER_WAKE,
+        pulse_position(next, phase) / PULSES_PER_WAKE,
+    )
 }
 
 #[tauri::command]
 pub fn stop_metronome(state: tauri::State<MetronomeState>) {
-    state.running.store(false, Ordering::Relaxed);
+    state.request_stop();
 }
 
 #[tauri::command]
@@ -1831,7 +2167,8 @@ pub fn is_metronome_running(state: tauri::State<MetronomeState>) -> bool {
 /// while the synth is paused. The notes played by a manual step have a
 /// fixed duration — the pixel's note length when note lengths are enabled,
 /// otherwise the synth's own step period (metronome interval divided by
-/// its tempo ratio) — after which a Note Off is sent.
+/// its tempo ratio) — after which a Note Off is sent through the gate
+/// scheduler (no thread per step).
 #[tauri::command]
 pub fn step_synth(
     app: AppHandle,
@@ -1841,106 +2178,43 @@ pub fn step_synth(
     midi_state: State<MidiState>,
     metronome_state: State<'_, MetronomeState>,
 ) -> Result<(), AppError> {
-    let bpm = metronome_state.bpm.load(Ordering::Relaxed).max(1) as u64;
-    let interval_ms = 60_000u64 / bpm;
+    let beat_ns = wake_period_ns(metronome_state.bpm.load(Ordering::Relaxed)) * WAKES_PER_BEAT;
+    // Read before the image and synth locks (see locks.rs)
+    let tick = TickConfig::read(&app);
 
-    let (port, channel, scheduled, generation, step_duration) = {
-        // Image then synths, in the mandated order (see locks.rs).
-        let image_guard = image_state.processed.lock().unwrap();
-        let image = match image_guard.as_ref() {
-            Some(img) => img,
-            None => return Err(err("no_processed_image")),
-        };
+    // Image then synths, in the mandated order (see locks.rs).
+    let image_guard = image_state.processed.lock_safe();
+    let image = image_guard
+        .as_ref()
+        .ok_or_else(|| err("no_processed_image"))?;
 
-        let mut synths = synth_state.synths.lock().unwrap();
-        let synth = match synths.get_mut(&id) {
-            Some(s) => s,
-            None => return Err(err("synth_not_found").with_param("id", id)),
-        };
+    let mut synths = synth_state.synths.lock_safe();
+    let synth = synths
+        .get_mut(&id)
+        .ok_or_else(|| err("synth_not_found").with_param("id", id))?;
 
-        if synth.playback.playing {
-            return Err(err("synth_is_playing").with_param("id", id));
-        }
+    if synth.playback.playing {
+        return Err(err("synth_is_playing").with_param("id", id));
+    }
 
-        let played_length = step_synth_once(&app, synth, image, &midi_state);
+    let played_length = step_synth_once(&app, synth, image, &midi_state, tick);
 
-        // Duration of the notes just played: the pixel's note length when
-        // note lengths are enabled, otherwise the synth's regular step
-        // period. Both are scaled by the tempo ratio (e.g. ratio 0.5 =
-        // twice the metronome period).
+    // In the sustained articulation the notes are held for their full
+    // duration, so schedule their Note Off: the pixel's note length when
+    // note lengths are enabled, otherwise the synth's regular step period,
+    // both scaled by the tempo ratio (e.g. ratio 0.5 = twice the metronome
+    // period). In pizzicato the gate scheduler (or the immediate Note Off
+    // when the gate is 0) already released them.
+    if synth.config.note_sustain {
         let ratio = if synth.config.tempo_ratio > 0.0 {
             synth.config.tempo_ratio
         } else {
             1.0
         };
         let beats = played_length.unwrap_or(1.0);
-        let step_duration = ((interval_ms as f64) * beats / ratio).round().max(1.0) as u64;
-
-        // In the sustained articulation the notes are held for their full
-        // duration, so capture the sounding notes to schedule their Note
-        // Off. In pizzicato the gate scheduler (or the immediate Note Off
-        // when the gate is 0) already released them: nothing to schedule.
-        let mut scheduled = Vec::new();
-        if synth.config.note_sustain {
-            if synth.playback.note_is_on {
-                scheduled.push(synth.playback.note);
-            }
-            for voice in &synth.playback.poly_voices {
-                if voice.note_is_on {
-                    scheduled.push(voice.note);
-                }
-            }
-        }
-        (
-            synth.config.midi_port,
-            synth.config.channel,
-            scheduled,
-            synth.playback.note_generation,
-            step_duration,
-        )
-    };
-
-    if scheduled.is_empty() {
-        return Ok(());
+        let step_ns = ((beat_ns as f64) * beats / ratio).round().max(1.0) as u64;
+        schedule_note_offs(&app, synth, Duration::from_nanos(step_ns), true);
     }
-
-    let app = app.clone();
-    thread::spawn(move || {
-        thread::sleep(Duration::from_millis(step_duration));
-
-        // Turn the captured notes off only if the synth is still paused and
-        // still sounding those same articulation: a newer manual step (a
-        // different note generation), a stop, or the metronome taking over
-        // in the meantime cancels the cutoff.
-        let synth_state = app.state::<SynthState>();
-        let midi_state = app.state::<MidiState>();
-
-        let mut synths = synth_state.synths.lock().unwrap();
-        let synth = match synths.get_mut(&id) {
-            Some(s) => s,
-            None => return,
-        };
-        if synth.playback.playing
-            || synth.config.channel != channel
-            || synth.playback.note_generation != generation
-        {
-            return;
-        }
-
-        // The notes were sent on the captured port: even if the synth has
-        // since changed ports, turn them off where they are sounding.
-        if synth.playback.note_is_on && scheduled.contains(&synth.playback.note) {
-            midi_state.note_off(port, channel, synth.playback.note);
-            synth.playback.note_is_on = false;
-        }
-        for voice in synth.playback.poly_voices.iter_mut() {
-            if voice.note_is_on && scheduled.contains(&voice.note) {
-                midi_state.note_off(port, channel, voice.note);
-                voice.note_is_on = false;
-            }
-        }
-    });
-
     Ok(())
 }
 
@@ -2826,5 +3100,357 @@ mod tests {
                 );
             }
         }
+    }
+
+    // --- Timing accuracy ---
+
+    #[test]
+    fn wake_period_is_exact_to_the_nanosecond() {
+        // 120 BPM: a beat is 500 ms, a wake 41.666 ms (the historical
+        // integer-ms division gave 41 ms, i.e. ~122 BPM)
+        assert_eq!(wake_period_ns(120), 41_666_666);
+        assert_eq!(wake_period_ns(120) * WAKES_PER_BEAT, 499_999_992);
+        // 300 BPM: 200 ms beat (the old code: 16 ms wakes = 312.5 BPM)
+        assert_eq!(wake_period_ns(300), 16_666_666);
+        // Every tempo of the range stays within 1 µs per beat of exact
+        for bpm in 20..=300u32 {
+            let beat = wake_period_ns(bpm) * WAKES_PER_BEAT;
+            let exact = 60_000_000_000u64 / bpm as u64;
+            assert!(
+                exact - beat < 1_000,
+                "{bpm} BPM drifts by {} ns",
+                exact - beat
+            );
+        }
+        // Defensive: 0 BPM never divides by zero
+        assert!(wake_period_ns(0) > 0);
+    }
+
+    #[test]
+    fn pacer_absorbs_the_work_time_instead_of_drifting() {
+        // The deadline grid is fixed: whatever time the work of a wake
+        // takes (here 30 ms out of 41 ms), deadline n stays start + n·period
+        let start = Instant::now();
+        let mut pacer = Pacer { next: start };
+        let period = Duration::from_nanos(wake_period_ns(120));
+        let mut now = start;
+        for n in 1..=1_000u32 {
+            now += Duration::from_millis(30); // the wake's processing time
+            let deadline = pacer.advance(period, now);
+            assert_eq!(deadline, start + period * n);
+            now = deadline; // slept until the deadline
+        }
+    }
+
+    #[test]
+    fn pacer_reanchors_instead_of_bursting_after_a_long_stall() {
+        let start = Instant::now();
+        let mut pacer = Pacer { next: start };
+        let period = Duration::from_millis(40);
+        // A small lateness is caught up (the grid is kept)...
+        let deadline = pacer.advance(period, start + Duration::from_millis(100));
+        assert_eq!(deadline, start + period);
+        // ...but a stall of many wakes (system sleep) re-anchors on now,
+        // instead of firing a burst of catch-up steps
+        let late = start + Duration::from_secs(5);
+        assert_eq!(pacer.advance(period, late), late);
+        assert_eq!(pacer.advance(period, late), late + period);
+    }
+
+    // --- Accumulator ---
+
+    /// Runs the accumulator of one synth over `wakes` master wakes (no
+    /// quantize), returning the wake index of every step. `lengths` is the
+    /// note length (in beats) of every step, None = quarter-note steps.
+    fn simulate_steps(ratio: f64, length: Option<f64>, wakes: u64) -> Vec<u64> {
+        let mut acc = 0.0f64;
+        let mut steps = vec![0u64];
+        if let Some(l) = length {
+            acc = 1.0 - l;
+        }
+        for wake in 1..wakes {
+            acc += ratio / WAKES_PER_BEAT as f64;
+            if acc < 1.0 - ACC_EPSILON {
+                continue;
+            }
+            let carry = acc - 1.0;
+            acc = carry;
+            if let Some(l) = length {
+                acc = 1.0 - l + carry;
+            }
+            steps.push(wake);
+        }
+        steps
+    }
+
+    #[test]
+    fn exact_ratios_stay_locked_on_the_master_grid() {
+        // Over 100 master beats, every UI ratio steps exactly ratio × 100
+        // times with no cumulative drift — including 2/3 and 4/3, whose
+        // historical truncated decimals (0.66, 1.33) slipped a step
+        for &ratio in &crate::state::TEMPO_RATIOS {
+            let steps = simulate_steps(ratio, None, 100 * WAKES_PER_BEAT);
+            let expected = (ratio * 100.0).ceil() as usize;
+            assert_eq!(steps.len(), expected, "ratio {ratio}");
+            // The k-th step lands on the k-th exact step time, rounded up
+            // to the wake grid
+            for (k, &wake) in steps.iter().enumerate() {
+                let exact = k as f64 * WAKES_PER_BEAT as f64 / ratio;
+                assert!(
+                    (wake as f64 - exact) >= -1e-6 && (wake as f64 - exact) < 1.0,
+                    "ratio {ratio}: step {k} at wake {wake}, exact {exact}"
+                );
+            }
+        }
+        // The truncated 0.66 drifted: after 100 beats it is a step behind
+        let legacy = simulate_steps(0.66, None, 100 * WAKES_PER_BEAT);
+        assert!(legacy.len() < 67);
+    }
+
+    #[test]
+    fn note_lengths_keep_the_accumulator_overshoot() {
+        // Ratio 4/3 with eighth notes: a pixel every 0.5 synth beats =
+        // 0.375 master beats = 4.5 wakes — off the wake grid. Keeping the
+        // overshoot alternates 5- and 4-wake gaps around the exact time;
+        // discarding it (the historical code) made every gap 5 wakes, a
+        // drift of 0.5 wake per step.
+        let steps = simulate_steps(4.0 / 3.0, Some(0.5), 90 * WAKES_PER_BEAT);
+        let n = steps.len() - 1;
+        let exact = n as f64 * 4.5;
+        let last = *steps.last().unwrap() as f64;
+        assert!((last - exact).abs() < 1.0, "drift: {last} vs {exact}");
+    }
+
+    #[test]
+    fn normalize_tempo_ratio_snaps_the_legacy_decimals() {
+        use crate::state::normalize_tempo_ratio;
+        assert_eq!(normalize_tempo_ratio(0.66), 2.0 / 3.0);
+        assert_eq!(normalize_tempo_ratio(1.33), 4.0 / 3.0);
+        assert_eq!(normalize_tempo_ratio(0.75), 0.75);
+        assert_eq!(normalize_tempo_ratio(0.1), 0.5);
+        assert_eq!(normalize_tempo_ratio(9.0), 1.5);
+        assert_eq!(normalize_tempo_ratio(f64::NAN), 1.0);
+        // An arbitrary hand-edited ratio far from every fraction is kept
+        assert_eq!(normalize_tempo_ratio(0.9), 0.9);
+    }
+
+    // --- Polyphonic note sharing ---
+
+    use crate::state::ChannelVoice;
+
+    fn voices(state: [(u8, bool); 3]) -> [ChannelVoice; 3] {
+        state.map(|(note, note_is_on)| ChannelVoice { note, note_is_on })
+    }
+
+    #[test]
+    fn a_pitch_shared_by_two_voices_is_played_once() {
+        let idle = voices([(0, false); 3]);
+        let plan = plan_poly_voices(&idle, [Some(60), Some(60), Some(64)], false);
+        assert_eq!(plan.note_ons, vec![60, 64]);
+        assert!(plan.note_offs.is_empty());
+        // Only one voice owns the shared pitch
+        assert_eq!(plan.sounding, [true, false, true]);
+    }
+
+    #[test]
+    fn a_held_shared_pitch_is_kept_without_reattack() {
+        // R holds 60; now R and G both want 60: no message at all
+        let held = voices([(60, true), (0, false), (0, false)]);
+        let plan = plan_poly_voices(&held, [Some(60), Some(60), None], false);
+        assert!(plan.note_ons.is_empty() && plan.note_offs.is_empty());
+        assert_eq!(plan.sounding, [true, false, false]);
+
+        // R moves away while G still wants 60: the note keeps sounding,
+        // G takes it over (no Note Off, no re-attack); R's new pitch starts
+        let plan = plan_poly_voices(&held, [Some(62), Some(60), None], false);
+        assert_eq!(plan.note_offs, Vec::<u8>::new());
+        assert_eq!(plan.note_ons, vec![62]);
+        assert_eq!(plan.sounding, [true, true, false]);
+    }
+
+    #[test]
+    fn retrigger_reattacks_a_shared_pitch_once() {
+        let held = voices([(60, true), (0, false), (64, true)]);
+        let plan = plan_poly_voices(&held, [Some(60), Some(60), Some(64)], true);
+        // Every held pitch released once, every wanted pitch attacked once
+        assert_eq!(plan.note_offs, vec![60, 64]);
+        assert_eq!(plan.note_ons, vec![60, 64]);
+        assert_eq!(plan.sounding.iter().filter(|&&s| s).count(), 2);
+    }
+
+    #[test]
+    fn released_voices_send_their_note_off_once() {
+        // Legacy state where two voices hold the same pitch: one Note Off
+        let held = voices([(60, true), (60, true), (0, false)]);
+        let plan = plan_poly_voices(&held, [None, None, None], false);
+        assert_eq!(plan.note_offs, vec![60]);
+        assert!(plan.note_ons.is_empty());
+        assert_eq!(plan.sounding, [false; 3]);
+    }
+
+    // --- Grid resize ---
+
+    #[test]
+    fn grid_resize_keeps_the_playhead_on_its_cell() {
+        let zones = [Zone::from_rect(0, 0, 0, 4, 2)];
+        let old = CachedSequence {
+            width: 8,
+            height: 4,
+            sequence: build_pixel_sequence(&zones, 8, 4, ReadingDirection::LeftToRight, false),
+        };
+        let new = CachedSequence {
+            width: 6,
+            height: 3,
+            sequence: build_pixel_sequence(&zones, 6, 3, ReadingDirection::LeftToRight, false),
+        };
+        // Cursor 5 = cell (1, 1) in the old grid; same cell in the new one
+        let cursor = cursor_after_resize(&old, 5, &new);
+        assert_eq!(new.sequence[cursor], 6 + 1);
+        // A cell clipped away restarts the reading
+        let narrow = CachedSequence {
+            width: 2,
+            height: 3,
+            sequence: build_pixel_sequence(&zones, 2, 3, ReadingDirection::LeftToRight, false),
+        };
+        assert_eq!(cursor_after_resize(&old, 3, &narrow), 0);
+    }
+
+    // --- Metronome lifecycle ---
+
+    #[test]
+    fn a_single_metronome_thread_can_run() {
+        let state = MetronomeState::default();
+        let first = state.claim_start().expect("first start");
+        // Already running: a second start is refused
+        assert!(state.claim_start().is_none());
+        // Stop then immediate start: the old thread's generation is stale,
+        // so it exits at its next wake instead of running alongside
+        state.request_stop();
+        let second = state.claim_start().expect("restart");
+        assert_ne!(first, second);
+        assert_ne!(state.generation.load(Ordering::Acquire), first);
+        assert_eq!(state.generation.load(Ordering::Acquire), second);
+    }
+
+    #[test]
+    fn running_is_cleared_when_the_thread_exits_even_by_a_panic() {
+        let state = MetronomeState::default();
+        let mine = state.claim_start().unwrap();
+        let guard = RunningGuard {
+            running: state.running.clone(),
+            generation: state.generation.clone(),
+            mine,
+        };
+        let _ = std::thread::spawn(move || {
+            let _guard = guard;
+            panic!("metronome thread crash");
+        })
+        .join();
+        assert!(!state.running.load(Ordering::Acquire));
+        // ...so the metronome can be started again
+        assert!(state.claim_start().is_some());
+    }
+
+    #[test]
+    fn an_old_thread_exiting_does_not_clear_a_newer_one() {
+        let state = MetronomeState::default();
+        let old = state.claim_start().unwrap();
+        state.request_stop();
+        let _new = state.claim_start().unwrap();
+        drop(RunningGuard {
+            running: state.running.clone(),
+            generation: state.generation.clone(),
+            mine: old,
+        });
+        assert!(state.running.load(Ordering::Acquire));
+    }
+
+    // --- Clock sync phase ---
+
+    #[test]
+    fn start_message_aligns_the_next_wake_on_a_beat() {
+        let state = MetronomeState::default();
+        for _ in 0..37 {
+            register_pulse(&state.clock, 0);
+        }
+        on_clock_start(&state, "daw");
+        // The next wake fires on the very next pulse, as wake 0 (a beat)
+        let anchor = state.clock.anchor.load(Ordering::Acquire);
+        assert_eq!(anchor + PULSES_PER_WAKE, 38);
+        assert_eq!(state.clock.start_wake.load(Ordering::Acquire), 0);
+        // The pulse reaching 38 is the beat's first: position 0
+        let phase = state.clock.beat_origin().unwrap();
+        assert_eq!(pulse_position(38, phase), 0);
+        assert_eq!(pulse_position(38 + 24, phase), 0);
+        assert_eq!(pulse_position(38 + 6, phase), 6);
+    }
+
+    #[test]
+    fn song_position_then_continue_resumes_mid_beat() {
+        let state = MetronomeState::default();
+        for _ in 0..10 {
+            register_pulse(&state.clock, 0);
+        }
+        // Resume from the 3rd sixteenth of a bar (position 2 × 6 = 12)
+        on_song_position(&state, "daw", 2);
+        on_clock_continue(&state, "daw");
+        assert_eq!(state.clock.start_wake.load(Ordering::Acquire), 6);
+        let phase = state.clock.beat_origin().unwrap();
+        assert_eq!(pulse_position(11, phase), 12);
+        // The position was consumed: a later plain Continue is a beat start
+        on_clock_continue(&state, "daw");
+        assert_eq!(state.clock.start_wake.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn sync_engage_lands_on_the_senders_wake_grid() {
+        // Sender phase: pulse count 38 is a beat start (see above)
+        let phase = 38 % 24;
+        // Engaging at pulse count 41 (position 3): the next even position
+        // is 4, at count 42 → wake 2 of the beat
+        let (anchor, wake) = sync_engage_anchor(41, 999, Some(phase));
+        assert_eq!(anchor + PULSES_PER_WAKE, 42);
+        assert_eq!(wake, 2);
+        // At count 40 (position 2): next even position 4 is two pulses away
+        let (anchor, wake) = sync_engage_anchor(40, 999, Some(phase));
+        assert_eq!(anchor + PULSES_PER_WAKE, 42);
+        assert_eq!(wake, 2);
+        // Unknown phase: the internal wake counter is kept, no jump
+        assert_eq!(sync_engage_anchor(41, 7, None), (41, 7));
+    }
+}
+
+#[cfg(test)]
+mod timing_tests {
+    use super::*;
+
+    /// Real-time check of the pacer: 1.5 s at 300 BPM (the shortest wake,
+    /// 16.7 ms) with a simulated workload of up to 8 ms per wake. The
+    /// elapsed time must match the theoretical duration closely — the
+    /// historical sleep-after-work loop drifted by the work time on every
+    /// wake (here ~50 % slow) on top of the integer-ms truncation.
+    #[test]
+    fn pacer_keeps_real_time_under_load() {
+        let period = Duration::from_nanos(wake_period_ns(300));
+        let wakes = 90u32;
+        let start = Instant::now();
+        let mut pacer = Pacer { next: start };
+        for i in 0..wakes {
+            // Variable processing time (0..8 ms)
+            let work = Duration::from_micros((i % 9) as u64 * 1_000);
+            let busy = Instant::now();
+            while busy.elapsed() < work {
+                std::hint::spin_loop();
+            }
+            pacer.wait(period);
+        }
+        let elapsed = start.elapsed();
+        let expected = period * wakes;
+        let drift = elapsed.as_secs_f64() - expected.as_secs_f64();
+        assert!(
+            drift.abs() < 0.015,
+            "expected {expected:?}, took {elapsed:?} (drift {:.1} ms)",
+            drift * 1000.0
+        );
     }
 }

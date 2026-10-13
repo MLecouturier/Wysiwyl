@@ -1,5 +1,6 @@
 pub mod config;
 pub mod error;
+pub mod fsutil;
 pub mod gate;
 pub mod image_processing;
 pub mod locks;
@@ -11,6 +12,7 @@ pub mod synth;
 pub mod zone;
 
 use config::ConfigState;
+use locks::MutexExt;
 use metronome::MetronomeState;
 use state::{ImageState, MidiState, SynthState};
 use tauri::Manager;
@@ -34,17 +36,21 @@ pub fn run() {
             // MIDI clock straight to Wysiwyl (Unix only)
             #[cfg(unix)]
             midi::start_virtual_input_listener(app.handle());
+            // Hot-plug: stale output connections dropped, new inputs listened to
+            midi::start_port_watcher(app.handle().clone());
 
-            // Delayed Note Off scheduler for the pizzicato minimum gate
+            // Delayed Note Off scheduler (pizzicato minimum gate, manual step)
             app.manage(gate::GateState::start(app.handle().clone()));
+            app.manage(session::SessionPaths::default());
 
             // Load the persisted configuration and apply it
             let loaded = config::load_config(app.handle());
             {
                 let config_state = app.state::<ConfigState>();
-                *config_state.config.lock().unwrap() = loaded.clone();
+                *config_state.config.lock_safe() = loaded.clone();
             }
             let metronome_state = app.state::<MetronomeState>();
+            // default_bpm is sanitized on load (20-300)
             metronome_state
                 .bpm
                 .store(loaded.default_bpm, std::sync::atomic::Ordering::Relaxed);

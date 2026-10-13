@@ -5,12 +5,12 @@
 
 import { t, applyTranslations } from '../core/i18n.js';
 import { getTemplate } from '../core/templates.js';
-import { NOTE_NAMES, playAllStatus, mutedVolume } from '../core/utils.js';
+import { NOTE_NAMES, playAllStatus, mutedVolume, parseTempoRatio, tempoRatioOption } from '../core/utils.js';
 import { rectZone, zoneCellSet, rebuildZones } from '../core/geometry.js';
 import { viewer } from '../core/state.js';
 import {
     synthNames, synthDisplayNumbers, synthColors, synthHighlights,
-    synthCursors, removeSynthFromRegistry,
+    synthCursors, synthCursorGrid, synthCursorMuted, removeSynthFromRegistry,
 } from '../core/state.js';
 import { appEvents } from '../core/state.js';
 import { synthElementById } from './model.js';
@@ -133,7 +133,7 @@ function syncLegatoAvailability(el) {
 // is already applied server-side.
 export function applySynthConfig(el, cfg) {
     // Tempo
-    el.querySelector('.synth-tempo').value = String(cfg.tempo_ratio);
+    el.querySelector('.synth-tempo').value = tempoRatioOption(cfg.tempo_ratio);
     // MIDI channel
     el.querySelector('.synth-channel').value = String(cfg.channel);
     // Mode (monophonic / polyphonic)
@@ -489,12 +489,15 @@ export function createSynthElement(id, cfg = null) {
     // labeled through i18n; physical ports keep their system name.
     const midiPortSelect = el.querySelector('.synth-midi-port');
     invoke('list_midi_ports').then(ports => {
+        // Port names come from the OS (any local process can create a
+        // virtual port with an arbitrary name): built as text nodes, never
+        // parsed as HTML
         if (ports.length === 0) {
-            midiPortSelect.innerHTML = `<option value="0">${t('synth.noMidiPort')}</option>`;
+            midiPortSelect.replaceChildren(new Option(t('synth.noMidiPort'), '0'));
         } else {
-            midiPortSelect.innerHTML = ports.map(p =>
-                `<option value="${p.index}">${p.isVirtual ? t('synth.virtualPort') : p.name}</option>`
-            ).join('');
+            midiPortSelect.replaceChildren(...ports.map(p =>
+                new Option(p.isVirtual ? t('synth.virtualPort') : p.name, String(p.index))
+            ));
             // Reflect the template's port; if it no longer exists
             // (interface unplugged), fall back to the virtual port when
             // available, otherwise to the first physical port — on both
@@ -522,7 +525,7 @@ export function createSynthElement(id, cfg = null) {
 
     // Tempo relative to the main metronome (e.g. 0.5 = one pixel every two ticks)
     el.querySelector('.synth-tempo').addEventListener('change', (e) => {
-        invoke('set_synth_tempo', { id, tempo: Number(e.target.value) })
+        invoke('set_synth_tempo', { id, tempo: parseTempoRatio(e.target.value) })
             .catch(err => console.error('Error in set_synth_tempo:', err));
         updateZonesLabel(id);
     });
@@ -974,11 +977,15 @@ export function initVelocityRange(el) {
 }
 
 export async function onSynthPlayClick(id, el) {
-    const isPlaying = await invoke('is_synth_playing', { id });
-    if (!isPlaying) {
-        await startSynthPlayback(id, el);
-    } else {
-        await stopSynthPlayback(id, el);
+    try {
+        const isPlaying = await invoke('is_synth_playing', { id });
+        if (!isPlaying) {
+            await startSynthPlayback(id, el);
+        } else {
+            await stopSynthPlayback(id, el);
+        }
+    } catch (err) {
+        console.error('Error while toggling the synth playback:', err);
     }
     syncPlayAllButton();
 }
@@ -1137,18 +1144,31 @@ export function toggleSynthMute(id) {
     input.dispatchEvent(new Event('change', { bubbles: true }));
 }
 
+// Starts a synth. The UI only switches to the playing state once the
+// backend confirmed it; on failure the metronome is stopped again when
+// nothing else plays, so the two sides never diverge.
 export async function startSynthPlayback(id, el) {
     cancelTransientTools(); // a running transport must not keep a tool armed
-    await hooks.ensureMetronomeStarted();
-    await invoke('start_synth', { id });
+    try {
+        await hooks.ensureMetronomeStarted();
+        await invoke('start_synth', { id });
+    } catch (err) {
+        console.error('Error while starting the synth:', err);
+        await hooks.stopMetronomeIfIdle();
+        return;
+    }
     setSynthPlaying(id, true);
     // Lock this synth's controls while it is playing
     setSynthControlsLocked(el, true);
     hooks.updateImageControlsLockState();
 }
 
+// Stops a synth. Even if the backend call fails (unknown id after a
+// reload), the card is shown stopped: a synth the backend does not know
+// cannot be playing.
 export async function stopSynthPlayback(id, el) {
-    await invoke('stop_synth', { id });
+    await invoke('stop_synth', { id })
+        .catch(err => console.error('Error while stopping the synth:', err));
     setSynthPlaying(id, false);
     await hooks.stopMetronomeIfIdle();
     // Unlock this synth's controls
@@ -1287,6 +1307,8 @@ export async function renumberSynthIds() {
     };
     rekey(synthColors);
     rekey(synthCursors);
+    rekey(synthCursorGrid);
+    rekey(synthCursorMuted);
     rekey(synthHighlights);
     rekey(synthNames);
     rekey(synthDisplayNumbers);
@@ -1366,8 +1388,13 @@ export async function onSynthRemoveClick(id, el) {
     // Confirmation click: disarm, then actually remove
     resetSynthRemoveConfirm();
     appEvents.emit('session-dirty');
-    await invoke('stop_synth', { id }).catch(() => {});
-    await invoke('remove_synth', { id });
+    // remove_synth releases the synth's notes itself
+    try {
+        await invoke('remove_synth', { id });
+    } catch (err) {
+        console.error('Error in remove_synth:', err);
+        return;
+    }
 
     if (isZonePickingId(id)) cancelZonePicking();
 
@@ -1397,7 +1424,7 @@ export async function onSynthRemoveClick(id, el) {
         else activeSynthId = null;
     }
 
-    await renumberSynthIds();
+    await renumberSynthIds().catch(err => console.error('Error in set_synth_order:', err));
     redrawAllHighlights();
     updateVolumeSharedChannelWarnings();
 

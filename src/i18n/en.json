@@ -353,6 +353,9 @@
     "session_read_error": "Unable to read the session file: {details}",
     "session_parse_error": "Invalid session file: {details}",
     "session_write_error": "Unable to write the session file: {details}",
-    "session_version_unsupported": "This session was saved by an older version of Wysiwyl (format {version}) and cannot be loaded anymore."
+    "session_version_unsupported": "This session was saved by an older version of Wysiwyl (format {version}) and cannot be loaded anymore.",
+    "session_invalid": "Invalid or corrupted session file ({details}).",
+    "invalid_zones": "Invalid zone selection.",
+    "image_changed": "The image changed during processing."
   }
 }
