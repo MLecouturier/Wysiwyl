@@ -1375,14 +1375,25 @@ export async function onSynthRemoveClick(id, el) {
     // The dropped display number only cleans the map: the number itself
     // stays retired (the backend counter never reuses it)
     removeSynthFromRegistry(id);
+
+    // Neighbours captured before detaching the card: the synth just above
+    // is preferred, the one just below is the fallback (removed card was
+    // at the top of the list).
+    const findSibling = (prop) => {
+        let s = el[prop];
+        while (s && !s.classList.contains('synth-block')) s = s[prop];
+        return s;
+    };
+    const neighbour = findSibling('previousElementSibling') ?? findSibling('nextElementSibling');
+
     el._tab?.remove();
     el.remove();
 
-    // If the removed synth was the expanded one, expand a remaining
-    // neighbour (before renumbering, which remaps the tracked id).
+    // If the removed synth was the expanded one, expand the nearest
+    // remaining neighbour above it (before renumbering, which remaps
+    // the tracked id).
     if (activeSynthId === id) {
-        const next = synthListBody.querySelector('.synth-block');
-        if (next) setActiveSynth(Number(next.dataset.synthId));
+        if (neighbour) setActiveSynth(Number(neighbour.dataset.synthId));
         else activeSynthId = null;
     }
 
