@@ -38,7 +38,7 @@ import {
     cellFromClientPoint, imagePointFromClient, drawZonePreview, drawLassoPreview,
     wandAddPixels, wandRemovePixels, wandToggleMutePixels, wandRemoveMutePixels,
     lassoAddPixels, lassoRemovePixels, lassoToggleMutePixels, lassoRemoveMutePixels,
-    selectionMode, syncPickingUi,
+    selectionMode, syncPickingUi, applySilencePattern,
     gridNoteState, updateGridNoteHover, hideGridNoteHover,
 } from './synth/selection.js';
 import {
@@ -441,6 +441,12 @@ pixelOverlay.addEventListener('mousedown', (e) => {
     if (zoneState.pick.mode === 'lasso') {
         const pt = imagePointFromClient(e.clientX, e.clientY);
         zoneState.lasso = { id: zoneState.pick.id, points: [pt], start: cell, alt, shift };
+    } else if (zoneState.pick.mode === 'pattern') {
+        // The silence pattern commits on the click itself: the mode stays
+        // armed so several zones can be stamped in a row. No drag state,
+        // so the mousemove/mouseup listeners stay no-ops.
+        applySilencePattern(zoneState.pick.id, cell);
+        return;
     } else if (zoneState.pick.mode === 'wand') {
         // The wand commits on the click itself — no drag state, so the
         // mousemove/mouseup listeners stay no-ops. The tolerance is read

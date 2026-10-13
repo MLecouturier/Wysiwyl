@@ -6,13 +6,18 @@ use tauri::{AppHandle, Manager, State};
 use crate::error::{err, AppError};
 use crate::locks::MutexExt;
 use crate::metronome::{ClockMode, MetronomeState};
-use crate::state::{Scale, SynthConfig};
+use crate::state::{default_silence_pattern, Scale, SynthConfig};
 
 /// Hard cap on the longest side of any image held by the app (import,
 /// session load, transform results): beyond it the grid rendering and the
 /// IPC payloads exhaust memory. `max_image_size = 0` (unlimited) is capped
 /// to it too.
 pub const MAX_IMAGE_SIDE: u32 = 8192;
+
+/// Schema version of the persisted configuration. Bumped when a one-time
+/// migration must run on files written by an older build (see
+/// [`migrate_config`]). Files written before the field existed read as 0.
+pub const CONFIG_VERSION: u32 = 2;
 
 /// Default bounds of the three note-range filters, in MIDI note numbers.
 pub const DEFAULT_NOTE_RANGE_BOUNDS: [(u8, u8); 3] = [(21, 47), (48, 71), (72, 108)];
@@ -104,6 +109,11 @@ pub struct AppConfig {
     /// Depth of the undo/redo history for zone and silence edits (number
     /// of steps kept). Hand-edited values are clamped to 1–500 on load.
     pub undo_depth: u32,
+    /// Schema version of the file (see [`CONFIG_VERSION`]). Absent in files
+    /// written before it existed: the field-level default reads them as 0,
+    /// so the one-time migrations run once and are then recorded here.
+    #[serde(default)]
+    pub config_version: u32,
 }
 
 impl Default for AppConfig {
@@ -120,6 +130,7 @@ impl Default for AppConfig {
             wheel_trackpad_threshold: 100,
             pizzicato_gate_ms: 40,
             undo_depth: 25,
+            config_version: CONFIG_VERSION,
         }
     }
 }
@@ -197,6 +208,28 @@ fn config_path(app: &AppHandle) -> Option<PathBuf> {
     Some(dir.join("config.json"))
 }
 
+/// Runs the one-time configuration migrations up to [`CONFIG_VERSION`],
+/// reading the file's schema version from the raw JSON (`from_version`).
+/// Returns true when the config changed and must be written back.
+///
+/// Migrations are keyed on the version, never on the current values, so a
+/// setting deliberately chosen after the migration is never overwritten.
+fn migrate_config(config: &mut AppConfig, from_version: u32) -> bool {
+    if from_version >= CONFIG_VERSION {
+        config.config_version = CONFIG_VERSION;
+        return false;
+    }
+    // v2: the silence pattern's first default was all-play (the placeholder
+    // value materialized by an earlier build); the real default is a
+    // four-on-the-floor pulse. A template left untouched (still all-play)
+    // is upgraded; a customized one is kept as-is.
+    if config.default_synth.silence_pattern == [false; 16] {
+        config.default_synth.silence_pattern = default_silence_pattern();
+    }
+    config.config_version = CONFIG_VERSION;
+    true
+}
+
 /// Recursively checks that every object field present in the serialized
 /// config also exists in the raw JSON (arrays and leaves are accepted
 /// as-is). Used to detect a config file written by an older version of
@@ -234,8 +267,16 @@ pub fn load_config(app: &AppHandle) -> AppConfig {
         Some((mut config, complete)) => {
             config.sanitize();
             let raw = serde_json::from_str::<serde_json::Value>(&content).unwrap_or_default();
+            // The file's schema version drives the one-time migrations: a
+            // file written before the field existed reads as 0. Reading it
+            // from the raw JSON keeps this correct on both parse paths.
+            let from_version = raw
+                .get("config_version")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32;
+            let migrated = migrate_config(&mut config, from_version);
             let full = serde_json::to_value(&config).unwrap_or_default();
-            if !complete || !covers_fields(&raw, &full) {
+            if !complete || !covers_fields(&raw, &full) || migrated {
                 if !complete {
                     backup_config(&path);
                 }
@@ -687,5 +728,61 @@ mod tests {
         };
         config.sanitize();
         assert_eq!(config.undo_depth, 500);
+    }
+
+    #[test]
+    fn default_config_serializes_the_silence_pattern() {
+        // The default synth template is saved whole, so the pattern fields
+        // must be part of the serialized config (they survive a
+        // save-default / reload round trip)
+        let value = serde_json::to_value(AppConfig::default()).unwrap();
+        let synth = value.get("default_synth").unwrap();
+        assert!(synth.get("silence_pattern").is_some());
+        assert!(synth.get("silence_pattern_repeat").is_some());
+    }
+
+    #[test]
+    fn migrate_config_upgrades_the_legacy_silence_pattern() {
+        let mut config = AppConfig::default();
+        config.default_synth.silence_pattern = [false; 16];
+        config.config_version = 0;
+        assert!(migrate_config(&mut config, 0));
+        assert_eq!(
+            config.default_synth.silence_pattern,
+            default_silence_pattern()
+        );
+        assert_eq!(config.config_version, CONFIG_VERSION);
+    }
+
+    #[test]
+    fn migrate_config_preserves_a_customized_pattern() {
+        let mut config = AppConfig::default();
+        let custom = {
+            let mut p = [false; 16];
+            p[2] = true;
+            p
+        };
+        config.default_synth.silence_pattern = custom;
+        assert!(migrate_config(&mut config, 0));
+        assert_eq!(config.default_synth.silence_pattern, custom);
+        assert_eq!(config.config_version, CONFIG_VERSION);
+    }
+
+    #[test]
+    fn migrate_config_is_a_no_op_at_the_current_version() {
+        // Once migrated, an all-play pattern is a deliberate choice and must
+        // not be touched again
+        let mut config = AppConfig::default();
+        config.default_synth.silence_pattern = [false; 16];
+        assert!(!migrate_config(&mut config, CONFIG_VERSION));
+        assert_eq!(config.default_synth.silence_pattern, [false; 16]);
+    }
+
+    #[test]
+    fn config_version_defaults_to_zero_when_absent() {
+        // A file written before the field existed has no config_version:
+        // the field-level default must read it as 0 so the migration runs
+        let config: AppConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(config.config_version, 0);
     }
 }

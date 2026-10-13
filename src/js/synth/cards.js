@@ -214,6 +214,18 @@ export function applySynthConfig(el, cfg) {
         sel.value = scale;
     });
     el.querySelectorAll('.synth-scale-root').forEach(sel => { sel.value = String(scaleRoot); });
+    // Silence pattern (16 steps + repeat): the grid and the repeat button
+    // only show while the pattern mode is armed (see .pattern-armed). The
+    // fallback mirrors the backend default: silences everywhere except the
+    // four downbeats (steps 1, 5, 9, 13).
+    const pattern = Array.isArray(cfg.silence_pattern) && cfg.silence_pattern.length === 16
+        ? cfg.silence_pattern
+        : Array.from({ length: 16 }, (_, i) => i % 4 !== 0);
+    el.querySelectorAll('.pattern-step').forEach(btn => {
+        btn.classList.toggle('silence', !!pattern[Number(btn.dataset.step)]);
+    });
+    el.querySelector('.synth-pattern-repeat-btn')
+        .classList.toggle('active', !!cfg.silence_pattern_repeat);
     // The note-range summary follows the restored mode, ranges and scale
     updateNoteRangeInfo(el);
 }
@@ -840,6 +852,42 @@ export function createSynthElement(id, cfg = null) {
         sendSynthMuteZones(id);
         updateZonesLabel(id);
         redrawAllHighlights();
+    });
+
+    // ---- Silence pattern: arm a mode where clicking a pixel stamps the
+    // 16-step play/silence pattern into the zone, in the synth's reading
+    // order (see selection.js applySilencePattern) ----
+    const silencePatternBtn = el.querySelector('.synth-silence-pattern-btn');
+    const patternRepeatBtn = el.querySelector('.synth-pattern-repeat-btn');
+    const patternSteps = Array.from(el.querySelectorAll('.pattern-step'));
+
+    // Pushes the current grid + repeat state. Both the steps and the
+    // repeat button persist the whole pattern (last write wins).
+    const sendSilencePattern = () => {
+        const steps = patternSteps.map(btn => btn.classList.contains('silence'));
+        invoke('set_synth_silence_pattern', {
+            id,
+            steps,
+            repeat: patternRepeatBtn.classList.contains('active'),
+        }).catch(err => console.error('Error in set_synth_silence_pattern:', err));
+    };
+
+    patternSteps.forEach(btn => {
+        btn.addEventListener('click', () => {
+            btn.classList.toggle('silence');
+            sendSilencePattern();
+        });
+    });
+
+    patternRepeatBtn.addEventListener('click', () => {
+        patternRepeatBtn.classList.toggle('active');
+        sendSilencePattern();
+    });
+
+    silencePatternBtn.addEventListener('click', (e) => {
+        const btn = e.currentTarget;
+        if (isZoneMode(id, 'pattern')) cancelZonePicking();
+        else startZonePicking(id, btn, 'pattern');
     });
 
     initVelocityRange(el);

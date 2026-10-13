@@ -115,6 +115,8 @@ pub fn run() {
             synth::set_synth_sorted_reading,
             synth::set_synth_zones,
             synth::set_synth_mute_zones,
+            synth::set_synth_silence_pattern,
+            synth::compute_synth_silence_pattern,
             synth::set_synth_mode,
             synth::set_synth_hue_shift,
             synth::set_synth_note_lengths,

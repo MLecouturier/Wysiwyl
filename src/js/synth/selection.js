@@ -131,6 +131,30 @@ export function sendSynthMuteZones(id) {
     scheduleCapture(); // record an undo step (coalesced with the zones push)
 }
 
+// Stamps the synth's silence pattern at the clicked pixel. The backend
+// resolves the synth's pixel sequence (reading direction + sorted
+// reading) and returns the resulting muted cells, so the rhythm lines up
+// with the pixels the synth plays. The frontend rebuilds its mute zones
+// from that set and pushes through the usual choke point: persistence,
+// undo history and rendering stay shared with the manual silence tools.
+export async function applySilencePattern(id, cell) {
+    const hi = synthHighlights.get(id);
+    if (!hi) return;
+    let cells;
+    try {
+        cells = await invoke('compute_synth_silence_pattern', {
+            id, col: cell.col, row: cell.row,
+        });
+    } catch (err) {
+        console.error('Error in compute_synth_silence_pattern:', err);
+        return;
+    }
+    const set = new Set(cells.map(([col, row]) => `${col},${row}`));
+    hi.muteZones = rebuildZones(hi.muteZones, set);
+    sendSynthMuteZones(id);
+    redrawAllHighlights();
+}
+
 // Undo/redo history wiring: the history module re-pushes through these same
 // choke points when restoring a snapshot, so it never imports this module.
 configureHistory({
@@ -444,6 +468,7 @@ export function syncPickingUi() {
     pixelOverlay.classList.toggle('picking-rect', armed && tool === 'rect');
     pixelOverlay.classList.toggle('picking-lasso', armed && tool === 'lasso');
     pixelOverlay.classList.toggle('picking-wand', armed && tool === 'wand');
+    pixelOverlay.classList.toggle('picking-pattern', armed && tool === 'pattern');
     pixelOverlay.classList.toggle('picking-add', armed && mode === 'add');
     pixelOverlay.classList.toggle('picking-remove', armed && mode === 'remove');
     pixelOverlay.classList.toggle('picking-silence', armed && (mode === 'silence' || mode === 'unsilence'));
@@ -523,6 +548,9 @@ export function startZonePicking(id, btn, mode = 'rect') {
     // The tolerance input only shows while the magic-wand mode is armed
     // on this card
     if (mode === 'wand') btn.closest('.synth-block')?.classList.add('wand-armed');
+    // The pattern section (16-step grid + repeat) only shows while the
+    // silence-pattern mode is armed on this card
+    if (mode === 'pattern') btn.closest('.synth-block')?.classList.add('pattern-armed');
     syncPickingUi(); // reflect the armed tool and any held modifier
     // Editing blind is confusing: arming the picking mode reveals this
     // synth's zones (they may be hidden during playback). The eye button
@@ -541,6 +569,7 @@ export function cancelZonePicking() {
     zoneState.pick.btn.classList.remove('active');
     zoneState.pick.btn.classList.remove('selective');
     zoneState.pick.btn.closest('.synth-block')?.classList.remove('wand-armed');
+    zoneState.pick.btn.closest('.synth-block')?.classList.remove('pattern-armed');
     zoneState.pick = null;
     const hadDrag = !!zoneState.drag || !!zoneState.lasso;
     zoneState.drag = null;

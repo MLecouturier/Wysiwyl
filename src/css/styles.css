@@ -1,3 +1,4 @@
+@charset "UTF-8";
 @font-face {
   font-family: "Material Symbols Outlined";
   font-style: normal;
@@ -1091,6 +1092,57 @@ button.toggle-btn.active:hover {
 
 .synth-block.wand-armed .magic-wand-tolerance {
   visibility: visible;
+}
+
+.synth-pattern-section {
+  display: none;
+}
+
+.synth-block.pattern-armed .synth-pattern-section {
+  display: flex;
+}
+
+.synth-pattern-steps {
+  display: flex;
+  flex: 1 1 auto;
+  gap: 2px;
+  min-width: 0;
+}
+
+.pattern-step {
+  display: inline-flex;
+  flex: 1 1 0;
+  align-items: center;
+  justify-content: center;
+  min-width: 1rem;
+  height: 1.25rem;
+  padding: 0;
+  border: 1px solid #3a7bd5;
+  border-radius: 2px;
+  background-color: #3a7bd5;
+  color: #fff;
+  font-size: 0.85rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+.pattern-step:nth-of-type(4n+5) {
+  margin-left: 0.375rem;
+}
+.pattern-step::after {
+  content: "𝆝";
+  font-family: "Noto Music";
+  opacity: 0;
+}
+.pattern-step:hover {
+  border-color: #3a7bd5;
+}
+.pattern-step.silence {
+  background-color: #262626;
+  border-color: #555;
+}
+.pattern-step.silence::after {
+  opacity: 1;
 }
 
 .synth-play {

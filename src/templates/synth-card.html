@@ -69,10 +69,6 @@
                     <span class="material-symbols-outlined" aria-hidden="true">select_all</span>
                 </button>
                 <div class="flex-none w-4"></div>
-                <button class="synth-clear-zones-btn icon-btn" data-i18n-title="synth.clearZones" data-i18n-aria-label="synth.clearZones">
-                    <span class="material-symbols-outlined" aria-hidden="true">remove_selection</span>
-                </button>
-                <div class="flex-none w-4"></div>
                 <button class="synth-add-zone-btn icon-btn" data-i18n-title="synth.addZone" data-i18n-aria-label="synth.addZone">
                     <span class="material-symbols-outlined" aria-hidden="true">select</span>
                 </button>
@@ -83,7 +79,44 @@
                     <span class="material-symbols-outlined" aria-hidden="true">wand_shine</span>
                 </button>
                 <input type="number" class="magic-wand-tolerance" value="32" min="1" max="255" step="1" data-i18n-title="synth.magicWandTolerance" data-i18n-aria-label="synth.magicWandTolerance" />
+                <button class="synth-silence-pattern-btn icon-btn" type="button" data-i18n-title="synth.silencePatternHint" data-i18n-aria-label="synth.silencePatternHint">
+                    <span class="material-symbols-outlined" aria-hidden="true">steppers</span>
+                </button>
+                <div class="flex-none w-4"></div>                
+                <button class="synth-clear-zones-btn icon-btn" data-i18n-title="synth.clearZones" data-i18n-aria-label="synth.clearZones">
+                    <span class="material-symbols-outlined" aria-hidden="true">remove_selection</span>
+                </button>
                 <div class="flex-fill"></div>
+            </div>
+        </div>
+        <!-- 2a. Motif de silences : grille de 16 pas + répétition (visible
+             seulement quand le mode est armé, voir .synth-block.pattern-armed) -->
+        <div class="synth-section synth-pattern-section bg-dark">
+            <div class="synth-section-body">
+                <div class="flex-none w-4"></div>
+                <div class="synth-pattern-steps">
+                    <button class="pattern-step" type="button" data-step="0" data-i18n-title="synth.silencePatternStep" data-i18n-aria-label="synth.silencePatternStep"></button>
+                    <button class="pattern-step" type="button" data-step="1" data-i18n-title="synth.silencePatternStep" data-i18n-aria-label="synth.silencePatternStep"></button>
+                    <button class="pattern-step" type="button" data-step="2" data-i18n-title="synth.silencePatternStep" data-i18n-aria-label="synth.silencePatternStep"></button>
+                    <button class="pattern-step" type="button" data-step="3" data-i18n-title="synth.silencePatternStep" data-i18n-aria-label="synth.silencePatternStep"></button>
+                    <button class="pattern-step" type="button" data-step="4" data-i18n-title="synth.silencePatternStep" data-i18n-aria-label="synth.silencePatternStep"></button>
+                    <button class="pattern-step" type="button" data-step="5" data-i18n-title="synth.silencePatternStep" data-i18n-aria-label="synth.silencePatternStep"></button>
+                    <button class="pattern-step" type="button" data-step="6" data-i18n-title="synth.silencePatternStep" data-i18n-aria-label="synth.silencePatternStep"></button>
+                    <button class="pattern-step" type="button" data-step="7" data-i18n-title="synth.silencePatternStep" data-i18n-aria-label="synth.silencePatternStep"></button>
+                    <button class="pattern-step" type="button" data-step="8" data-i18n-title="synth.silencePatternStep" data-i18n-aria-label="synth.silencePatternStep"></button>
+                    <button class="pattern-step" type="button" data-step="9" data-i18n-title="synth.silencePatternStep" data-i18n-aria-label="synth.silencePatternStep"></button>
+                    <button class="pattern-step" type="button" data-step="10" data-i18n-title="synth.silencePatternStep" data-i18n-aria-label="synth.silencePatternStep"></button>
+                    <button class="pattern-step" type="button" data-step="11" data-i18n-title="synth.silencePatternStep" data-i18n-aria-label="synth.silencePatternStep"></button>
+                    <button class="pattern-step" type="button" data-step="12" data-i18n-title="synth.silencePatternStep" data-i18n-aria-label="synth.silencePatternStep"></button>
+                    <button class="pattern-step" type="button" data-step="13" data-i18n-title="synth.silencePatternStep" data-i18n-aria-label="synth.silencePatternStep"></button>
+                    <button class="pattern-step" type="button" data-step="14" data-i18n-title="synth.silencePatternStep" data-i18n-aria-label="synth.silencePatternStep"></button>
+                    <button class="pattern-step" type="button" data-step="15" data-i18n-title="synth.silencePatternStep" data-i18n-aria-label="synth.silencePatternStep"></button>
+                </div>
+                <div class="flex-fill"></div>
+                <button class="synth-pattern-repeat-btn icon-btn" type="button" data-i18n-title="synth.toggleInfiniteRepeat" data-i18n-aria-label="synth.toggleInfiniteRepeat">
+                    <span class="material-symbols-outlined" aria-hidden="true">all_inclusive</span>
+                </button>
+                <div class="flex-none w-4"></div>
             </div>
         </div>
 

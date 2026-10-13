@@ -820,6 +820,188 @@ pub fn set_synth_mute_zones(
     }
 }
 
+/// The muted cells of a zone list, as (col, row) pairs, sorted.
+fn muted_cells(zones: &[Zone]) -> Vec<[u32; 2]> {
+    let mut cells: Vec<[u32; 2]> = zones
+        .iter()
+        .flat_map(|z| z.runs.iter())
+        .flat_map(|r| ((r.x0)..=(r.x1)).map(move |x| [x, r.y]))
+        .collect();
+    cells.sort_unstable();
+    cells.dedup();
+    cells
+}
+
+/// Applies a 16-step silence pattern to a pixel sequence starting at the
+/// sequence index `start`, merged onto `base_mutes` (a set of pixel
+/// indices). A `true` step mutes the pixel, a `false` step unmutes it
+/// (the pattern overwrites the state of every covered pixel).
+///
+/// With `repeat` the pattern tiles across the whole sequence, wrapping
+/// around `start`; otherwise a single pass is applied and the sweep stops
+/// at the end of the sequence (it never wraps back). Pure, so the
+/// placement is unit tested without any image or synth state.
+fn apply_silence_pattern(
+    sequence: &[usize],
+    start: usize,
+    steps: &[bool; 16],
+    repeat: bool,
+    base_mutes: &HashSet<usize>,
+) -> HashSet<usize> {
+    let mut muted = base_mutes.clone();
+    let len = sequence.len();
+    if len == 0 || start >= len {
+        return muted;
+    }
+    let count = if repeat {
+        len
+    } else {
+        steps.len().min(len - start)
+    };
+    for k in 0..count {
+        let pixel = if repeat {
+            sequence[(start + k) % len]
+        } else {
+            sequence[start + k]
+        };
+        if steps[k % steps.len()] {
+            muted.insert(pixel);
+        } else {
+            muted.remove(&pixel);
+        }
+    }
+    muted
+}
+
+/// Stamps the silence pattern into the zone containing (col, row) and
+/// returns the resulting set of muted pixel indices, merged onto
+/// `base_mutes`. The pattern is confined to that zone: its pixels are
+/// read in the synth's reading direction, and the sweep never crosses
+/// into another zone. Without `repeat` it is applied once from the
+/// clicked pixel and stops at the end of the zone; with `repeat` it tiles
+/// across the whole zone, wrapping around the clicked pixel. A click
+/// outside every zone leaves `base_mutes` untouched. Pure, so the
+/// zone-bounded placement is unit tested without any image.
+#[allow(clippy::too_many_arguments)] // flat by design: the pixel context is threaded explicitly
+fn silence_pattern_cells(
+    zones: &[Zone],
+    width: usize,
+    height: usize,
+    direction: ReadingDirection,
+    sorted: bool,
+    col: u32,
+    row: u32,
+    steps: &[bool; 16],
+    repeat: bool,
+    base_mutes: &HashSet<usize>,
+) -> HashSet<usize> {
+    // Zones are disjoint connected components: at most one contains the
+    // clicked pixel.
+    let Some(zone) = zones.iter().find(|z| z.contains(col, row)) else {
+        return base_mutes.clone();
+    };
+    // The sequence of that zone alone: the pattern is bounded to it and
+    // never bleeds into the neighbouring zones.
+    let sequence = crate::metronome::build_pixel_sequence(
+        std::slice::from_ref(zone),
+        width,
+        height,
+        direction,
+        sorted,
+    );
+    let target = row as usize * width + col as usize;
+    let Some(start) = sequence.iter().position(|&p| p == target) else {
+        return base_mutes.clone();
+    };
+    apply_silence_pattern(&sequence, start, steps, repeat, base_mutes)
+}
+
+/// Stores the synth's 16-step silence pattern and its repeat flag. The
+/// pattern is normalized to exactly 16 steps (missing steps read as
+/// "play"); the flag tiles the pattern across a whole zone when set.
+#[tauri::command]
+pub fn set_synth_silence_pattern(
+    id: u32,
+    steps: Vec<bool>,
+    repeat: bool,
+    state: State<SynthState>,
+) -> Result<(), AppError> {
+    let mut synths = state.synths.lock_safe();
+    match synths.get_mut(&id) {
+        Some(synth) => {
+            let mut pattern = [false; 16];
+            for (i, &step) in steps.iter().take(16).enumerate() {
+                pattern[i] = step;
+            }
+            synth.config.silence_pattern = pattern;
+            synth.config.silence_pattern_repeat = repeat;
+            Ok(())
+        }
+        None => Err(synth_not_found(id)),
+    }
+}
+
+/// Computes the mute cells resulting from stamping the synth's silence
+/// pattern at the pixel (col, row), and returns the complete list of
+/// muted cells as (col, row) pairs. Read-only: the frontend rebuilds its
+/// mute zones from the result and pushes them through
+/// `set_synth_mute_zones`, so the zone encoding and the undo history stay
+/// owned by the UI.
+///
+/// The pattern is confined to the zone containing the clicked pixel and
+/// follows the synth's reading direction within it (so the rhythm lines
+/// up with the pixels the synth plays): a silence step mutes the pixel, a
+/// play step unmutes it. With `silence_pattern_repeat` the pattern tiles
+/// across the whole zone, wrapping around the clicked pixel; otherwise it
+/// is applied once and stops at the end of the zone. A click outside the
+/// selection leaves the silences untouched.
+#[tauri::command]
+pub fn compute_synth_silence_pattern(
+    id: u32,
+    col: u32,
+    row: u32,
+    state: State<SynthState>,
+    image_state: State<ImageState>,
+) -> Result<Vec<[u32; 2]>, AppError> {
+    // Image then synths, in the mandated order (see locks.rs).
+    crate::locks::with_locked_synth(&image_state, &state, id, |synth, image| {
+        let Some(image) = image else {
+            return Vec::new();
+        };
+        let width = image.width() as usize;
+        let height = image.height() as usize;
+        if width == 0 || height == 0 || col as usize >= width || row as usize >= height {
+            return muted_cells(&synth.mute_zones);
+        }
+        let base: HashSet<usize> = synth
+            .mute_zones
+            .iter()
+            .flat_map(|z| z.runs.iter())
+            .flat_map(|r| {
+                ((r.x0 as usize)..=(r.x1 as usize)).map(move |x| r.y as usize * width + x)
+            })
+            .collect();
+        let muted = silence_pattern_cells(
+            &synth.zones,
+            width,
+            height,
+            synth.config.reading_direction,
+            synth.config.sorted_reading,
+            col,
+            row,
+            &synth.config.silence_pattern,
+            synth.config.silence_pattern_repeat,
+            &base,
+        );
+        let mut cells: Vec<[u32; 2]> = muted
+            .into_iter()
+            .map(|p| [(p % width) as u32, (p / width) as u32])
+            .collect();
+        cells.sort_unstable();
+        cells
+    })
+}
+
 /// Toggles the sorted reading of the pixel sequence: when enabled, the
 /// selected pixels are ordered by their absolute position in the image
 /// (in the reading direction) instead of being read zone by zone. The
@@ -1002,5 +1184,208 @@ mod tests {
         assert!(copy_config_between(&mut synths, 1, 9).is_err());
         // Nothing was mutated
         assert_eq!(synths.len(), 2);
+    }
+
+    fn pattern(bits: &[usize]) -> [bool; 16] {
+        let mut steps = [false; 16];
+        for &i in bits {
+            steps[i] = true;
+        }
+        steps
+    }
+
+    #[test]
+    fn apply_pattern_once_mutes_only_the_covered_steps() {
+        // A 20-pixel sequence, pattern with silences on steps 0 and 1,
+        // stamped at index 2: only pixels 2 and 3 become silent
+        let sequence: Vec<usize> = (0..20).collect();
+        let muted = apply_silence_pattern(&sequence, 2, &pattern(&[0, 1]), false, &HashSet::new());
+        assert_eq!(muted, HashSet::from([2, 3]));
+    }
+
+    #[test]
+    fn apply_pattern_once_stops_at_the_end_of_the_sequence() {
+        // Start near the end: the single pass stops at the end, it never
+        // wraps back to the beginning
+        let sequence: Vec<usize> = (0..4).collect();
+        let muted = apply_silence_pattern(&sequence, 3, &pattern(&[0, 1]), false, &HashSet::new());
+        // Only step 0 fits: it maps to index 3; step 1 is out of bounds
+        assert_eq!(muted, HashSet::from([3]));
+    }
+
+    #[test]
+    fn apply_pattern_repeat_tiles_the_whole_sequence() {
+        // A 2-step silence on step 0, tiled over 5 pixels from index 0:
+        // the pattern repeats every 16 steps, so only index 0 is silent
+        let sequence: Vec<usize> = (0..5).collect();
+        let muted = apply_silence_pattern(&sequence, 0, &pattern(&[0]), true, &HashSet::new());
+        assert_eq!(muted, HashSet::from([0]));
+    }
+
+    #[test]
+    fn apply_pattern_repeat_with_short_period_tiles_across_the_zone() {
+        // Pattern "silence on even steps" (0, 2, 4, ...) tiled over 5
+        // pixels: indices 0, 2, 4 are silent
+        let sequence: Vec<usize> = (0..5).collect();
+        let even = pattern(&[0, 2, 4, 6, 8, 10, 12, 14]);
+        let muted = apply_silence_pattern(&sequence, 0, &even, true, &HashSet::new());
+        assert_eq!(muted, HashSet::from([0, 2, 4]));
+    }
+
+    #[test]
+    fn apply_pattern_play_steps_unmute_existing_silences() {
+        // Pixel 2 is already muted; a play step over it clears the mute
+        let sequence: Vec<usize> = (0..4).collect();
+        let base = HashSet::from([2]);
+        let muted = apply_silence_pattern(&sequence, 0, &pattern(&[]), false, &base);
+        assert!(muted.is_empty());
+    }
+
+    #[test]
+    fn apply_pattern_on_empty_sequence_is_a_no_op() {
+        let base = HashSet::from([7]);
+        let muted = apply_silence_pattern(&[], 0, &pattern(&[0]), true, &base);
+        assert_eq!(muted, base);
+    }
+
+    #[test]
+    fn muted_cells_returns_sorted_pairs() {
+        let zone = Zone::from_cells(0, &[(2, 1), (0, 0), (1, 0), (5, 2)]);
+        let cells = muted_cells(&[zone]);
+        assert_eq!(cells, vec![[0, 0], [1, 0], [2, 1], [5, 2]]);
+    }
+
+    // Two disjoint 1x4 zones on an 8x1 grid: A = cols 0..3, B = cols 4..7
+    fn two_zones() -> Vec<Zone> {
+        vec![
+            Zone::from_cells(0, &[(0, 0), (1, 0), (2, 0), (3, 0)]),
+            Zone::from_cells(1, &[(4, 0), (5, 0), (6, 0), (7, 0)]),
+        ]
+    }
+
+    #[test]
+    fn silence_pattern_stays_inside_the_clicked_zone() {
+        // Silence on step 0, no repeat, clicked on the first pixel of zone
+        // A: only pixel 0 is muted, zone B (pixels 4..7) is untouched
+        let zones = two_zones();
+        let muted = silence_pattern_cells(
+            &zones,
+            8,
+            1,
+            ReadingDirection::LeftToRight,
+            false,
+            0,
+            0,
+            &pattern(&[0]),
+            false,
+            &HashSet::new(),
+        );
+        assert_eq!(muted, HashSet::from([0]));
+    }
+
+    #[test]
+    fn silence_pattern_clicked_in_the_second_zone_leaves_the_first_alone() {
+        let zones = two_zones();
+        let muted = silence_pattern_cells(
+            &zones,
+            8,
+            1,
+            ReadingDirection::LeftToRight,
+            false,
+            4,
+            0,
+            &pattern(&[0]),
+            false,
+            &HashSet::new(),
+        );
+        assert_eq!(muted, HashSet::from([4]));
+    }
+
+    #[test]
+    fn silence_pattern_without_repeat_stops_at_the_zone_end() {
+        // Clicked on pixel 2 of zone A: only the steps that fit before the
+        // end of the zone (pixels 2 and 3) are applied; the sweep does not
+        // wrap back to pixel 0
+        let zones = two_zones();
+        let muted = silence_pattern_cells(
+            &zones,
+            8,
+            1,
+            ReadingDirection::LeftToRight,
+            false,
+            2,
+            0,
+            &pattern(&[0]),
+            false,
+            &HashSet::new(),
+        );
+        assert_eq!(muted, HashSet::from([2]));
+    }
+
+    #[test]
+    fn silence_pattern_with_repeat_tiles_only_within_the_clicked_zone() {
+        // Silence on steps 0 and 1, repeat: within zone A both pixels 0 and
+        // 1 are muted (wrapping inside the zone), zone B is untouched
+        let zones = two_zones();
+        let muted = silence_pattern_cells(
+            &zones,
+            8,
+            1,
+            ReadingDirection::LeftToRight,
+            false,
+            0,
+            0,
+            &pattern(&[0, 1]),
+            true,
+            &HashSet::new(),
+        );
+        assert_eq!(muted, HashSet::from([0, 1]));
+    }
+
+    #[test]
+    fn silence_pattern_outside_every_zone_is_a_no_op() {
+        let zones = two_zones();
+        let base = HashSet::from([2]);
+        // (7, 1) is outside the grid (height 1): no zone contains it
+        let muted = silence_pattern_cells(
+            &zones,
+            8,
+            1,
+            ReadingDirection::LeftToRight,
+            false,
+            7,
+            1,
+            &pattern(&[0]),
+            true,
+            &base,
+        );
+        assert_eq!(muted, base);
+    }
+
+    #[test]
+    fn from_synth_preserves_the_silence_pattern() {
+        // Saving the current settings as the default template clones the
+        // whole config (see set_default_synth_from), so the pattern must
+        // survive the trip
+        let mut synth = Synth::new(1);
+        synth.config.silence_pattern = pattern(&[3, 7]);
+        synth.config.silence_pattern_repeat = true;
+        let template = crate::state::SynthConfig::from_synth(&synth);
+        assert_eq!(template.silence_pattern, pattern(&[3, 7]));
+        assert!(template.silence_pattern_repeat);
+        // Sanitizing (config file / session restore) keeps it too
+        let sanitized = template.sanitized();
+        assert_eq!(sanitized.silence_pattern, pattern(&[3, 7]));
+        assert!(sanitized.silence_pattern_repeat);
+    }
+
+    #[test]
+    fn default_silence_pattern_plays_the_four_downbeats() {
+        // Steps 1, 5, 9 and 13 (indices 0, 4, 8, 12) play; the rest are
+        // silences
+        let steps = crate::state::default_silence_pattern();
+        for (i, &silent) in steps.iter().enumerate() {
+            assert_eq!(silent, i % 4 != 0, "step {i}");
+        }
     }
 }

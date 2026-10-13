@@ -302,6 +302,25 @@ pub struct SynthConfig {
     pub scale_root: u8,   // scale tonic as a pitch class 0-11 (0 = C)
     pub quantize: bool,   // realign the step grid on the master beats (delay-only)
     pub quantize_beats: u8, // resync period in master beats (1-8) when quantize is on
+    /// Silence pattern: 16 steps applied to a zone by clicking a pixel
+    /// while the pattern mode is armed (true = silence/rest, false =
+    /// play). The steps follow the synth's reading order, so the rhythm
+    /// lines up with the pixels the synth plays.
+    pub silence_pattern: [bool; 16],
+    /// Repeat the silence pattern across the whole zone (tiling, wrapping
+    /// around the clicked pixel) instead of placing it once.
+    pub silence_pattern_repeat: bool,
+}
+
+/// Default silence pattern: every step is a silence (rest) except the four
+/// quarter-note downbeats — steps 1, 5, 9 and 13 (indices 0, 4, 8, 12) are
+/// played — giving a four-on-the-floor pulse out of the box.
+pub fn default_silence_pattern() -> [bool; 16] {
+    let mut steps = [true; 16];
+    for i in (0..16).step_by(4) {
+        steps[i] = false;
+    }
+    steps
 }
 
 impl Default for SynthConfig {
@@ -332,6 +351,8 @@ impl Default for SynthConfig {
             scale_root: 0,
             quantize: false,
             quantize_beats: 4,
+            silence_pattern: default_silence_pattern(),
+            silence_pattern_repeat: false,
         }
     }
 }

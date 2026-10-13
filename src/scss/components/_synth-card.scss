@@ -337,6 +337,63 @@ $synth-title-width: 18rem;
 .synth-block.wand-armed .magic-wand-tolerance { visibility: visible; }
 
 // --------------------------------------------------------------------------
+// Silence pattern
+// --------------------------------------------------------------------------
+// The 16-step play/silence grid + the repeat toggle: shown only while the
+// silence-pattern mode is armed on this card (.pattern-armed, set by
+// selection.js alongside the wand-armed mode).
+.synth-pattern-section { display: none; }
+
+.synth-block.pattern-armed .synth-pattern-section { display: flex; }
+
+.synth-pattern-steps {
+    display: flex;
+    flex: 1 1 auto;
+    gap: 2px;
+    min-width: 0;
+}
+
+// One step: a small square toggled between play (empty) and silence (the
+// rest glyph, accent background). The glyph is only visible on silent
+// steps, so the pattern reads at a glance.
+.pattern-step {
+    display: inline-flex;
+    flex: 1 1 0;
+    align-items: center;
+    justify-content: center;
+    min-width: 1rem;
+    height: 1.25rem;
+    padding: 0;
+    border: 1px solid $color-accent;
+    border-radius: 2px;
+    background-color: $color-accent;
+    color: #fff;
+    font-size: .85rem;
+    line-height: 1;
+    cursor: pointer;
+    transition: background-color $transition-fast, border-color $transition-fast;
+
+    &:nth-of-type(4n+5) {
+        margin-left: .375rem;
+    }
+
+    &::after {
+        content: '𝆝';
+        font-family: 'Noto Music';
+        opacity: 0;
+    }
+
+    &:hover { border-color: $color-accent; }
+
+    &.silence {
+        background-color: $color-bg-light;
+        border-color: $color-disactivated;
+
+        &::after { opacity: 1; }
+    }
+}
+
+// --------------------------------------------------------------------------
 // Playback
 // --------------------------------------------------------------------------
 // Play button: icon + label. Red while playing — the documented
