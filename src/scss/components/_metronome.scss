@@ -2,17 +2,38 @@
 // Metronome
 // ==========================================================================
 @use '../variables' as *;
+@use 'layout';
 
 $metronome-led-off: $color-disactivated;
 $metronome-led-on: $color-accent-alt;
-$metronome-led-transition: 0.05s ease;
+$metronome-led-transition: .05s ease;
 
 .metronome-area {
+    @extend %panel;
     flex: 0 0 auto;
-    padding: 12px 1rem;
-    // border: 1px solid $color-border;
-    border-radius: .25rem;
-    background-color: $color-bg-light;
+    padding: .75rem 1rem;
+}
+
+// Title line: the "Tempo (BPM)" title and the clock state badge
+.metronome-title {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+}
+
+// "Synced to DAW" badge, shown while an external MIDI clock drives the
+// tempo (blue: the sync mode is currently active); green in master mode,
+// while the app broadcasts its own clock
+.sync-badge {
+    padding: .125rem .5rem;
+    border-radius: $border-radius-base;
+    background-color: $color-accent;
+    color: $color-bg-dark;
+    font-size: .7rem;
+    font-weight: normal;
+    cursor: help;
+
+    &.master { background-color: $color-accent-alt; }
 }
 
 .metronome-controls {
@@ -21,138 +42,101 @@ $metronome-led-transition: 0.05s ease;
     justify-content: space-between;
     gap: .75rem;
     margin-top: .5rem;
+    font-size: .85rem;
+}
 
-    .metronome-bpm {
-        display: flex;
-        flex-direction: column;
-        font-size: 0.85em;
-        gap: .25rem;
+.bpm-input-group {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+}
 
-        .bpm-input-group {
-            display: flex;
-            align-items: center;
-            gap: .5rem;
+.bpm-step-group {
+    display: flex;
+    flex-direction: column;
+    gap: .25rem;
+}
 
-            .bpm-step-group {
-                display: flex;
-                flex-direction: column;
-                gap: .25rem;
-            }
+// ±5 / ±10 steps. Disabled (global rule) while the metronome follows a
+// DAW's MIDI clock, the sync badge then carries the state.
+.bpm-step {
+    padding: .125rem .375rem;
+    border: none;
+    border-radius: $border-radius-base;
+    background-color: $color-bg-neutral;
+    color: $color-text-secondary;
+    font-size: .85em;
+    cursor: pointer;
+    transition: background-color $transition-fast, color $transition-fast;
 
-            .bpm-input-wrapper {
-                position: relative;
-
-                .bpm-input {
-                    width: 3.5em;
-                    text-align: center;
-                    font-size: 2.25rem;
-                    padding-right: 1.5rem;
-                    background-color: $color-bg-light;
-                    color: $color-text-primary;
-                    border: 1px solid $color-border;
-                    border-radius: $border-radius-base;
-                    outline: none;
-
-                    &::-webkit-inner-spin-button,
-                    &::-webkit-outer-spin-button {
-                        -webkit-appearance: none;
-                        margin: 0;
-                    }
-
-                    // Disabled while the metronome follows a DAW's MIDI
-                    // clock (the sync badge then carries the state)
-                    &:disabled {
-                        opacity: .45;
-                        cursor: not-allowed;
-                    }
-                }
-
-                // Custom ±1 spinners replacing the native (uncolorable) ones
-                .bpm-spinner {
-                    position: absolute;
-                    top: 1px;
-                    right: 1px;
-                    bottom: 1px;
-                    display: flex;
-                    flex-direction: column;
-                    justify-content: center;
-                    width: 1.4rem;
-
-                    .bpm-spinner-btn {
-                        display: flex;
-                        align-items: center;
-                        justify-content: center;
-                        flex: 1 1 0;
-                        padding: 0;
-                        border: none;
-                        background-color: transparent;
-                        color: $color-text-secondary;
-                        cursor: pointer;
-
-                        .material-symbols-outlined { font-size: 1.05rem; }
-
-                        &:hover { color: $color-text-primary; }
-                        &:active { color: $color-accent; }
-                        &:disabled {
-                            opacity: .45;
-                            cursor: not-allowed;
-                        }
-                    }
-                }
-            }
-
-            .bpm-step {
-                padding: .125rem 6px;
-                font-size: 0.85em;
-                border: none;
-                border-radius: $border-radius-base;
-                background-color: $color-bg-neutral;
-                color: $color-text-secondary;
-                cursor: pointer;
-                transition: background-color $transition-fast, color $transition-fast;
-
-                &:hover {
-                    background-color: $color-bg-neutral-hover;
-                    color: $color-text-primary;
-                }
-
-                // Disabled while the metronome follows a DAW's MIDI clock
-                // (the sync badge below then carries the state)
-                &:disabled {
-                    opacity: .45;
-                    cursor: not-allowed;
-                }
-            }
-        }
-
-        // "Synced to DAW" badge, shown while an external MIDI clock
-        // drives the tempo (blue: the sync mode is currently active);
-        // green in master mode, while the app broadcasts its own clock
-        .sync-badge {
-            align-self: flex-start;
-            padding: .125rem .5rem;
-            font-size: .8em;
-            border-radius: $border-radius-base;
-            background-color: $color-accent;
-            color: $color-bg-dark;
-            cursor: help;
-
-            &.master { background-color: $color-accent-alt; }
-        }
+    &:hover {
+        background-color: $color-bg-neutral-hover;
+        color: $color-text-primary;
     }
+}
 
-    .led {
-        width: 1.5rem;
-        height: 1.5rem;
-        border-radius: 50%;
-        background-color: $metronome-led-off;
-        transition: background-color $metronome-led-transition;
-        flex-shrink: 0;
+.bpm-input-wrapper {
+    position: relative;
+}
 
-        &.active {
-            background-color: $metronome-led-on;
-            box-shadow: 0 0 .5rem $metronome-led-on;
-        }
+.bpm-input {
+    width: 3.5em;
+    padding-right: 1.5rem;
+    border: 1px solid $color-border;
+    border-radius: $border-radius-base;
+    outline: none;
+    background-color: $color-bg-light;
+    color: $color-text-primary;
+    font-size: 2.25rem;
+    text-align: center;
+
+    &::-webkit-inner-spin-button,
+    &::-webkit-outer-spin-button {
+        -webkit-appearance: none;
+        margin: 0;
+    }
+}
+
+// Custom ±1 spinners replacing the native (uncolorable) ones
+.bpm-spinner {
+    position: absolute;
+    top: 1px;
+    right: 1px;
+    bottom: 1px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    width: 1.4rem;
+}
+
+.bpm-spinner-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 1 1 0;
+    border: none;
+    background-color: transparent;
+    color: $color-text-secondary;
+    cursor: pointer;
+
+    .material-symbols-outlined { font-size: 1.05rem; }
+
+    &:hover { color: $color-text-primary; }
+    &:active { color: $color-accent; }
+}
+
+// Beat LED, flashed by the JS on every beat (.active)
+.metronome-led {
+    flex-shrink: 0;
+    width: 1.5rem;
+    height: 1.5rem;
+    border-radius: 50%;
+    background-color: $metronome-led-off;
+    transition: background-color $metronome-led-transition;
+
+    &.active {
+        background-color: $metronome-led-on;
+        box-shadow: 0 0 .5rem $metronome-led-on;
     }
 }
 
@@ -164,14 +148,16 @@ $metronome-led-transition: 0.05s ease;
     align-items: center;
     gap: .5rem;
     margin-top: .5rem;
-
-    select {
-        max-width: 12rem;
-        padding: .125rem .375rem;
-        font-size: .85em;
-        flex: 1 1 0;
-
-        // The mode select only carries a fixed set of short labels
-        &#clock-mode-select { flex: 0 0 auto; }
-    }
 }
+
+.clock-mode-select,
+.clock-source-select {
+    max-width: 12rem;
+    padding: .125rem .375rem;
+    font-size: .85rem;
+}
+
+// The mode select only carries a fixed set of short labels; the source
+// select takes the remaining width
+.clock-mode-select   { flex: 0 0 auto; }
+.clock-source-select { flex: 1 1 0; }

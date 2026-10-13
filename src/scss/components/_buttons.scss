@@ -1,5 +1,5 @@
 // ==========================================================================
-// Shared form controls
+// Shared buttons
 // ==========================================================================
 // One class per role, used across every section of the interface:
 // - .primary:    committing action (load, apply, add synth, play all)
@@ -14,113 +14,76 @@
 // (destructive action pending confirmation, see .synth-remove).
 @use '../variables' as *;
 
+// Common box of the text buttons
+%btn-text {
+    padding: .375rem .875rem;
+    border-radius: $border-radius-base;
+    font-size: .85rem;
+    cursor: pointer;
+}
+
+// Ghost look shared by .icon-btn, .secondary and .toggle-btn
+%btn-ghost {
+    border: 1px solid $color-border;
+    background-color: transparent;
+    color: $color-text-secondary;
+    transition: color $transition-fast, border-color $transition-fast, background-color $transition-fast;
+
+    &:hover { border-color: $color-text-muted; }
+}
+
 .icon-btn {
+    @extend %btn-ghost;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     width: 1.75rem;
     height: 1.75rem;
-    padding: 0;
-    border: 1px solid $color-border;
     border-radius: $border-radius-base;
-    background: none;
-    color: $color-text-secondary;
     cursor: pointer;
-    transition: color $transition-fast, border-color $transition-fast, background-color $transition-fast;
 
     .material-symbols-outlined { font-size: 1.05rem; }
 
-    &:hover {
-        color: $color-text-primary;
-        border-color: $color-text-muted;
-    }
-
-    // Mode/toggle currently active (crop, transform, show original, eye...)
-    &.active {
-        // background-color: $color-accent;
-        border-color: $color-accent;
-        color: $color-accent;
-
-        &:hover {
-            border-color: $color-text-muted;
-        }
-    }
-
-    // In-between state of a three-state icon toggle (the magic wand's
-    // non-adjacent mode): orange marks the middle state, like the mirror
-    // zones toggle's .selective
-    &.active.selective {
-        color: $color-selective;
-        border-color: $color-selective;
-
-        &:hover {
-            border-color: $color-text-muted;
-        }
-    }
+    &:hover { color: $color-text-primary; }
 }
 
 button.primary {
-    background-color: $color-accent;
+    @extend %btn-text;
     border: none;
-    color: white;
-    padding: 6px .875rem;
-    border-radius: $border-radius-base;
-    cursor: pointer;
-    font-size: 0.85rem;
+    background-color: $color-accent;
+    color: #fff;
     transition: background-color $transition-fast;
 
     &:hover { background-color: $color-accent-hover; }
 }
 
 button.secondary {
-    background-color: transparent;
-    border: 1px solid $color-border;
-    color: $color-text-secondary;
-    padding: 6px .875rem;
-    border-radius: $border-radius-base;
-    cursor: pointer;
-    font-size: 0.85rem;
-    transition: background-color $transition-fast, color $transition-fast, border-color $transition-fast;
+    @extend %btn-text;
+    @extend %btn-ghost;
 
-    &:hover { 
-        background-color: $color-bg-light; 
-        border-color: $color-text-muted;
-    }
+    &:hover { background-color: $color-bg-light; }
 }
 
-// Text on/off toggle: ghost look when inactive, accent look when active
 button.toggle-btn {
-    background-color: transparent;
-    border: 1px solid $color-border;
-    color: $color-text-secondary;
-    padding: 6px .875rem;
-    border-radius: $border-radius-base;
-    cursor: pointer;
-    font-size: 0.85rem;
-    transition: background-color $transition-fast, border-color $transition-fast, color $transition-fast;
+    @extend %btn-text;
+    @extend %btn-ghost;
+}
 
-    &:hover { 
-        border-color: $color-text-muted;
-    }
-
+// Mode/toggle currently active (crop, transform, show original, eye...).
+// The in-between state of a three-state toggle (mirror zones, magic wand's
+// non-adjacent mode) is orange. Hovering an active toggle only lightens
+// its border.
+.icon-btn,
+button.toggle-btn {
     &.active {
-        // background-color: ;
         border-color: $color-accent;
         color: $color-accent;
-
-        &:hover { 
-            border-color: $color-text-muted;
-        }
     }
 
-    // Selective state of the mirror zones toggle: only the synths visible
-    // in the main window are projected — orange marks the in-between state
     &.active.selective {
-        color: $color-selective;
         border-color: $color-selective;
-
-        &:hover { 
-            border-color: $color-text-muted;
-        }
+        color: $color-selective;
     }
+
+    &.active:hover { border-color: $color-text-muted; }
 }

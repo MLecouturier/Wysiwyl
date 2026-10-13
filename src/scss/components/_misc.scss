@@ -23,20 +23,19 @@
     border: 1px solid $color-border;
     border-radius: $border-radius-base;
     padding: .5rem .75rem;
-    box-shadow: 0 .25rem 1rem rgba(0, 0, 0, 0.5);
+    box-shadow: $shadow-popover;
     pointer-events: none;
 
     .help-heading {
-        font-size: 0.8rem;
+        margin-bottom: .25rem;
+        font-size: .8rem;
         font-weight: 600;
-        margin: 0 0 .25rem;
         color: $color-text-primary;
     }
 
     .help-body {
-        font-size: 0.78rem;
+        font-size: .78rem;
         line-height: 1.4;
-        margin: 0;
         // Renders the \n line breaks of the help.* i18n strings
         white-space: pre-line;
         color: $color-text-secondary;
@@ -71,10 +70,11 @@
 }
 
 // ==========================================================================
-// Unsaved-session confirmation modal (main window close)
+// Modal dialogs
 // ==========================================================================
-// Built statically in index.html (id #session-unsaved-modal = JS hook);
-// the message and button labels are i18n-driven.
+// Shared by the unsaved-session confirmation (main window close) and the
+// "copy from another synth" dialog. Built statically in index.html (the
+// ids are JS hooks); the texts and button labels are i18n-driven.
 
 .modal-overlay {
     position: fixed;
@@ -93,18 +93,18 @@
     padding: 1.25rem 1.5rem;
     min-width: 22rem;
     max-width: 30rem;
-    box-shadow: 0 .5rem 2rem rgba(0, 0, 0, 0.5);
+    box-shadow: $shadow-modal;
 
     h3 {
-        margin: 0 0 .5rem;
+        margin-bottom: .5rem;
         font-size: 1rem;
         font-weight: 600;
         color: $color-text-primary;
     }
 
     p {
-        margin: 0 0 1rem;
-        font-size: 0.85rem;
+        margin-bottom: 1rem;
+        font-size: .85rem;
         line-height: 1.4;
         color: $color-text-secondary;
     }
@@ -120,10 +120,9 @@
 // "Copy from another synth" dialog (parameters / zones)
 // ==========================================================================
 // A source dropdown on top, the action buttons at the bottom (Merge/Replace
-// for zones, Copy for parameters). Built by js/synth/menu.js; the ids are
-// JS hooks.
+// for zones, Copy for parameters). Driven by js/synth/menu.js.
 
 .synth-copy-source-select {
     width: 100%;
-    margin: 0 0 1rem;
+    margin-bottom: 1rem;
 }

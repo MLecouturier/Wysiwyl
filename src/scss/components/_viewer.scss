@@ -3,6 +3,7 @@
 // ==========================================================================
 // Styled by class only — the ids (#image-viewer, #pixel-overlay...) are
 // JS/canvas hooks, never styled (see README front-end conventions).
+@use 'sass:list';
 @use '../variables' as *;
 
 .image-viewer-container {
@@ -29,97 +30,81 @@
     background-position: 0 0, 0 .5rem, .5rem -.5rem, -.5rem 0;
     border: 1px solid $color-border;
     border-radius: $border-radius-base;
+}
 
-    .pixel-overlay {
-        position: absolute;
-        inset: 0;
-        width: 100%;
-        height: 100%;
-        pointer-events: none;
+// The original image (<img>) and the processed image (canvas painted
+// from raw pixels) share the same layout: fill the viewer and scale
+// down with contain behavior
+.image-viewer img,
+.processed-preview {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
 
-        // Pixel range click-selection mode: the cursor reflects the armed
-        // tool (rect / lasso / wand) and the effective mode — add (default),
-        // remove (Alt) or toggle silences (Shift, and Alt+Shift for removal).
-        // The SVG icons carry a dark outline so they stay readable on the
-        // dark viewer; the trailing crosshair is the fallback.
-        &.picking {
-            pointer-events: auto;
-            cursor: crosshair;
+    // Display cells as crisp blocks, without smoothing
+    &.pixelated {
+        image-rendering: pixelated;
+        image-rendering: crisp-edges;
+    }
+}
 
-            &.picking-rect.picking-add {
-                cursor: url('../assets/icons/square-dashed-plus.svg') 12 12, crosshair;
-            }
-            &.picking-rect.picking-remove {
-                cursor: url('../assets/icons/square-dashed-minus.svg') 12 12, crosshair;
-            }
-            &.picking-rect.picking-silence {
-                cursor: url('../assets/icons/square-dashed-silence.svg') 12 12, crosshair;
-            }
-            &.picking-lasso.picking-add {
-                cursor: url('../assets/icons/lasso-plus.svg') 7 22, crosshair;
-            }
-            &.picking-lasso.picking-remove {
-                cursor: url('../assets/icons/lasso-minus.svg') 7 22, crosshair;
-            }
-            &.picking-lasso.picking-silence {
-                cursor: url('../assets/icons/lasso-silence.svg') 7 22, crosshair;
-            }
-            &.picking-wand.picking-add {
-                cursor: url('../assets/icons/wand-sparkles-plus.svg') 2 2, crosshair;
-            }
-            &.picking-wand.picking-remove {
-                cursor: url('../assets/icons/wand-sparkles-minus.svg') 2 2, crosshair;
-            }
-            &.picking-wand.picking-silence {
-                cursor: url('../assets/icons/wand-sparkles-silence.svg') 2 2, crosshair;
+// Zone highlights and playhead cursors: two stacked canvases covering the
+// image. The cursors have their own layer, above the zones, so their
+// incremental clearing never erases the zone highlights.
+.pixel-overlay,
+.cursor-overlay {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+}
+
+// Pixel range click-selection mode: the cursor reflects the armed tool
+// (rect / lasso / wand) and the effective mode — add (default), remove
+// (Alt) or toggle silences (Shift, and Alt+Shift for removal). The SVG
+// icons carry a dark outline so they stay readable on the dark viewer;
+// the trailing crosshair is the fallback.
+// Tool → icon file prefix and hotspot; mode → icon file suffix
+$picking-tools: (
+    "rect":  ("square-dashed", 12, 12),
+    "lasso": ("lasso", 7, 22),
+    "wand":  ("wand-sparkles", 2, 2),
+);
+$picking-modes: ("add": "plus", "remove": "minus", "silence": "silence");
+
+.pixel-overlay.picking {
+    pointer-events: auto;
+    cursor: crosshair;
+
+    @each $tool, $cursor in $picking-tools {
+        $icon: list.nth($cursor, 1);
+        $hotspot: list.nth($cursor, 2) list.nth($cursor, 3);
+
+        @each $mode, $suffix in $picking-modes {
+            &.picking-#{$tool}.picking-#{$mode} {
+                cursor: url('../assets/icons/#{$icon}-#{$suffix}.svg') $hotspot, crosshair;
             }
         }
-
-        // Hover-note preview mode: the overlay must receive the mousemove
-        // events (the note label and cell outline follow the pointer), but
-        // the cursor is left untouched.
-        &.note-hover {
-            pointer-events: auto;
-        }
     }
+}
 
-    // Cell outline of the hover-note preview: a bare frame drawn over the
-    // hovered pixel. Positioned in layout pixels by selection.js.
-    .grid-note-cell {
-        position: absolute;
-        z-index: 5;
-        box-sizing: border-box;
-        border: 2px solid $color-accent;
-        border-radius: 2px;
-        pointer-events: none;
-        box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6);
-    }
+// Hover-note preview mode: the overlay must receive the mousemove events
+// (the note label and cell outline follow the pointer), but the cursor is
+// left untouched.
+.pixel-overlay.note-hover {
+    pointer-events: auto;
+}
 
-    // Playhead cursors live on their own layer, above the zones, so
-    // their incremental clearing never erases the zone highlights
-    .cursor-overlay {
-        position: absolute;
-        inset: 0;
-        width: 100%;
-        height: 100%;
-        pointer-events: none;
-    }
-
-    // The original image (<img>) and the processed image (canvas painted
-    // from raw pixels) share the same layout: fill the viewer and scale
-    // down with contain behavior
-    img,
-    .processed-preview {
-        width: 100%;
-        height: 100%;
-        object-fit: contain;
-
-        // Display cells as crisp blocks, without smoothing
-        &.pixelated {
-            image-rendering: pixelated;
-            image-rendering: crisp-edges;
-        }
-    }
+// Cell outline of the hover-note preview: a bare frame drawn over the
+// hovered pixel. Positioned in layout pixels by selection.js.
+.grid-note-cell {
+    position: absolute;
+    z-index: 5;
+    border: 2px solid $color-accent;
+    border-radius: 2px;
+    pointer-events: none;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, .6);
 }
 
 // Floating label of the hover-note preview: follows the cursor over the
@@ -133,9 +118,9 @@
     border: 1px solid $color-border;
     border-radius: $border-radius-base;
     color: $color-text-primary;
-    font-size: 0.8rem;
+    font-size: .8rem;
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
     pointer-events: none;
-    box-shadow: 0 .25rem 1rem rgba(0, 0, 0, 0.5);
+    box-shadow: $shadow-popover;
 }

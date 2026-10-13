@@ -93,7 +93,7 @@ L'interface est du HTML/SCSS/JS pur (pas de framework, pas de bundler), organis�
 
 ### Trois sortes de classes
 
-- **Classes utilitaires** — classes à vocation unique, style Tailwind, écrites à la main dans `src/scss/_utilities.scss` (`flex`, `flex-col`, `items-center`, `gap-2`, `mb-3`, `text-muted`, `hidden`...). Elles sont chargées **en dernier** dans la cascade : une classe utilitaire surpasse toujours une classe de composant, et le markup peut ajuster n'importe quel composant sans toucher au SCSS. Les échelles d'espacement et de tailles de police sont générées depuis des maps SCSS en tête de fichier.
+- **Classes utilitaires** — classes à vocation unique, style Tailwind, écrites à la main dans `src/scss/_utilities.scss` (`flex`, `flex-col`, `items-center`, `gap-2`, `mb-3`, `text-muted`, `hidden`...). Elles sont chargées **en dernier** dans la cascade : une classe utilitaire surpasse toujours une classe de composant, et le markup peut ajuster n'importe quel composant sans toucher au SCSS. Seules les classes utilitaires réellement utilisées par le markup sont définies : en ajouter une (même nommage, mêmes échelles) quand le markup en a besoin.
 - **Classes de composants** — une par région de l'interface ou rôle de contrôle (`.image-viewer`, `.controls`, `.mode-panel`, `.icon-btn`, `.synth-block`...), avec leurs états et pseudo-éléments imbriqués dans le SCSS. Elles vivent dans `scss/components/`, un fichier par zone de l'interface.
 - **Classes d'état** — basculées par le JS à l'exécution : `.hidden` (avec `!important`), `.active`, `.locked`, `.picking`, `.confirm-pending`, `.dragging`, `.reversed`...
 
@@ -113,10 +113,10 @@ Chaque `id` — dans les pages statiques comme dans les templates dynamiques —
 
 ### Compilation des styles
 
-Le CSS compilé est commité (`src/css/styles.css` + source map) : lancer l'application ne nécessite aucune étape de build. Après une modification du SCSS, recompiler avec dart-sass (outil autonome — Node.js n'est pas requis) :
+Le CSS compilé est commité (`src/css/styles.css` pour la fenêtre principale, `src/css/mirror.css` pour la fenêtre de projection, avec leurs source maps) : lancer l'application ne nécessite aucune étape de build. Après une modification du SCSS, recompiler les deux depuis `src/` avec dart-sass (outil autonome — Node.js n'est pas requis) :
 
 ```bash
-sass scss/styles.scss css/styles.css
+sass scss/styles.scss:css/styles.css scss/mirror.scss:css/mirror.css
 ```
 
 ## Installation
@@ -184,6 +184,7 @@ wysiwyl/
 │   ├── i18n/
 │   ├── scss/
 │   │   ├── styles.scss
+│   │   ├── mirror.scss
 │   │   ├── _variables.scss
 │   │   ├── _mixins.scss
 │   │   ├── _fonts.scss

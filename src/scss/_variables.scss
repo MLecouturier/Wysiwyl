@@ -55,3 +55,12 @@ $sidebar-width: 30rem;
 $border-radius-base: .25rem;
 $border-radius-round: 1rem;
 $transition-fast: 0.2s ease;
+
+// Drop shadows, by elevation: a floating popover (menus, palettes, help,
+// note label), an overlay panel (crop / transform), a dragged tab and a
+// modal dialog
+$shadow-color: rgba(0, 0, 0, .5);
+$shadow-popover: 0 .25rem 1rem $shadow-color;
+$shadow-panel: 0 0 .5rem $shadow-color;
+$shadow-drag: 0 .25rem .625rem $shadow-color;
+$shadow-modal: 0 .5rem 2rem $shadow-color;

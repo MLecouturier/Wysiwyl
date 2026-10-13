@@ -1,130 +1,118 @@
 // ==========================================================================
-// Controls (left column)
+// Image controls (left column, under the viewer)
 // ==========================================================================
-// Scoped by the .controls region class — the ids are JS hooks, never
-// styled. The pure layout glue (rows, columns, grids, fillers) lives in
-// the markup as utility classes; only components with state or descendant
-// rules are styled here.
+// The ids are JS hooks, never styled. The pure layout glue (rows, columns,
+// fillers) lives in the markup as utility classes; only components with
+// state or descendant rules are styled here.
 @use '../variables' as *;
+@use 'layout';
 
 .controls {
-    position: relative; // anchor for the mode panel overlay
     flex: 0 0 auto;
+}
 
-    .controls-column-right {
-        width: 30%;
+.controls-column-right {
+    width: 30%;
+}
+
+.controls-image {
+    @extend %panel;
+    padding: .5rem .5rem 0;
+}
+
+// A column of grouped sliders, never wider than the sidebar
+.controls-set {
+    padding: 0 .5rem 0 .25rem;
+    max-width: $sidebar-width;
+}
+
+// Slider field: its title and value on one line, the range below. The
+// labels carry no class of their own (they are the grouping element of
+// every slider), hence the descendant selector.
+.controls label {
+    display: flex;
+    flex-direction: column;
+    gap: .25rem;
+    margin-top: .5rem;
+    font-size: .8rem;
+    color: $color-text-secondary;
+}
+
+// Title + value line of a slider field
+.control-head {
+    display: flex;
+    justify-content: space-between;
+}
+
+.control-value {
+    color: $color-text-muted;
+    font-variant-numeric: tabular-nums;
+}
+
+// The column slider shares its row with the tool buttons: no top margin
+// (scoped like the label rule above, which it must override)
+.controls .columns-control {
+    margin-top: 0;
+}
+
+// Controls locked while a synthesizer is playing
+.controls.locked label:has(input:disabled) {
+    opacity: .5;
+}
+
+// Inline entry opened by double-clicking the column count
+.grid-width-input {
+    width: 3.75rem;
+    padding: 1px .25rem;
+    border: 1px solid $color-accent;
+    border-radius: $border-radius-base;
+    outline: none;
+    background-color: $color-bg-light;
+    color: $color-text-primary;
+    font-size: .8rem;
+    text-align: right;
+}
+
+// Action panel of an interactive mode (crop, transform). Overlays the
+// sliders below (anchored on their .relative row) instead of pushing
+// them, so the image viewer keeps a constant size. Its rows are stacked.
+.mode-panel {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -.25rem;
+    height: 100%;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: .5rem;
+    padding: .5rem .75rem;
+    border: 1px solid $color-border;
+    border-radius: $border-radius-base;
+    background-color: $color-bg-panel;
+    box-shadow: $shadow-panel;
+}
+
+// Row of a mode panel: hint, ratio buttons or the apply/cancel actions
+.mode-bar {
+    display: flex;
+    align-items: center;
+    gap: .625rem;
+
+    // Compact sizing for the action buttons of a mode bar
+    button {
+        padding: .25rem .75rem;
+        font-size: .8rem;
     }
+}
 
-    .controls-image {
-        background-color: $color-bg-light;
-        padding: .5rem .5rem 0;
-        border-radius: .25rem;
-    }
+// Forced aspect-ratio buttons of the crop bar (Free / 1:1 / 4:3 / 3:2 /
+// 16:9): the visuals come from .toggle-btn, the compact sizing from the
+// .mode-bar button rule above
+.ratio-group {
+    display: flex;
+    gap: .25rem;
 
-    // A column of grouped settings: rows pushed to the bottom, never
-    // wider than the sidebar
-    .controls-set {
-        justify-content: flex-start;
-        padding: 0 .5rem 0 .25rem;
-        max-width: $sidebar-width;
-    }
-
-    // Action bar of an interactive mode (crop, transform...)
-    .mode-bar {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        margin-bottom: .75rem;
-
-        // Compact sizing for the action buttons of a mode bar
-        button {
-            padding: 4px .75rem;
-            font-size: 0.8rem;
-        }
-    }
-
-    // Forced aspect-ratio buttons of the crop bar (Free / 1:1 / 4:3 / 3:2 / 16:9).
-    // The visuals come from the shared .toggle-btn and the compact sizing from
-    // the .mode-bar button rule above; this rule only handles the layout.
-    .ratio-group {
-        display: flex;
-        gap: 4px;
-
-        button {
-            min-width: 2.4rem;
-            justify-content: center;
-        }
-    }
-
-    // Action panel of an interactive mode (crop, transform...).
-    // Overlays the controls below instead of pushing them, so the image
-    // viewer keeps a constant size.
-    .mode-panel {
-        position: absolute;
-        height: 100%;
-        left: 0;
-        right: 0;
-        bottom: -0.25rem;
-        z-index: 10;
-        display: flex;
-        flex-direction: row;
-        gap: .75rem;
-        padding: .5rem .75rem;
-        border: 1px solid $color-border;
-        border-radius: $border-radius-base;
-        background-color: $color-bg-panel;
-        box-shadow: 0 0 8px rgba(0, 0, 0, 0.5);
-    }
-
-    // The crop bar stacks two rows (actions + forced ratio buttons) instead
-    // of the single row shared with the transform panel
-    .mode-panel-stacked {
-        flex-direction: column;
-        justify-content: center;
-        gap: .5rem;
-
-        .mode-bar { margin-bottom: 0; }
-    }
-
-    // Controls locked while a synthesizer is playing
-    &.locked label:has(input:disabled) {
-        opacity: 0.5;
-    }
-
-    label {
-        display: flex;
-        flex-direction: column;
-        gap: .25rem;
-        font-size: 0.8rem;
-        color: $color-text-secondary;
-        margin-top: .5rem;
-
-        &.columns-control {
-            margin-top: 0;
-        }
-
-        span {
-            display: flex;
-            justify-content: space-between;
-
-            em {
-                font-style: normal;
-                color: $color-text-muted;
-                font-variant-numeric: tabular-nums;
-            }
-
-            // Inline entry opened by double-clicking the column count
-            .grid-width-input {
-                background-color: $color-bg-light;
-                color: $color-text-primary;
-                border: 1px solid $color-accent;
-                border-radius: $border-radius-base;
-                padding: 1px .25rem;
-                font-size: 0.8rem;
-                width: 3.75rem;
-                outline: none;
-                text-align: right;
-            }
-        }
-    }
+    button { min-width: 2.4rem; }
 }

@@ -1,0 +1,29 @@
+// ==========================================================================
+// Wysiwyl — projection mirror window (viewer.html)
+// ==========================================================================
+// Compile: sass scss/mirror.scss css/mirror.css
+// Overrides on top of the shared styles.css. The same .image-viewer rules
+// drive the layout (contain-fit image, absolute overlay canvas), so the
+// projection matches the main viewer pixel for pixel — only the chrome
+// differs: full-bleed, solid black background for the projector.
+
+$mirror-bg: #000;
+
+html,
+body {
+    background-color: $mirror-bg;
+}
+
+// Doubled class: must beat .image-viewer-container and the .content-area
+// padding of styles.css
+.content-area.image-viewer-container {
+    padding: 0;
+    gap: 0;
+}
+
+.image-viewer-container .image-viewer {
+    border: none;
+    border-radius: 0;
+    background-image: none;
+    background-color: $mirror-bg;
+}

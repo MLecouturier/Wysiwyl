@@ -5,7 +5,6 @@
 
 .app-container {
     display: flex;
-    flex-direction: row;
     height: 100vh;
     width: 100vw;
 }
@@ -20,16 +19,25 @@
 .column-left {
     flex: 1 1 auto;
     min-width: 0;
-    
 }
 
 .column-right {
     flex: 0 0 $sidebar-width;
-    width: $sidebar-width;
 }
 
 .content-area {
     flex: 1 1 auto;
     overflow-y: auto;
     padding: 1rem .25rem 1rem 1rem;
+}
+
+// Raised block of the left column (image tools, chrono, metronome)
+%panel {
+    border-radius: $border-radius-base;
+    background-color: $color-bg-light;
+}
+
+// Hidden scrollbar of the scrolling lists (synth tabs, synth cards)
+%no-scrollbar {
+    &::-webkit-scrollbar { display: none; }
 }

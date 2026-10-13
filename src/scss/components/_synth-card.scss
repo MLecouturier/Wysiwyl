@@ -54,7 +54,7 @@ $synth-title-width: 18rem;
     background-color: $color-bg-dark;
     border: 1px solid $color-border;
     border-radius: $border-radius-base;
-    box-shadow: 0 .25rem 1rem rgba(0, 0, 0, .5);
+    box-shadow: $shadow-popover;
 }
 
 // --------------------------------------------------------------------------

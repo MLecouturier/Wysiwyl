@@ -1,8 +1,9 @@
 // ==========================================================================
 // Wysiwyl — stylesheet entry point
 // ==========================================================================
-// Compile (dart-sass):   sass scss/styles.scss css/styles.css
-// Watch:                 sass --watch scss/styles.scss css/styles.css
+// Compile (dart-sass, from src/), with the projection window's sheet:
+//   sass scss/styles.scss:css/styles.css scss/mirror.scss:css/mirror.css
+// Watch: same command with --watch
 // The compiled CSS is committed to the repo — no Node.js build step needed.
 //
 // Structure:

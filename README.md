@@ -98,7 +98,7 @@ The interface is plain HTML/SCSS/JS (no framework, no bundler), organized around
 
 ### Three kinds of classes
 
-- **Utility classes** — Tailwind-style single-purpose classes, hand-rolled in `src/scss/_utilities.scss` (`flex`, `flex-col`, `items-center`, `gap-2`, `mb-3`, `text-muted`, `hidden`...). They are loaded **last** in the cascade, so a utility always overrides a component class and the markup can fine-tune any component without new SCSS. The spacing and font-size scales are generated from SCSS maps at the top of the file.
+- **Utility classes** — Tailwind-style single-purpose classes, hand-rolled in `src/scss/_utilities.scss` (`flex`, `flex-col`, `items-center`, `gap-2`, `mb-3`, `text-muted`, `hidden`...). They are loaded **last** in the cascade, so a utility always overrides a component class and the markup can fine-tune any component without new SCSS. Only the utilities the markup actually uses are defined: add one (same naming, same scales) when the markup needs it.
 - **Component classes** — one per UI region or control role (`.image-viewer`, `.controls`, `.mode-panel`, `.icon-btn`, `.synth-block`...), with their states and pseudo-elements nested in SCSS. They live in `scss/components/`, one file per area of the interface.
 - **State classes** — toggled by JS at runtime: `.hidden` (with `!important`), `.active`, `.locked`, `.picking`, `.confirm-pending`, `.dragging`, `.reversed`...
 
@@ -118,10 +118,10 @@ Every `id` — in the static pages as well as in the dynamic templates — exist
 
 ### Stylesheet compilation
 
-The compiled CSS is committed (`src/css/styles.css` + source map), so running the app needs no build step. After editing the SCSS, recompile with dart-sass (a standalone tool — Node.js is not required):
+The compiled CSS is committed (`src/css/styles.css` for the main window, `src/css/mirror.css` for the projection window, with their source maps), so running the app needs no build step. After editing the SCSS, recompile both from `src/` with dart-sass (a standalone tool — Node.js is not required):
 
 ```bash
-sass scss/styles.scss css/styles.css
+sass scss/styles.scss:css/styles.css scss/mirror.scss:css/mirror.css
 ```
 
 ## Installation
@@ -189,6 +189,7 @@ wysiwyl/
 │   ├── i18n/
 │   ├── scss/
 │   │   ├── styles.scss
+│   │   ├── mirror.scss
 │   │   ├── _variables.scss
 │   │   ├── _mixins.scss
 │   │   ├── _fonts.scss

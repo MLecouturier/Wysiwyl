@@ -6,23 +6,23 @@
 // plays anymore) and the button that zeroes it. The reset button reuses
 // the shared .icon-btn look (see _buttons.scss).
 @use '../variables' as *;
+@use 'layout';
 
 .chrono-area {
+    @extend %panel;
     flex: 0 0 auto;
     display: flex;
     align-items: center;
     justify-content: flex-end;
     gap: .5rem;
-    padding: 12px 1rem;
-    border-radius: $border-radius-base;
-    background-color: $color-bg-light;
+    padding: .75rem 1rem;
+}
 
-    .timer {
-        // Tabular figures: every digit has a constant width, so the
-        // readout doesn't jitter while counting
-        font-variant-numeric: tabular-nums;
-        font-size: 2rem;
-        line-height: 1;
-        color: $color-text-primary;
-    }
+// Tabular figures: every digit has a constant width, so the readout
+// doesn't jitter while counting
+.timer {
+    font-size: 2rem;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+    color: $color-text-primary;
 }

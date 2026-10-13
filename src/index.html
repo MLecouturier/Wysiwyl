@@ -22,50 +22,49 @@
                 </div>
 
                 <div id="controls" class="controls">
-
                     <div class="flex flex-auto items-center justify-between gap-2 mb-3 relative h-full">
                         <div class="controls-image controls-column-left flex flex-col gap-2 h-full flex-auto">
                             <div class="flex flex-auto items-center justify-between gap-2">
                                 <button id="load-btn" class="primary" data-i18n-title="controls.load">
-                                    <span class="material-symbols-outlined">image_search</span>
+                                    <span class="material-symbols-outlined" aria-hidden="true">image_search</span>
                                 </button>
                                 <div class="flex-fill">
                                     <p id="dimensions-info" class="text-xs text-muted tabular-nums"></p>
-                                </div>    
+                                </div>
                             </div>
 
                             <div class="flex flex-auto items-center justify-between gap-2">
                                 <button id="auto-levels-btn" class="icon-btn" data-i18n-title="controls.autoLevels">
-                                    <span class="material-symbols-outlined">auto_awesome</span>
+                                    <span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span>
                                 </button>
                                 <div class="flex-none w-4"></div>
                                 <button id="rotate-img-btn" class="icon-btn" data-i18n-title="controls.rotate">
-                                    <span class="material-symbols-outlined">rotate_90_degrees_cw</span>
+                                    <span class="material-symbols-outlined" aria-hidden="true">rotate_90_degrees_cw</span>
                                 </button>
                                 <button id="crop-img-btn" class="icon-btn" data-i18n-title="controls.crop">
-                                    <span class="material-symbols-outlined">crop</span>
+                                    <span class="material-symbols-outlined" aria-hidden="true">crop</span>
                                 </button>
                                 <button id="transform-img-btn" class="icon-btn" data-i18n-title="controls.transform">
-                                    <span class="material-symbols-outlined">tune</span>
+                                    <span class="material-symbols-outlined" aria-hidden="true">tune</span>
                                 </button>
                                 <div class="flex-none w-4"></div>
                                 <label class="flex-auto columns-control" data-i18n-title="controls.columns">
-                                    <span><span data-i18n="controls.columns"></span> <em id="grid-width-value">-</em></span>
+                                    <span class="control-head"><span data-i18n="controls.columns"></span> <span id="grid-width-value" class="control-value">-</span></span>
                                     <input type="range" id="grid-width" min="0" max="1000" value="1000" />
                                 </label>
                                 <div class="flex-none w-4"></div>
                                 <button id="reset-btn" class="icon-btn" data-i18n-title="controls.reset">
-                                    <span class="material-symbols-outlined">reset_settings</span>
+                                    <span class="material-symbols-outlined" aria-hidden="true">reset_settings</span>
                                 </button>
                             </div>
 
                             <div class="flex flex-auto items-center justify-between gap-2 mb-3 relative h-full">
-                                <div id="crop-bar" class="mode-panel mode-panel-stacked hidden">
-                                    <div class="mode-bar flex-auto justify-between">
+                                <!-- Interactive modes: panels overlaying the sliders of this row -->
+                                <div id="crop-bar" class="mode-panel hidden">
+                                    <div class="mode-bar flex-auto">
                                         <span class="text-sm text-muted" data-i18n="controls.cropHint"></span>
-                                        <div class="flex-fill"></div>
                                     </div>
-                                    <div class="mode-bar flex-auto justify-between">
+                                    <div class="mode-bar flex-auto">
                                         <div id="crop-ratio-group" class="ratio-group" data-i18n-title="controls.cropRatio">
                                             <button class="toggle-btn ratio-btn active" data-crop-ratio="" data-i18n="controls.cropRatioFree"></button>
                                             <button class="toggle-btn ratio-btn" data-crop-ratio="1">1:1</button>
@@ -73,75 +72,72 @@
                                             <button class="toggle-btn ratio-btn" data-crop-ratio="3/2">3:2</button>
                                             <button class="toggle-btn ratio-btn" data-crop-ratio="16/9">16:9</button>
                                         </div>
-                                        <div class="flex-fill"></div>
                                     </div>
                                     <div class="flex-fill"></div>
-                                    <div class="mode-bar flex-auto justify-between">
+                                    <div class="mode-bar flex-auto">
                                         <div class="flex-fill"></div>
                                         <button id="crop-apply-btn" class="primary" data-i18n="controls.apply" disabled></button>
                                         <button id="crop-cancel-btn" class="secondary" data-i18n="controls.cancel"></button>
                                     </div>
                                 </div>
-                                <div id="transform-panel" class="mode-panel mode-panel-stacked hidden">
-                                    <div class="flex flex-auto items-center justify-between gap-4">
-                                        
+                                <div id="transform-panel" class="mode-panel hidden">
+                                    <div class="flex flex-auto items-center gap-4">
                                         <div class="w-2-5">
                                             <button id="transform-grid-btn" class="toggle-btn active" data-i18n-title="controls.transformGrid">
-                                            <span class="material-symbols-outlined">grid_3x3</span>
-                                        </button>
+                                                <span class="material-symbols-outlined" aria-hidden="true">grid_3x3</span>
+                                            </button>
                                         </div>
                                         <label class="w-2-5">
-                                            <span><span data-i18n="controls.rotation"></span> <em id="transform-rotation-value">0°</em></span>
+                                            <span class="control-head"><span data-i18n="controls.rotation"></span> <span id="transform-rotation-value" class="control-value">0°</span></span>
                                             <input type="range" id="transform-rotation" min="-45" max="45" value="0" step="0.1" />
                                         </label>
-                                        <div class="flex-fill"></div>
                                     </div>
-                                    <div class="flex flex-auto items-center justify-between gap-4">
+                                    <div class="flex flex-auto items-center gap-4">
                                         <label class="w-2-5">
-                                            <span><span data-i18n="controls.perspectiveV"></span> <em id="transform-persp-v-value">0</em></span>
+                                            <span class="control-head"><span data-i18n="controls.perspectiveV"></span> <span id="transform-persp-v-value" class="control-value">0</span></span>
                                             <input type="range" id="transform-persp-v" min="-50" max="50" value="0" step="1" />
                                         </label>
                                         <label class="w-2-5">
-                                            <span><span data-i18n="controls.perspectiveH"></span> <em id="transform-persp-h-value">0</em></span>
+                                            <span class="control-head"><span data-i18n="controls.perspectiveH"></span> <span id="transform-persp-h-value" class="control-value">0</span></span>
                                             <input type="range" id="transform-persp-h" min="-50" max="50" value="0" step="1" />
                                         </label>
-                                        <div class="flex-fill"></div>
                                     </div>
-                                    <div class="mode-bar flex-auto justify-between">
+                                    <div class="mode-bar flex-auto">
                                         <div class="flex-fill"></div>
                                         <button id="transform-apply-btn" class="primary" data-i18n="controls.apply"></button>
                                         <button id="transform-cancel-btn" class="secondary" data-i18n="controls.cancel"></button>
                                     </div>
                                 </div>
-                                <div class="flex flex-col gap-2 flex-auto h-full controls-set">
+
+                                <div class="controls-set flex flex-col gap-2 flex-auto h-full">
                                     <label data-i18n-title="controls.brightness">
-                                        <span><span data-i18n="controls.brightness"></span> <em id="brightness-value">0</em></span>
+                                        <span class="control-head"><span data-i18n="controls.brightness"></span> <span id="brightness-value" class="control-value">0</span></span>
                                         <input type="range" id="brightness" min="-100" max="100" value="0" step="1" />
                                     </label>
                                     <label data-i18n-title="controls.contrast">
-                                        <span><span data-i18n="controls.contrast"></span> <em id="contrast-value">0</em></span>
+                                        <span class="control-head"><span data-i18n="controls.contrast"></span> <span id="contrast-value" class="control-value">0</span></span>
                                         <input type="range" id="contrast" min="-100" max="100" value="0" step="1" />
                                     </label>
                                     <label data-i18n-title="controls.vibrance">
-                                        <span><span data-i18n="controls.vibrance"></span> <em id="vibrance-value">0</em></span>
+                                        <span class="control-head"><span data-i18n="controls.vibrance"></span> <span id="vibrance-value" class="control-value">0</span></span>
                                         <input type="range" id="vibrance" min="-100" max="100" value="0" step="1" />
                                     </label>
                                 </div>
-                                <div class="flex flex-col gap-2 flex-auto h-full controls-set">
+                                <div class="controls-set flex flex-col gap-2 flex-auto h-full">
                                     <label data-i18n-title="controls.clarity">
-                                        <span><span data-i18n="controls.clarity"></span> <em id="clarity-value">0</em></span>
+                                        <span class="control-head"><span data-i18n="controls.clarity"></span> <span id="clarity-value" class="control-value">0</span></span>
                                         <input type="range" id="clarity" min="-100" max="100" value="0" step="1" />
-                                    </label>                                    
+                                    </label>
                                     <label data-i18n-title="controls.texture">
-                                        <span><span data-i18n="controls.texture"></span> <em id="texture-value">0</em></span>
+                                        <span class="control-head"><span data-i18n="controls.texture"></span> <span id="texture-value" class="control-value">0</span></span>
                                         <input type="range" id="texture" min="-100" max="100" value="0" step="1" />
                                     </label>
                                     <label data-i18n-title="controls.simplify">
-                                        <span><span data-i18n="controls.simplify"></span> <em id="simplify-value">0</em></span>
+                                        <span class="control-head"><span data-i18n="controls.simplify"></span> <span id="simplify-value" class="control-value">0</span></span>
                                         <input type="range" id="simplify" min="0" max="100" value="0" step="1" />
                                     </label>
                                     <label data-i18n-title="controls.posterize">
-                                        <span><span data-i18n="controls.posterize"></span> <em id="posterize-value">off</em></span>
+                                        <span class="control-head"><span data-i18n="controls.posterize"></span> <span id="posterize-value" class="control-value">off</span></span>
                                         <input type="range" id="posterize" min="0" max="1000" value="0" step="1" />
                                     </label>
                                 </div>
@@ -159,52 +155,54 @@
                                     <span class="material-symbols-outlined" aria-hidden="true">grid_view</span>
                                 </button>
                                 <button id="show-original-btn" class="toggle-btn" data-i18n-title="controls.showOriginal">
-                                    <span class="material-symbols-outlined">compare</span>
+                                    <span class="material-symbols-outlined" aria-hidden="true">compare</span>
                                 </button>
                             </div>
                             <div id="chrono" class="chrono-area">
                                 <div class="timer"></div>
-                                <button id="reset-timer" class="timer-reset-btn icon-btn" type="button" data-i18n-title="chrono.reset"><span class="material-symbols-outlined" aria-hidden="true">timer</span></button>
+                                <button id="reset-timer" class="timer-reset-btn icon-btn" type="button" data-i18n-title="chrono.reset">
+                                    <span class="material-symbols-outlined" aria-hidden="true">timer</span>
+                                </button>
                             </div>
-                            <div class="metronome-area" id="metronome">
-                                <h2 data-i18n="metronome.title">
+                            <div id="metronome" class="metronome-area">
+                                <!-- The title has its own span: data-i18n replaces the
+                                     whole text content, the badge must not live inside it -->
+                                <h2 class="metronome-title">
+                                    <span data-i18n="metronome.title"></span>
                                     <span id="sync-badge" class="sync-badge hidden" data-i18n="metronome.syncBadge" data-i18n-title="metronome.syncBadge"></span>
                                 </h2>
-                                
+
                                 <div class="metronome-controls">
-                                    <div class="metronome-bpm">
-                                        <!-- <label for="bpm-input" data-i18n="metronome.tempo"></label> -->
-                                        <div class="bpm-input-group">
-                                            <div class="bpm-step-group">
-                                                <button id="bpm-minus10" class="bpm-step" title="-10 BPM">-10</button>
-                                                <button id="bpm-minus5"  class="bpm-step" title="-5 BPM">-5</button>
-                                            </div>
-                                            <div class="bpm-input-wrapper">
-                                                <input type="number" id="bpm-input" class="bpm-input" min="20" max="300" value="120" />
-                                                <div class="bpm-spinner">
-                                                    <button id="bpm-up" class="bpm-spinner-btn" type="button" title="+1 BPM"><span class="material-symbols-outlined" aria-hidden="true">keyboard_arrow_up</span></button>
-                                                    <button id="bpm-down" class="bpm-spinner-btn" type="button" title="-1 BPM"><span class="material-symbols-outlined" aria-hidden="true">keyboard_arrow_down</span></button>
-                                                </div>
-                                            </div>
-                                            <div class="bpm-step-group">
-                                                <button id="bpm-plus5"   class="bpm-step" title="+5 BPM">+5</button>
-                                                <button id="bpm-plus10"  class="bpm-step" title="+10 BPM">+10</button>
+                                    <div class="bpm-input-group">
+                                        <div class="bpm-step-group">
+                                            <button id="bpm-minus10" class="bpm-step" title="-10 BPM">-10</button>
+                                            <button id="bpm-minus5" class="bpm-step" title="-5 BPM">-5</button>
+                                        </div>
+                                        <div class="bpm-input-wrapper">
+                                            <input type="number" id="bpm-input" class="bpm-input" min="20" max="300" value="120" />
+                                            <div class="bpm-spinner">
+                                                <button id="bpm-up" class="bpm-spinner-btn" type="button" title="+1 BPM"><span class="material-symbols-outlined" aria-hidden="true">keyboard_arrow_up</span></button>
+                                                <button id="bpm-down" class="bpm-spinner-btn" type="button" title="-1 BPM"><span class="material-symbols-outlined" aria-hidden="true">keyboard_arrow_down</span></button>
                                             </div>
                                         </div>
+                                        <div class="bpm-step-group">
+                                            <button id="bpm-plus5" class="bpm-step" title="+5 BPM">+5</button>
+                                            <button id="bpm-plus10" class="bpm-step" title="+10 BPM">+10</button>
+                                        </div>
                                     </div>
-                                    <div id="metronome-led" class="led"></div>
+                                    <div id="metronome-led" class="metronome-led"></div>
                                 </div>
 
                                 <div class="metronome-clock">
-                                    <select id="clock-mode-select" data-i18n-title="metronome.clockMode">
+                                    <select id="clock-mode-select" class="clock-mode-select" data-i18n-title="metronome.clockMode">
                                         <option value="off" data-i18n="metronome.clockOff"></option>
                                         <option value="auto" data-i18n="metronome.clockAuto" selected></option>
                                         <option value="input" data-i18n="metronome.clockInput"></option>
                                         <option value="master" data-i18n="metronome.clockMaster"></option>
                                     </select>
-                                    <select id="clock-source-select" data-i18n-title="metronome.clockSource" class="hidden"></select>
+                                    <select id="clock-source-select" class="clock-source-select hidden" data-i18n-title="metronome.clockSource"></select>
                                 </div>
-                            </div>                            
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -213,15 +211,16 @@
 
         <!-- Right column: fixed width -->
         <div class="column column-right">
-            <div class="content-area synth-list" id="synth-list">                
-                <div class="synth-list-body">                    
+            <div class="content-area synth-list" id="synth-list">
+                <div class="synth-list-body">
                     <div class="synth-tabs"></div>
                     <div class="synth-devices">
                         <div class="synth-list-header">
                             <h2 data-i18n="synthList.title"></h2>
                             <div class="synth-list-header-actions">
-                                <button id="play-all-btn" class="synth-list-action synth-list-action-play" data-i18n-title="synthList.playAllStart"><span class="material-symbols-outlined" aria-hidden="true">play_arrow</span>
-                                <span class="play-all-label"></span>
+                                <button id="play-all-btn" class="synth-list-action synth-list-action-play" data-i18n-title="synthList.playAllStart">
+                                    <span class="material-symbols-outlined" aria-hidden="true">play_arrow</span>
+                                    <span class="play-all-label"></span>
                                 </button>
                                 <button id="panic-btn" class="synth-list-action synth-list-action-stop" data-i18n-title="synthList.panic"><span class="material-symbols-outlined" aria-hidden="true">skull</span></button>
                                 <div class="flex-fill"></div>
@@ -230,11 +229,11 @@
                         </div>
                         <div class="synth-devices-wrapper">
                             <!-- Synthesizers will be dynamically added here -->
-                            <div class="placeholder-text"></div>
-                        </div> 
+                            <div class="placeholder-text text-muted italic"></div>
+                        </div>
                         <div class="footer-area" id="common-controls">
                             <div class="flex items-center gap-3">
-                                <div id="language-switcher" class="ml-auto"></div>
+                                <div id="language-switcher"></div>
                                 <button id="live-help-btn" class="icon-btn" data-i18n-title="controls.help">
                                     <span class="material-symbols-outlined" aria-hidden="true">live_help</span>
                                 </button>
@@ -249,7 +248,7 @@
                                     <span class="material-symbols-outlined" aria-hidden="true">folder_open</span>
                                 </button>
                             </div>
-                        </div>                       
+                        </div>
                     </div>
                 </div>
             </div>

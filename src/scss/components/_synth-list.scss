@@ -1,9 +1,10 @@
 // ==========================================================================
 // Synthesizer list (right column - main area)
 // ==========================================================================
-// Scoped by the .synth-list region class — the ids (#synth-list,
-// #play-all-btn...) are JS hooks, never styled.
+// Styled by class only — the ids (#synth-list, #play-all-btn...) are JS
+// hooks, never styled.
 @use '../variables' as *;
+@use 'layout';
 
 .synth-list {
     background-color: $color-bg-medium;
@@ -13,24 +14,21 @@
 }
 
 .synth-list-header {
-    // position: absolute;
-    background-color: $color-bg-medium;
-    border-bottom: 1px solid $color-border;
-    width: 100%;
     display: flex;
     flex-direction: column;
     align-items: start;
-    justify-content: space-between;
+    width: 100%;
     padding: .5rem 1rem;
-    z-index: 10;
+    border-bottom: 1px solid $color-border;
+    background-color: $color-bg-medium;
+    z-index: 10; // flex item: stacks without a position
+}
 
-    .synth-list-header-actions {
-        display: flex;
-        align-items: center;
-        width: 100%;
-        flex-grow: 1;
-        gap: .5rem;
-    }
+.synth-list-header-actions {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    gap: .5rem;
 }
 
 // Compact pill buttons of the list header: add synth \ play all \ panic.
@@ -38,66 +36,46 @@
 // (play all: green = none playing, orange = some, red = all; panic = red
 // global stop affordance).
 .synth-list-action {
-    background: none;
-    border: 1px solid $color-border;
-    font-size: .8rem;
-    text-transform: uppercase;
-    color: white;
-    min-width: 4rem;
-    height: 1.75rem;
-    border-radius: .25rem;
-    cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
+    min-width: 4rem;
+    height: 1.75rem;
+    border: 1px solid $color-border;
+    border-radius: $border-radius-base;
+    background: none;
+    color: #fff;
+    font-size: .8rem;
+    text-transform: uppercase;
+    cursor: pointer;
     transition: background-color $transition-fast;
 
-    &:hover {
-        border-color: $color-text-muted;
-    }
-    
+    &:hover { border-color: $color-text-muted; }
 
-    .material-symbols-outlined {
-        font-size: 1.125rem;
-    }
+    .material-symbols-outlined { font-size: 1.125rem; }
 }
 
 .synth-list-action-play {
     background-color: $color-accent-alt;
 
-    span {
-        &:first-of-type {
-            margin: 0 .25rem 0 .75rem;
-        }
+    // Icon then label, with breathing room on the outer sides
+    span:first-of-type { margin: 0 .25rem 0 .75rem; }
+    span:last-of-type  { margin: 0 .75rem 0 .25rem; }
 
-        &:last-of-type {
-            margin: 0 .75rem 0 .25rem;
-        }
-        
-    }
-
-    &:hover {
-        background-color: $color-accent-alt-hover;
-    }
+    &:hover { background-color: $color-accent-alt-hover; }
 
     // Some synths are playing but not all: the button still starts the
     // remaining ones, the orange marks the in-between state (same semantic
     // as the mirror zones toggle).
     &.selective {
         background-color: $color-selective;
-
-        &:hover {
-            background-color: $color-selective-hover;
-        }
+        &:hover { background-color: $color-selective-hover; }
     }
 
     // Every synth is playing: the button becomes the stop-all affordance.
     &.active {
         background-color: $color-stop;
-
-        &:hover {
-            background-color: $color-stop-hover;
-        }
+        &:hover { background-color: $color-stop-hover; }
     }
 }
 
@@ -105,56 +83,49 @@
 .synth-list-action-stop {
     background-color: $color-stop;
 
-    &:hover {
-        background-color: $color-stop-hover;
-    }
+    &:hover { background-color: $color-stop-hover; }
 }
 
 .synth-list-body {
     display: flex;
     flex: 1 1 auto;
     min-height: 0;
-    padding: 0;
+}
 
-    .synth-tabs {
-        display: flex;
-        flex-direction: column;
-        background: $color-bg-viewer;
-        border-right: 1px solid $color-border;
-        min-width: 3.25rem;
-        padding: 6rem 0 2rem;
-        gap: .375rem;
-        flex: 0 0 auto;
-        min-height: 0;
-        overflow-y: auto;
-        &::-webkit-scrollbar {
-            display: none;
-        }
-    }
+// First column: the synth tabs
+.synth-tabs {
+    @extend %no-scrollbar;
+    display: flex;
+    flex-direction: column;
+    flex: 0 0 auto;
+    gap: .375rem;
+    min-width: 3.25rem;
+    min-height: 0;
+    padding: 6rem 0 2rem;
+    overflow-y: auto;
+    border-right: 1px solid $color-border;
+    background: $color-bg-viewer;
+}
 
-    .synth-devices {
-        position: relative;
-        display: flex;
-        flex-direction: column;
-        gap: .375rem;
-        flex: 1 1 auto;
-        min-width: 0;
-        min-height: 0;
-        
-        
-        .synth-devices-wrapper {
-            position: relative;
-            display: flex;
-            flex-direction: column;
-            gap: .25rem;
-            flex: 1 1 auto;
-            overflow-y: auto;
+// Second column: list header, scrolling synth cards, footer
+.synth-devices {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    gap: .375rem;
+    min-width: 0;
+    min-height: 0;
+}
 
-            &::-webkit-scrollbar {
-                display: none;
-            }
-        }
-    }
+.synth-devices-wrapper {
+    @extend %no-scrollbar;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    gap: .25rem;
+    overflow-y: auto;
 }
 
 // Compact tab paired with each synth card: drag handle + play/pause
@@ -223,10 +194,7 @@
         // updater (setPlayButtonState) finds its hooks
         .synth-play-label { display: none; }
 
-        &:hover {
-            background-color: $color-accent-alt-hover;
-            color: $color-text-secondary;
-        }
+        &:hover { background-color: $color-accent-alt-hover; }
 
         &.active {
             background-color: $color-stop;
@@ -247,7 +215,7 @@
     // the shadow and grabbing cursor are enough as a drag affordance)
     &.dragging {
         z-index: 10;
-        box-shadow: 0 4px 10px rgba(0, 0, 0, .5);
+        box-shadow: $shadow-drag;
 
         .synth-tab-drag-handle { cursor: grabbing; }
     }
@@ -269,9 +237,4 @@
         pointer-events: none;
         transition: width $transition-fast;
     }
-}
-
-.placeholder-text {
-    color: $color-text-muted;
-    font-style: italic;
 }
