@@ -3,7 +3,6 @@
 // ==========================================================================
 // Styled by class only — the ids (#image-viewer, #pixel-overlay...) are
 // JS/canvas hooks, never styled (see README front-end conventions).
-@use 'sass:list';
 @use '../variables' as *;
 
 .image-viewer-container {
@@ -60,33 +59,15 @@
     pointer-events: none;
 }
 
-// Pixel range click-selection mode: the cursor reflects the armed tool
-// (rect / lasso / wand) and the effective mode — add (default), remove
-// (Alt) or toggle silences (Shift, and Alt+Shift for removal). The SVG
-// icons carry a dark outline so they stay readable on the dark viewer;
-// the trailing crosshair is the fallback.
-// Tool → icon file prefix and hotspot; mode → icon file suffix
-$picking-tools: (
-    "rect":  ("square-dashed", 12, 12),
-    "lasso": ("lasso", 7, 22),
-    "wand":  ("wand-sparkles", 2, 2),
-);
-$picking-modes: ("add": "plus", "remove": "minus", "silence": "silence");
-
+// Pixel range click-selection mode: a single precise "dot" cursor marks
+// the exact hovered pixel for every tool (rect / lasso / wand) and the
+// silence-pattern mode; the effective mode (add / remove / silence) is
+// shown by the floating hover tooltip instead. The dot carries a dark
+// outline so it stays readable on the dark viewer; the hotspot is its
+// center, and the trailing crosshair is the fallback.
 .pixel-overlay.picking {
     pointer-events: auto;
-    cursor: crosshair;
-
-    @each $tool, $cursor in $picking-tools {
-        $icon: list.nth($cursor, 1);
-        $hotspot: list.nth($cursor, 2) list.nth($cursor, 3);
-
-        @each $mode, $suffix in $picking-modes {
-            &.picking-#{$tool}.picking-#{$mode} {
-                cursor: url('../assets/icons/#{$icon}-#{$suffix}.svg') $hotspot, crosshair;
-            }
-        }
-    }
+    cursor: url('../assets/icons/dot-cursor.svg') 12 12, crosshair;
 }
 
 // Hover-note preview mode: the overlay must receive the mousemove events
@@ -96,8 +77,9 @@ $picking-modes: ("add": "plus", "remove": "minus", "silence": "silence");
     pointer-events: auto;
 }
 
-// Cell outline of the hover-note preview: a bare frame drawn over the
-// hovered pixel. Positioned in layout pixels by selection.js.
+// Cell outline of the hover preview: a bare frame drawn over the hovered
+// pixel. Positioned in layout pixels by selection.js; its color is set
+// inline to the armed synth's color (accent for the note-only preview).
 .grid-note-cell {
     position: absolute;
     z-index: 5;
@@ -107,20 +89,59 @@ $picking-modes: ("add": "plus", "remove": "minus", "silence": "silence");
     box-shadow: 0 0 0 1px rgba(0, 0, 0, .6);
 }
 
-// Floating label of the hover-note preview: follows the cursor over the
-// image (position set by selection.js). The note's octave reuses the shared
+// Floating label of the hover preview: follows the cursor over the image
+// (position set by selection.js). Transparent background, white text with a
+// thin black outline: stays readable over any image without hiding it.
+// Shows the effective editing mode (a symbol: + add, − remove, rest glyph
+// silence, struck rest unsilence) and, when the hover-note option is armed,
+// the note(s) after a separator. The note's octave reuses the shared
 // .note-index style.
 .grid-note-label {
     position: fixed;
     z-index: 900;
     padding: .125rem .375rem;
-    background-color: $color-bg-panel;
-    border: 1px solid $color-border;
-    border-radius: $border-radius-base;
-    color: $color-text-primary;
-    font-size: .8rem;
+    color: #fff;
+    font-size: 1rem;
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
     pointer-events: none;
-    box-shadow: $shadow-popover;
+    // Thin black outline around every glyph, drawn behind the white fill so
+    // the stroke never thins the letters.
+    -webkit-text-stroke: 1px rgba(0, 0, 0, .9);
+    paint-order: stroke fill;
+    // Soft shadow lifting the label off busy images
+    text-shadow: 0 1px 2px rgba(0, 0, 0, .6);
+}
+
+// Mode symbol of the hover tooltip (bold so a lone +/− reads clearly).
+.hover-mode {
+    font-weight: 600;
+}
+
+// Thin vertical separator between the mode symbol and the note.
+.hover-sep {
+    display: inline-block;
+    width: 1px;
+    height: .9em;
+    margin: 0 .375rem;
+    background-color: currentColor;
+    vertical-align: middle;
+}
+
+// Unsilence: the rest glyph struck through, so "remove the silence" reads
+// as its own mode next to the plain silence glyph.
+.mode-unsilence {
+    position: relative;
+    display: inline-block;
+
+    &::after {
+        content: '';
+        position: absolute;
+        top: 50%;
+        left: -.1em;
+        right: -.1em;
+        height: 1px;
+        background-color: currentColor;
+        transform: rotate(-45deg);
+    }
 }

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="24" height="24" viewBox="0 0 24 24">
+  <title>dot-cursor.svg</title>
+  <g id="Layer_1" data-name="Layer 1">
+    <path d="M15.5 12 C15.5 13.933 13.933 15.5 12 15.5 C10.067 15.5 8.5 13.933 8.5 12 C8.5 10.067 10.067 8.5 12 8.5 C13.933 8.5 15.5 10.067 15.5 12 Z" fill="#000000"/>
+    <path d="M13 12 C13 12.552 12.552 13 12 13 C11.448 13 11 12.552 11 12 C11 11.448 11.448 11 12 11 C12.552 11 13 11.448 13 12 Z" fill="#ffffff" stroke="#ffffff" stroke-width="2" stroke-miterlimit="10"/>
+  </g>
+</svg>

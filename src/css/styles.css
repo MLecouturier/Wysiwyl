@@ -154,34 +154,7 @@ h2 {
 
 .pixel-overlay.picking {
   pointer-events: auto;
-  cursor: crosshair;
-}
-.pixel-overlay.picking.picking-rect.picking-add {
-  cursor: url("../assets/icons/square-dashed-plus.svg") 12 12, crosshair;
-}
-.pixel-overlay.picking.picking-rect.picking-remove {
-  cursor: url("../assets/icons/square-dashed-minus.svg") 12 12, crosshair;
-}
-.pixel-overlay.picking.picking-rect.picking-silence {
-  cursor: url("../assets/icons/square-dashed-silence.svg") 12 12, crosshair;
-}
-.pixel-overlay.picking.picking-lasso.picking-add {
-  cursor: url("../assets/icons/lasso-plus.svg") 7 22, crosshair;
-}
-.pixel-overlay.picking.picking-lasso.picking-remove {
-  cursor: url("../assets/icons/lasso-minus.svg") 7 22, crosshair;
-}
-.pixel-overlay.picking.picking-lasso.picking-silence {
-  cursor: url("../assets/icons/lasso-silence.svg") 7 22, crosshair;
-}
-.pixel-overlay.picking.picking-wand.picking-add {
-  cursor: url("../assets/icons/wand-sparkles-plus.svg") 2 2, crosshair;
-}
-.pixel-overlay.picking.picking-wand.picking-remove {
-  cursor: url("../assets/icons/wand-sparkles-minus.svg") 2 2, crosshair;
-}
-.pixel-overlay.picking.picking-wand.picking-silence {
-  cursor: url("../assets/icons/wand-sparkles-silence.svg") 2 2, crosshair;
+  cursor: url("../assets/icons/dot-cursor.svg") 12 12, crosshair;
 }
 
 .pixel-overlay.note-hover {
@@ -201,15 +174,42 @@ h2 {
   position: fixed;
   z-index: 900;
   padding: 0.125rem 0.375rem;
-  background-color: #1a1a1a;
-  border: 1px solid #333;
-  border-radius: 0.25rem;
-  color: #e0e0e0;
-  font-size: 0.8rem;
+  color: #fff;
+  font-size: 1rem;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   pointer-events: none;
-  box-shadow: 0 0.25rem 1rem rgba(0, 0, 0, 0.5);
+  -webkit-text-stroke: 1px rgba(0, 0, 0, 0.9);
+  paint-order: stroke fill;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+
+.hover-mode {
+  font-weight: 600;
+}
+
+.hover-sep {
+  display: inline-block;
+  width: 1px;
+  height: 0.9em;
+  margin: 0 0.375rem;
+  background-color: currentColor;
+  vertical-align: middle;
+}
+
+.mode-unsilence {
+  position: relative;
+  display: inline-block;
+}
+.mode-unsilence::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: -0.1em;
+  right: -0.1em;
+  height: 1px;
+  background-color: currentColor;
+  transform: rotate(-45deg);
 }
 
 input[type=range] {

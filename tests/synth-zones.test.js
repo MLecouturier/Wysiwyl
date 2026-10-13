@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { muteCellSet, selectionMode, wandFloodCells, wandGlobalCells } from '../src/js/synth/selection.js';
+import { lassoAffectedCells, muteCellSet, hoverModeKind, selectionMode, wandFloodCells, wandGlobalCells } from '../src/js/synth/selection.js';
 import { viewer } from '../src/js/core/state.js';
 
 test('muteCellSet enumerates the cells of the mute zones', () => {
@@ -27,6 +27,57 @@ test('selectionMode resolves the editing mode from the modifiers', () => {
     assert.equal(selectionMode(true, false), 'remove');
     assert.equal(selectionMode(false, true), 'silence');
     assert.equal(selectionMode(true, true), 'unsilence');
+});
+
+test('hoverModeKind follows the modifiers for the rect/lasso/wand tools', () => {
+    for (const tool of ['rect', 'lasso', 'wand']) {
+        assert.equal(hoverModeKind(tool, false, false), 'add');
+        assert.equal(hoverModeKind(tool, true, false), 'remove');
+        assert.equal(hoverModeKind(tool, false, true), 'silence');
+        assert.equal(hoverModeKind(tool, true, true), 'unsilence');
+    }
+});
+
+test('hoverModeKind always reads "silence" for the silence-pattern tool', () => {
+    assert.equal(hoverModeKind('pattern', false, false), 'silence');
+    assert.equal(hoverModeKind('pattern', true, true), 'silence');
+});
+
+// A 2x2 lasso: enclosed cells "0,0" and "1,0"; "0,1" is selected but not
+// enclosed, "1,0" is enclosed and muted.
+const ENCLOSED = new Set(['0,0', '1,0']);
+const SELECTED = new Set(['0,1', '1,0']);
+const MUTED = new Set(['1,0']);
+
+test('lassoAffectedCells (add) returns every enclosed cell', () => {
+    const { affected, willMute } = lassoAffectedCells('add', ENCLOSED, SELECTED, MUTED);
+    assert.deepEqual([...affected].sort(), ['0,0', '1,0']);
+    assert.equal(willMute.size, 0);
+});
+
+test('lassoAffectedCells (remove) keeps only the enclosed selected cells', () => {
+    const { affected, willMute } = lassoAffectedCells('remove', ENCLOSED, SELECTED, MUTED);
+    assert.deepEqual([...affected], ['1,0']);
+    assert.equal(willMute.size, 0);
+});
+
+test('lassoAffectedCells (silence) toggles enclosed selected cells, veiling the played ones', () => {
+    const { affected, willMute } = lassoAffectedCells('silence', ENCLOSED, SELECTED, MUTED);
+    assert.deepEqual([...affected], ['1,0']);
+    // "1,0" is already muted: it will play again, so it is not veiled
+    assert.equal(willMute.size, 0);
+});
+
+test('lassoAffectedCells (silence) veils a played enclosed selected cell', () => {
+    const { affected, willMute } = lassoAffectedCells('silence', ENCLOSED, SELECTED, new Set());
+    assert.deepEqual([...affected], ['1,0']);
+    assert.deepEqual([...willMute], ['1,0']);
+});
+
+test('lassoAffectedCells (unsilence) keeps only the enclosed muted cells', () => {
+    const { affected, willMute } = lassoAffectedCells('unsilence', ENCLOSED, SELECTED, MUTED);
+    assert.deepEqual([...affected], ['1,0']);
+    assert.equal(willMute.size, 0);
 });
 
 // A 4x1 image: black, black, white, black (RGBA per pixel).

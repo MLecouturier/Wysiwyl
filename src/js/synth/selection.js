@@ -1,7 +1,7 @@
 // Synth selection: the zone/mute editing, the overlay highlights and
 // the mouse-based zone selection tools.
 
-import { cellSetFromZones, computeLayout, drawCursorCell, drawZones, rebuildZones, zoneCellSet } from '../core/geometry.js';
+import { cellSetFromZones, computeLayout, drawCursorCell, drawZones, rebuildZones, strokeCellOutline, zoneCellSet } from '../core/geometry.js';
 import { appEvents, synthColors, synthCursorGrid, synthCursorMuted, synthCursors, synthHighlights, viewer } from '../core/state.js';
 import { syncEyeButton, updateZonesLabel, synthNoteForPixel } from './model.js';
 import { midiNoteNameHtml } from '../core/utils.js';
@@ -451,33 +451,26 @@ export function selectionMode(alt, shift) {
 }
 
 
-// Reflects the armed tool and the effective mode on the overlay (the
-// cursor and the in-progress preview style), and refreshes the preview so
-// it switches the moment a modifier is pressed or released mid-drag.
+// Reflects an armed zone tool on the overlay (the interactive dot cursor)
+// and refreshes the in-progress preview so it switches the moment a
+// modifier is pressed or released mid-drag, along with the hover tooltip's
+// mode symbol.
 export function syncPickingUi() {
     if (!pixelOverlay) return;
-    const armed = !!zoneState.pick;
-    const tool = armed ? zoneState.pick.mode : null;
-    // During a gesture the live drag state carries the modifiers (they can
-    // change mid-drag); otherwise the held-key flags do.
-    const alt = zoneState.drag ? zoneState.drag.alt : (zoneState.lasso ? zoneState.lasso.alt : zoneState.altHeld);
-    const shift = zoneState.drag ? zoneState.drag.shift : (zoneState.lasso ? zoneState.lasso.shift : zoneState.shiftHeld);
-    const mode = selectionMode(alt, shift);
+    pixelOverlay.classList.toggle('picking', !!zoneState.pick);
 
-    pixelOverlay.classList.toggle('picking', armed);
-    pixelOverlay.classList.toggle('picking-rect', armed && tool === 'rect');
-    pixelOverlay.classList.toggle('picking-lasso', armed && tool === 'lasso');
-    pixelOverlay.classList.toggle('picking-wand', armed && tool === 'wand');
-    pixelOverlay.classList.toggle('picking-pattern', armed && tool === 'pattern');
-    pixelOverlay.classList.toggle('picking-add', armed && mode === 'add');
-    pixelOverlay.classList.toggle('picking-remove', armed && mode === 'remove');
-    pixelOverlay.classList.toggle('picking-silence', armed && (mode === 'silence' || mode === 'unsilence'));
-
-    if (zoneState.drag || zoneState.lasso) {
+    if (zoneState.drag) {
         redrawAllHighlights();
-        if (zoneState.drag) drawZonePreview();
-        if (zoneState.lasso) drawLassoPreview();
+        drawZonePreview();
+    } else if (zoneState.lasso) {
+        // Coalesced on the next frame (the lasso preview recomputes the
+        // enclosed cells, heavier than a rectangle)
+        scheduleLassoPreview();
     }
+
+    // The mode symbol of the hover tooltip depends on the modifiers: refresh
+    // it live (Alt/Shift can change mid-gesture) without a mousemove.
+    if (zoneState.pick && lastHover) updateHoverPreview(lastHover.x, lastHover.y);
 }
 
 // Alt and Shift can be pressed or released at any time — before starting
@@ -574,8 +567,11 @@ export function cancelZonePicking() {
     const hadDrag = !!zoneState.drag || !!zoneState.lasso;
     zoneState.drag = null;
     zoneState.lasso = null;
-    syncPickingUi(); // clears every picking class
+    syncPickingUi(); // drops the interactive dot cursor
     if (hadDrag) redrawAllHighlights();
+    // Drop the mode symbol from the tooltip (keep the note if its mode is on)
+    if (gridNoteState.id !== null && lastHover) updateHoverPreview(lastHover.x, lastHover.y);
+    else hideGridNoteHover();
 }
 
 // Switches the armed magic wand between its two modes: adjacent (default,
@@ -593,17 +589,44 @@ export function setWandAdjacent(adjacent) {
 // Escape chain in core/shortcuts.js.
 registerEscape(30, () => !!zoneState.pick, () => cancelZonePicking());
 
-// ---------- Hover-note preview ----------
-// A per-synth, exclusive mode: while armed, hovering the grid shows the
-// note(s) the synth would play for the hovered pixel (monophonic: one note;
-// polyphonic: one per enabled R/G/B voice, disabled voices are ignored) in a
-// floating label, with the hovered cell outlined. Purely a preview: nothing
-// is sent to the backend, the note math being ported in model.js so no IPC
-// is needed on each mouse move. Independent of the zone tools: the preview
-// stays active while a selection tool is armed, so the note under the cursor
-// is visible during a gesture too.
+// ---------- Hover preview ----------
+// A single floating tooltip and cell outline follow the pointer over the
+// grid. Two independent sources feed it:
+// - the hover-note mode (per-synth, exclusive): the note(s) the synth would
+//   play for the hovered pixel (monophonic: one note; polyphonic: one per
+//   enabled R/G/B voice) — a preview only, the note math being ported in
+//   model.js so no IPC is needed on each mouse move;
+// - an armed zone tool (rect / lasso / wand / silence pattern): the exact
+//   hovered pixel is outlined in the synth's color and the effective editing
+//   mode is shown as a symbol (+, −, rest glyph, struck rest).
+// When both are active the tooltip is a single line: mode symbol, separator,
+// then the note. Independent of each other, so the note under the cursor
+// stays visible during a zone gesture too.
 
 export const gridNoteState = { id: null, el: null, btn: null };
+
+// Last pointer position over the overlay, kept so the tooltip can be
+// refreshed live when the effective mode changes (Alt/Shift) without a
+// mousemove.
+let lastHover = null;
+
+// Effective editing mode shown by the hover tooltip for a zone tool. The
+// silence-pattern tool always reads as "silence" (it stamps rests and
+// ignores the modifiers); the others follow the modifier-driven mode. Pure,
+// exported for unit tests.
+export function hoverModeKind(tool, alt, shift) {
+    if (tool === 'pattern') return 'silence';
+    return selectionMode(alt, shift);
+}
+
+// Tooltip markup of one mode symbol. The rest glyph (𝆝) is rendered by the
+// self-hosted Noto Music font; unsilence strikes it through (see .mode-unsilence).
+function modeSymbolHtml(kind) {
+    if (kind === 'add') return '<span class="hover-mode">+</span>';
+    if (kind === 'remove') return '<span class="hover-mode">−</span>';
+    if (kind === 'unsilence') return '<span class="hover-mode mode-unsilence">𝆝</span>';
+    return '<span class="hover-mode">𝆝</span>'; // silence
+}
 
 // Arms the mode for one synth: cancels any other armed synth (exclusive
 // among synths), but leaves the zone tools untouched. The overlay becomes
@@ -627,7 +650,9 @@ export function cancelGridNoteInfo() {
     gridNoteState.el = null;
     gridNoteState.btn = null;
     pixelOverlay.classList.remove('note-hover');
-    hideGridNoteHover();
+    // An armed zone tool still feeds the tooltip (mode symbol only)
+    if (zoneState.pick && lastHover) updateHoverPreview(lastHover.x, lastHover.y);
+    else hideGridNoteHover();
 }
 
 // Toggle driven by the card button.
@@ -636,16 +661,43 @@ export function toggleGridNoteInfo(id, el, btn) {
     else startGridNoteInfo(id, el, btn);
 }
 
-// Hides the label and the cell outline (no-op when not armed).
+// Hides the tooltip and the cell outline (no-op when not shown). Also drops
+// the remembered pointer position, so arming a mode later does not flash the
+// tooltip at a stale location (the pointer left the image in the meantime).
 export function hideGridNoteHover() {
+    lastHover = null;
     gridNoteLabel?.classList.add('hidden');
     gridNoteCell?.classList.add('hidden');
 }
 
-// Updates the label and the cell outline for the hovered point. Called on
-// every mousemove over the overlay while the mode is armed.
-export function updateGridNoteHover(clientX, clientY) {
-    if (gridNoteState.id === null || !viewer.hasImage || !viewer.processedPixels) {
+// Note(s) HTML of the hovered pixel for the armed hover-note synth, or ''
+// when that mode is off (or the processed pixels are not ready yet).
+function hoverNoteHtml(cell) {
+    if (gridNoteState.id === null || !viewer.processedPixels) return '';
+    const { rgba } = viewer.processedPixels;
+    const idx = (cell.row * viewer.gridW + cell.col) * 4;
+    const preview = synthNoteForPixel(gridNoteState.el, rgba[idx], rgba[idx + 1], rgba[idx + 2]);
+    const text = preview.mode === 'monophonic'
+        ? midiNoteNameHtml(preview.note)
+        : preview.voices
+            .filter(v => v.enabled)
+            .map(v => `${v.channel}:${midiNoteNameHtml(v.note)}`)
+            .join('  ');
+    return text || '—';
+}
+
+// Updates the tooltip and the cell outline for the hovered point. Called on
+// every mousemove over the overlay while the hover-note mode or a zone tool
+// is armed.
+export function updateHoverPreview(clientX, clientY) {
+    lastHover = { x: clientX, y: clientY };
+    const zoneActive = !!zoneState.pick;
+    const noteActive = gridNoteState.id !== null;
+    if (!zoneActive && !noteActive) {
+        hideGridNoteHover();
+        return;
+    }
+    if (!viewer.hasImage) {
         hideGridNoteHover();
         return;
     }
@@ -655,32 +707,40 @@ export function updateGridNoteHover(clientX, clientY) {
         return;
     }
 
-    const { rgba } = viewer.processedPixels;
-    const idx = (cell.row * viewer.gridW + cell.col) * 4;
-    const preview = synthNoteForPixel(gridNoteState.el, rgba[idx], rgba[idx + 1], rgba[idx + 2]);
-
-    const text = preview.mode === 'monophonic'
-        ? midiNoteNameHtml(preview.note)
-        : preview.voices
-            .filter(v => v.enabled)
-            .map(v => `${v.channel}:${midiNoteNameHtml(v.note)}`)
-            .join('  ');
-    gridNoteLabel.innerHTML = text || '—';
+    // One line: mode symbol (when a zone tool is armed), separator, note
+    // (when the hover-note mode is armed). Either part alone needs no
+    // separator. Nothing to show (hover-note armed but the pixels are not
+    // ready yet): stay hidden, like before.
+    const note = hoverNoteHtml(cell);
+    let text = '';
+    if (zoneActive) {
+        text = modeSymbolHtml(hoverModeKind(zoneState.pick.mode, zoneState.altHeld, zoneState.shiftHeld));
+        if (note) text += `<span class="hover-sep"></span>${note}`;
+    } else {
+        text = note;
+    }
+    if (!text) {
+        hideGridNoteHover();
+        return;
+    }
+    gridNoteLabel.innerHTML = text;
 
     // Near the cursor, clamped to the viewport (like the help popup)
     gridNoteLabel.classList.remove('hidden');
-    const x = Math.min(Math.max(8, clientX + 14), window.innerWidth - gridNoteLabel.offsetWidth - 8);
-    const y = Math.min(Math.max(8, clientY + 14), window.innerHeight - gridNoteLabel.offsetHeight - 8);
+    const x = Math.min(Math.max(8, clientX + 8), window.innerWidth - gridNoteLabel.offsetWidth - 8);
+    const y = Math.min(Math.max(8, clientY + 8), window.innerHeight - gridNoteLabel.offsetHeight - 8);
     gridNoteLabel.style.left = `${x}px`;
     gridNoteLabel.style.top = `${y}px`;
 
-    // Outline the hovered cell (layout units match the overlay's CSS pixels)
+    // Outline the hovered cell (layout units match the overlay's CSS pixels),
+    // in the armed synth's color when a zone tool drives the preview.
     const layout = getImageLayout();
     if (!layout) {
         gridNoteCell.classList.add('hidden');
         return;
     }
     gridNoteCell.classList.remove('hidden');
+    gridNoteCell.style.borderColor = zoneActive ? (synthColors.get(zoneState.pick.id) || '') : '';
     gridNoteCell.style.left = `${layout.offsetX + cell.col * layout.cellW}px`;
     gridNoteCell.style.top = `${layout.offsetY + cell.row * layout.cellH}px`;
     gridNoteCell.style.width = `${layout.cellW}px`;
@@ -777,54 +837,80 @@ export function addSegmentCells(x0, y0, x1, y1, out) {
     }
 }
 
-// Live preview of the lasso shape: the traced polygon, closed back to
-// its start point, styled after the effective mode (see drawZonePreview).
+// Live preview of the lasso: the exact cells the gesture will change,
+// computed with lassoEnclosedCells (the same set the release commits) and
+// drawn like a committed zone, styled after the effective mode:
+// - add: synth-color fill + solid union outline (the pixels that will join
+//   the selection);
+// - remove: the cells erased from the highlight beneath, with a dashed
+//   synth-color outline;
+// - silence/unsilence: a black veil over the cells that will end up muted,
+//   with a dashed white outline over every affected cell.
+// Only the cells that actually change are shown (intersection with the
+// current selection / silences), never the whole traced polygon.
 export function drawLassoPreview() {
     if (!zoneState.lasso || zoneState.lasso.points.length < 1) return;
     const layout = getImageLayout();
     if (!layout) return;
     const { offsetX, offsetY, cellW, cellH } = layout;
+    const { id, points, start, alt, shift } = zoneState.lasso;
+    const mode = selectionMode(alt, shift);
+    const color = synthColors.get(id) || '#ffffff';
+
+    const enclosed = lassoEnclosedCells(points, start);
+    const hi = synthHighlights.get(id);
+    const selected = hi ? cellSetFromZones(hi.zones) : new Set();
+    const muted = hi ? muteCellSet(hi) : new Set();
+    const { affected, willMute } = lassoAffectedCells(mode, enclosed, selected, muted);
+    if (affected.size === 0) return;
+
     const ctx = pixelOverlay.getContext('2d');
+    const fillCells = (cells) => {
+        for (const key of cells) {
+            const [col, row] = key.split(',').map(Number);
+            ctx.fillRect(offsetX + col * cellW, offsetY + row * cellH, cellW, cellH);
+        }
+    };
+
     ctx.save();
-    ctx.beginPath();
-    zoneState.lasso.points.forEach((pt, i) => {
-        const px = offsetX + pt.x * cellW;
-        const py = offsetY + pt.y * cellH;
-        if (i === 0) ctx.moveTo(px, py);
-        else          ctx.lineTo(px, py);
-    });
-    ctx.closePath(); // straight line back to the start point
-    const mode = selectionMode(zoneState.lasso.alt, zoneState.lasso.shift);
-    const color = synthColors.get(zoneState.lasso.id) || '#ffffff';
-    if (mode === 'silence' || mode === 'unsilence') {
-        ctx.globalAlpha = 0.35;
-        ctx.fillStyle = 'black';
-        ctx.fill();
-        ctx.globalAlpha = 0.9;
-        ctx.strokeStyle = 'white';
-        ctx.lineWidth = 1.5;
-        ctx.setLineDash([4, 3]);
-        ctx.stroke();
-    } else if (mode === 'remove') {
-        // Erase the highlights under the shape, then outline it
-        ctx.globalCompositeOperation = 'destination-out';
-        ctx.fill();
-        ctx.globalCompositeOperation = 'source-over';
-        ctx.globalAlpha = 0.9;
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 1.5;
-        ctx.setLineDash([4, 3]);
-        ctx.stroke();
-    } else {
+    if (mode === 'add') {
+        ctx.globalAlpha = 0.3;
         ctx.fillStyle = color;
-        ctx.globalAlpha = 0.35;
-        ctx.fill();
-        ctx.globalAlpha = 0.9;
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
+        fillCells(affected);
+    } else if (mode === 'remove') {
+        // Erase the highlights under the cells being removed
+        ctx.globalCompositeOperation = 'destination-out';
+        fillCells(affected);
+        ctx.globalCompositeOperation = 'source-over';
+    } else {
+        // Silence / unsilence: veil the cells that will end up muted
+        ctx.globalAlpha = 0.4;
+        ctx.fillStyle = 'black';
+        fillCells(willMute);
     }
+
+    // Outline of every affected cell: solid like a committed zone in add
+    // mode, dashed for the editing modes so they never read as a zone edit.
+    ctx.globalAlpha = 0.9;
+    ctx.strokeStyle = mode === 'silence' || mode === 'unsilence' ? 'white' : color;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash(mode === 'add' ? [] : [4, 3]);
+    strokeCellOutline(ctx, affected, offsetX, offsetY, cellW, cellH);
     ctx.restore();
+}
+
+// Coalesces the lasso preview redraw onto the next animation frame: the
+// enclosed-cell computation is heavier than a rectangle and mousemove can
+// fire several times per frame. Points are still accumulated per event, so
+// none is lost.
+let lassoPreviewRaf = null;
+export function scheduleLassoPreview() {
+    if (lassoPreviewRaf !== null) return;
+    lassoPreviewRaf = requestAnimationFrame(() => {
+        lassoPreviewRaf = null;
+        redrawAllHighlights();
+        drawLassoPreview();
+    });
 }
 
 // Computes every pixel enclosed by the lasso polygon: polygon interior
@@ -862,6 +948,35 @@ export function lassoEnclosedCells(points, start) {
         addSegmentCells(poly[i - 1].x, poly[i - 1].y, poly[i].x, poly[i].y, enclosed);
     }
     return enclosed;
+}
+
+// Cells an in-progress lasso will actually change, given the current
+// selection and silences, plus the subset that ends up muted (the veil of
+// the silence/unsilence preview). Only the cells that change are returned,
+// never the whole enclosed set:
+// - add: every enclosed cell joins the selection;
+// - remove: enclosed cells that are currently selected leave it;
+// - silence: enclosed selected cells toggle — the played ones end muted;
+// - unsilence: enclosed muted cells play again (none ends muted).
+// `enclosed`, `selected` and `muted` are Sets of "col,row" keys. Pure,
+// exported for unit tests.
+export function lassoAffectedCells(mode, enclosed, selected, muted) {
+    const affected = new Set();
+    const willMute = new Set();
+    for (const key of enclosed) {
+        if (mode === 'remove') {
+            if (selected.has(key)) affected.add(key);
+        } else if (mode === 'silence') {
+            if (!selected.has(key)) continue; // silences live in the selection
+            affected.add(key);
+            if (!muted.has(key)) willMute.add(key); // played → silent
+        } else if (mode === 'unsilence') {
+            if (muted.has(key)) affected.add(key); // silent → played
+        } else {
+            affected.add(key); // add
+        }
+    }
+    return { affected, willMute };
 }
 
 // Flood fill for the magic wand: every cell 4-connected to the clicked

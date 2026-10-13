@@ -35,11 +35,11 @@ import {
 } from './synth/selection.js';
 import {
     zoneState, cancelZonePicking, zoneDragRect,
-    cellFromClientPoint, imagePointFromClient, drawZonePreview, drawLassoPreview,
+    cellFromClientPoint, imagePointFromClient, drawZonePreview, scheduleLassoPreview,
     wandAddPixels, wandRemovePixels, wandToggleMutePixels, wandRemoveMutePixels,
     lassoAddPixels, lassoRemovePixels, lassoToggleMutePixels, lassoRemoveMutePixels,
     selectionMode, syncPickingUi, applySilencePattern,
-    gridNoteState, updateGridNoteHover, hideGridNoteHover,
+    updateHoverPreview, hideGridNoteHover,
 } from './synth/selection.js';
 import {
     createSynthElement, onSynthPlayClick, syncPlayAllButton,
@@ -485,9 +485,10 @@ pixelOverlay.addEventListener('mousemove', (e) => {
         drawCropOverlay();
         return;
     }
-    // Hover-note preview: while the mode is armed, show the note of the
-    // pixel under the cursor (independent of any zone gesture).
-    if (gridNoteState.id !== null) updateGridNoteHover(e.clientX, e.clientY);
+    // Hover preview: the note under the cursor (hover-note mode) and/or the
+    // exact pixel + editing mode of an armed zone tool. Runs on every move;
+    // it no-ops and hides itself when neither mode is active.
+    updateHoverPreview(e.clientX, e.clientY);
     if (!zoneState.drag && !zoneState.lasso) return;
     if (zoneState.lasso) {
         const pt = imagePointFromClient(e.clientX, e.clientY);
@@ -495,8 +496,9 @@ pixelOverlay.addEventListener('mousemove', (e) => {
         const last = zoneState.lasso.points[zoneState.lasso.points.length - 1];
         if (!last || pt.x !== last.x || pt.y !== last.y) {
             zoneState.lasso.points.push(pt);
-            redrawAllHighlights();
-            drawLassoPreview();
+            // The enclosed-cell computation is heavier than a rectangle:
+            // coalesce the redraw onto the next animation frame.
+            scheduleLassoPreview();
         }
         return;
     }
@@ -529,13 +531,14 @@ window.addEventListener('mouseup', (e) => {
         // included).
         if (points.length > 0) {
             const mode = selectionMode(alt, shift);
-            const changed =
-                mode === 'remove'    ? lassoRemovePixels(id, points, start)
-              : mode === 'silence'   ? lassoToggleMutePixels(id, points, start)
-              : mode === 'unsilence' ? lassoRemoveMutePixels(id, points, start)
-              :                        lassoAddPixels(id, points, start);
-            if (changed) redrawAllHighlights();
+            if (mode === 'remove')         lassoRemovePixels(id, points, start);
+            else if (mode === 'silence')   lassoToggleMutePixels(id, points, start);
+            else if (mode === 'unsilence') lassoRemoveMutePixels(id, points, start);
+            else                           lassoAddPixels(id, points, start);
         }
+        // Always redraw: clears the in-progress cell preview even when the
+        // gesture changed nothing.
+        redrawAllHighlights();
         return;
     }
     const { id, alt, shift } = zoneState.drag;
