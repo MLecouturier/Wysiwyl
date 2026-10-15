@@ -53,7 +53,8 @@
     "clockInput": "Source…",
     "clockMaster": "Master",
     "clockSource": "Sync source: the MIDI input port whose clock is followed",
-    "virtualSource": "Wysiwyl (virtual — DAW)"
+    "virtualSource": "Wysiwyl (virtual — DAW)",
+    "timeSignature": "Time signature (accent grid)"
   },
   "chrono": {
     "reset": "Reset timer"
@@ -229,6 +230,9 @@
     "silencePatternHint": "Add silences following a 16-step pattern: click a zone to stamp it",
     "silencePatternStep": "Toggle this step: silence / play",
     "toggleInfiniteRepeat": "Repeat the pattern across the whole zone",
+    "accentTitle": "Accent",
+    "accentToggle": "Accent by measure: scale each pixel's velocity by the level of the beat it starts on",
+    "accentStep": "Accent level of this beat: click to cycle off → weak → normal → strong",
     "velocityRange": "Velocity range",
     "velocityRelative": "Velocity mode: relative / clamp",
     "programLabel": "Bank / Pgm",
@@ -280,6 +284,10 @@
     "metronome.clockMode": "Source of the metronome's timing. Internal: the tempo set here is the only master. Auto sync: any incoming MIDI clock (a DAW's, an instrument's) takes over the tempo as long as it streams — this is the historical default behavior. Source…: only the MIDI clock received on the chosen input port is followed, other devices are ignored. Master: the app broadcasts its own MIDI clock (24 pulses per quarter note) to every MIDI output while a synth plays, with a Start on playback begin and a Stop on end, so external sequencers and arpeggiators follow this tempo.",
     "metronome.clockSource": "The MIDI input port whose MIDI clock the metronome follows in “Source…” mode. The “Wysiwyl (virtual — DAW)” entry is the app's own port, the one a DAW sends its sync to; the other entries are physical inputs, typically an instrument or interface clock.",
     "metronome.masterBadge": "The metronome broadcasts its own MIDI clock to every MIDI output: external devices and DAWs following it play at the tempo set here. The clock streams while at least one synth plays, with a Start message when playback begins and a Stop when it ends. The tempo controls stay active: they drive every follower live.",
+    "metronome.timeSignature": "Time signature shared by the metronome and every synth: it defines the measure (how many beats per bar and the note value of one beat) used by the per-synth accents. The bar is counted from the start of playback and follows the DAW's Start in sync mode. Changing it re-renders the accent grids, which have one step per beat.",
+    "synth.accentTitle": "Per-measure accent: each pixel's velocity is scaled by the accent level of the beat it starts on, on top of its saturation. The measure and its beat grid come from the global time signature.",
+    "synth.accentToggle": "Turns the accent on or off for this synth. When off, every pixel keeps its saturation-derived velocity whatever the beat.",
+    "synth.accentStep": "Accent level of this beat, cycled on click: off (no change), weak, normal, strong. The velocity multiplier of each level is set globally in the config file (accent_levels).",
     "synth.renameHint": "Double-click the synth's name to rename it.",
     "synth.dragHandle": "Drag to move this synth in the stack; the whole stack is renumbered accordingly.",
     "synth.infoToggle": "Folds or unfolds the synth's playback information: the position of the played pixel, its color (RGB and HSL), the note(s) produced, the velocity, and the note range(s) allowed by the bass/medium/treble filters — with the number of notes actually playable for the chosen scale and tonic. The fold is global: it applies to every card and is kept between sessions.",

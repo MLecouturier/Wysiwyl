@@ -257,6 +257,19 @@
                     <button class="note-length-btn noto-music icon-btn" data-length="whole" data-i18n-title="synth.noteLengthWhole" data-i18n-aria-label="synth.noteLengthWhole">𝅝</button>
                 </div>
                 <div class="flex-fill"></div>
+                <button class="synth-accent-toggle icon-btn" type="button" data-i18n-title="synth.accentToggle" data-i18n-aria-label="synth.accentToggle" aria-pressed="false">
+                    <span class="material-symbols-outlined" aria-hidden="true">equalizer</span>
+                </button>
+            </div>
+        </div>
+        <!-- 6a. Accent : un niveau de vélocité par temps de la mesure. La
+             grille est construite par le JS selon la signature globale
+             (autant de pas que le numérateur). -->
+        <div class="synth-section synth-accent-section bg-dark">
+            <div class="synth-section-header">
+                <span class="synth-section-title" data-i18n="synth.accentTitle"></span>
+                <div class="synth-accent-steps"></div>
+                <div class="flex-fill"></div>                
             </div>
         </div>
         <div class="synth-section luminosity-gradient"></div>

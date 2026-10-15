@@ -394,6 +394,54 @@ $synth-title-width: 18rem;
 }
 
 // --------------------------------------------------------------------------
+// Measure accent
+// --------------------------------------------------------------------------
+// The section only shows while the accent is enabled on this card
+// (.accent-on, toggled by cards.js alongside the toggle's own .active state).
+// One step per beat unit of the global time signature; each cycles through
+// the four discrete levels (off/weak/normal/strong) on click.
+.synth-accent-section { display: none; }
+
+.synth-accent-section.accent-on { display: flex; }
+
+.synth-accent-steps {
+    display: flex;
+    flex: 1 1 auto;
+    gap: 3px;
+    min-width: 0;
+}
+
+.accent-step {
+    display: inline-flex;
+    flex: 1 1 0;
+    min-width: 1rem;
+    height: 1.25rem;
+    padding: 0;
+    border: 1px solid $color-border;
+    border-radius: 2px;
+    background-color: transparent;
+    cursor: pointer;
+    transition: background-color $transition-fast, border-color $transition-fast;
+
+    &:hover { border-color: $color-accent; }
+
+    &.level-weak {
+        border-color: $color-accent;
+        background-color: rgba($color-accent, .3);
+    }
+
+    &.level-normal {
+        border-color: $color-accent;
+        background-color: rgba($color-accent, .6);
+    }
+
+    &.level-strong {
+        border-color: $color-accent;
+        background-color: $color-accent;
+    }
+}
+
+// --------------------------------------------------------------------------
 // Playback
 // --------------------------------------------------------------------------
 // Play button: icon + label. Red while playing — the documented

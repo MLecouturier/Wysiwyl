@@ -17,7 +17,7 @@ import {
 } from './core/state.js';
 import { sliderToPosterizeLevels, posterizeLevelsToSlider } from './core/utils.js';
 import { installInputStepper, setTrackpadThreshold } from './audio/stepper.js';
-import { createClockSource } from './audio/metronome.js';
+import { createClockSource, createTimeSignature } from './audio/metronome.js';
 import { createMetronome, clampBpm } from './audio/metronome.js';
 import { createMirror } from './mirror/window.js';
 import { createSessionState } from './session/session.js';
@@ -46,6 +46,7 @@ import {
     setSynthControlsLocked, startSynthPlayback, stopSynthPlayback,
     renumberSynthIds, configureSynthCards,
     toggleSynthMute, cancelTransientTools, setActiveSynth, clearActiveSynth,
+    refreshAccentGrids,
 } from './synth/cards.js';
 import { initSynthMenu } from './synth/menu.js';
 import './core/shortcuts-dialog.js';
@@ -104,11 +105,15 @@ renderLanguageSwitcher();
 
 
 // ---------- Global configuration ----------
-// The BPM input is initialized with the persisted default; the config
-// file itself is hand-edited via the gear button in the footer (edits
-// apply on the next application start).
-invoke('get_config').then(config => {
-    metronome.setBpm(config.default_bpm);
+// The BPM input is initialized with the persisted default; the config file
+// itself is hand-edited via the gear button in the footer. Once opened from
+// there, the backend watches the file: a save reloads it live and the
+// `config-reloaded` event re-applies it here. The live tempo is the UI's, so
+// `default_bpm` is only applied at startup.
+
+// Applies a config payload to the live UI. Shared by the startup load and
+// the live reload; the tempo is deliberately not part of it (see above).
+function applyConfig(config) {
     // Trackpad scroll feel of the wheel-driven steppers (BPM, sliders,
     // synth volume): accumulated deltas per increment. The backend
     // already clamps the persisted value; validate defensively anyway.
@@ -134,9 +139,33 @@ invoke('get_config').then(config => {
     // Clock source of the metronome (master / slave), persisted by the
     // backend and applied live on its side; the selects just reflect it.
     clockSource.hydrate(config.clock_mode, config.clock_source);
+    // Global time signature: persisted by the backend, applied live. The
+    // cards created before the config arrived are re-rendered for it.
+    timeSignature.hydrate(config.time_signature);
+    refreshAccentGrids();
     // Undo/redo history depth for zone/silence edits
     setHistoryDepth(config.undo_depth);
+}
+
+invoke('get_config').then(config => {
+    metronome.setBpm(config.default_bpm);
+    applyConfig(config);
 }).catch(err => console.error('Error in get_config:', err));
+
+// Live reload: the backend watcher detected a save of the config file.
+window.__TAURI__.event.listen('config-reloaded', (event) => {
+    applyConfig(event.payload);
+    flashConfigButton();
+}).catch(err => console.error('Error in config-reloaded listener:', err));
+
+// Transient green confirmation on the config button (same pattern as the
+// template-saved flash in synth/menu.js).
+function flashConfigButton() {
+    const btn = document.querySelector('#open-config-btn');
+    if (!btn) return;
+    btn.classList.add('config-reloaded');
+    setTimeout(() => btn.classList.remove('config-reloaded'), 1000);
+}
 
 document.querySelector('#open-config-btn').addEventListener('click', () => {
     invoke('open_config_file')
@@ -864,6 +893,10 @@ installInputStepper();
 
 // ---------- Clock source (master / slave) ----------
 const clockSource = createClockSource();
+
+// ---------- Time signature (global accent frame) ----------
+// Changing it rebuilds every card's accent grid (one slot per beat unit).
+const timeSignature = createTimeSignature({ onSignatureChange: refreshAccentGrids });
 
 // Programs learned from the MIDI input (Program Change / Bank Select
 // turned on the instruments): update the map and every synth concerned.

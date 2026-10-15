@@ -261,3 +261,30 @@ export function createClockSource() {
 
     return { hydrate };
 }
+
+// Global time signature: the frame the per-synth accent patterns are read
+// against. The backend persists it and applies it live (the metronome reads
+// it on every wake); changing it re-renders the synths' accent grids, whose
+// number of slots follows the signature's numerator.
+
+export function createTimeSignature({ onSignatureChange } = {}) {
+    const { invoke } = window.__TAURI__.core;
+
+    const select = document.querySelector('#time-signature-select');
+
+    // Applies the persisted value (startup / session restore) without
+    // echoing it back to the backend (it is already stored).
+    function hydrate(value) {
+        if (value && select.querySelector(`option[value="${CSS.escape(value)}"]`)) {
+            select.value = value;
+        }
+    }
+
+    select.addEventListener('change', () => {
+        invoke('set_time_signature', { timeSignature: select.value })
+            .catch(err => console.error('Error in set_time_signature:', err));
+        onSignatureChange?.(select.value);
+    });
+
+    return { hydrate, getValue: () => select.value };
+}

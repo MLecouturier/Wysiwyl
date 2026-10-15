@@ -59,6 +59,52 @@ let activeSynthId = null;
 
 export const getActiveSynthId = () => activeSynthId;
 
+// Measure accent: the four discrete levels of the backend's AccentLevel
+// enum, cycled by clicking a step. One step per beat unit of the global
+// time signature; the grid is rebuilt whenever the signature changes.
+const ACCENT_LEVELS = ['off', 'weak', 'normal', 'strong'];
+
+// Number of accent slots of the current global time signature ("n/d" → n).
+function accentSlotCount() {
+    const value = document.querySelector('#time-signature-select')?.value || '4/4';
+    const numerator = Number.parseInt(value.split('/')[0], 10);
+    return Number.isFinite(numerator) && numerator > 0 ? numerator : 4;
+}
+
+// The accent pattern stored on a card, padded to the backend's 16 slots.
+function accentPattern(el) {
+    const stored = Array.isArray(el._accentPattern) ? el._accentPattern : [];
+    return Array.from({ length: 16 }, (_, i) =>
+        ACCENT_LEVELS.includes(stored[i]) ? stored[i] : 'off');
+}
+
+// Rebuilds a card's accent grid for the current signature, keeping the
+// stored pattern. Called at creation and when the signature changes.
+function renderAccentGrid(el) {
+    const container = el.querySelector('.synth-accent-steps');
+    if (!container) return;
+    const pattern = accentPattern(el);
+    const buttons = Array.from({ length: accentSlotCount() }, (_, i) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = `accent-step level-${pattern[i]}`;
+        btn.dataset.slot = String(i);
+        // Kept as data-i18n hooks so a locale change retranslates them
+        btn.dataset.i18nTitle = 'synth.accentStep';
+        btn.dataset.i18nAriaLabel = 'synth.accentStep';
+        btn.title = t('synth.accentStep');
+        btn.setAttribute('aria-label', t('synth.accentStep'));
+        return btn;
+    });
+    container.replaceChildren(...buttons);
+}
+
+// Re-renders every card's accent grid: the global time signature changed,
+// so the number of slots (one per beat unit) did too.
+export function refreshAccentGrids() {
+    synthListBody.querySelectorAll('.synth-block').forEach(renderAccentGrid);
+}
+
 // Expands one synth card and collapses the others; the paired tab follows.
 // Any transient tool, menu or color picker is closed so it cannot outlive
 // the context switch, then the card is scrolled into view.
@@ -226,6 +272,17 @@ export function applySynthConfig(el, cfg) {
     });
     el.querySelector('.synth-pattern-repeat-btn')
         .classList.toggle('active', !!cfg.silence_pattern_repeat);
+    // Measure accent: the stored pattern (defaulting to the backend's 4/4
+    // hierarchy) and the enable state. The grid itself is rebuilt for the
+    // current global time signature.
+    el._accentPattern = Array.isArray(cfg.accent_pattern) && cfg.accent_pattern.length === 16
+        ? cfg.accent_pattern.slice()
+        : ['strong', 'weak', 'normal', 'weak', ...Array.from({ length: 12 }, () => 'off')];
+    const accentToggle = el.querySelector('.synth-accent-toggle');
+    accentToggle.classList.toggle('active', !!cfg.accent_enabled);
+    accentToggle.setAttribute('aria-pressed', String(!!cfg.accent_enabled));
+    el.querySelector('.synth-accent-section').classList.toggle('accent-on', !!cfg.accent_enabled);
+    renderAccentGrid(el);
     // The note-range summary follows the restored mode, ranges and scale
     updateNoteRangeInfo(el);
 }
@@ -888,6 +945,40 @@ export function createSynthElement(id, cfg = null) {
         const btn = e.currentTarget;
         if (isZoneMode(id, 'pattern')) cancelZonePicking();
         else startZonePicking(id, btn, 'pattern');
+    });
+
+    // ---- Measure accent: cycle each step through off/weak/normal/strong
+    // and toggle the whole accent on/off. The grid's slots follow the
+    // global time signature (rebuilt by refreshAccentGrids on a change) ----
+    const accentToggle = el.querySelector('.synth-accent-toggle');
+    const accentSteps = el.querySelector('.synth-accent-steps');
+
+    const sendAccent = () => {
+        invoke('set_synth_accent', {
+            id,
+            enabled: accentToggle.classList.contains('active'),
+            pattern: accentPattern(el),
+        }).catch(err => console.error('Error in set_synth_accent:', err));
+    };
+
+    accentSteps.addEventListener('click', (event) => {
+        const btn = event.target.closest('.accent-step');
+        if (!btn) return;
+        const slot = Number(btn.dataset.slot);
+        const pattern = accentPattern(el);
+        const next = ACCENT_LEVELS[(ACCENT_LEVELS.indexOf(pattern[slot]) + 1) % ACCENT_LEVELS.length];
+        pattern[slot] = next;
+        el._accentPattern = pattern;
+        ACCENT_LEVELS.forEach(level => btn.classList.toggle(`level-${level}`, level === next));
+        sendAccent();
+    });
+
+    accentToggle.addEventListener('click', () => {
+        const enabled = !accentToggle.classList.contains('active');
+        accentToggle.classList.toggle('active', enabled);
+        accentToggle.setAttribute('aria-pressed', String(enabled));
+        el.querySelector('.synth-accent-section').classList.toggle('accent-on', enabled);
+        sendAccent();
     });
 
     initVelocityRange(el);

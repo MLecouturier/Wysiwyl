@@ -49,11 +49,12 @@
     "masterBadge": "Horloge maître",
     "clockMode": "Source d'horloge",
     "clockOff": "Interne",
-    "clockAuto": "Synchro auto",
+    "clockAuto": "Synch. auto",
     "clockInput": "Source…",
     "clockMaster": "Maître",
     "clockSource": "Source de synchro : port d'entrée MIDI dont l'horloge est suivie",
-    "virtualSource": "Wysiwyl (virtuel — DAW)"
+    "virtualSource": "Wysiwyl (virtuel — DAW)",
+    "timeSignature": "Mesure (grille d'accent)"
   },
   "chrono": {
     "reset": "Remettre le chrono à zéro"
@@ -229,6 +230,9 @@
     "silencePatternHint": "Ajouter des silences suivant un motif de 16 pas : cliquez une zone pour l'appliquer",
     "silencePatternStep": "Basculer ce pas : silence / lecture",
     "toggleInfiniteRepeat": "Répéter le motif sur toute la zone",
+    "accentTitle": "Accent",
+    "accentToggle": "Accent par mesure : module la vélocité de chaque pixel selon le niveau du temps sur lequel il démarre",
+    "accentStep": "Niveau d'accent de ce temps : cliquez pour cycler off → faible → normal → fort",
     "velocityRange": "Plage de vélocité",
     "velocityRelative": "Mode de vélocité : relatif / clamp",
     "programLabel": "Bank / Pgm",
@@ -280,6 +284,10 @@
     "metronome.clockMode": "Source du tempo du métronome. Interne : le tempo réglé ici est le seul maître. Synchro auto : toute horloge MIDI entrante (celle d'un DAW, d'un instrument) prend le contrôle du tempo tant qu'elle est diffusée — c'est le comportement historique par défaut. Source… : seule l'horloge MIDI reçue sur le port d'entrée choisi est suivie, les autres appareils sont ignorés. Maître : l'app diffuse sa propre horloge MIDI (24 pulses par noire) vers toutes les sorties MIDI tant qu'un synthé joue, avec un Start au début de la lecture et un Stop à la fin, pour que les séquenceurs et arpèges externes suivent ce tempo.",
     "metronome.clockSource": "Port d'entrée MIDI dont le métronome suit l'horloge en mode « Source… ». L'entrée « Wysiwyl (virtuel — DAW) » est le port propre à l'app, celui auquel un DAW adresse sa synchro ; les autres entrées sont les entrées physiques, typiquement l'horloge d'un instrument ou d'une interface.",
     "metronome.masterBadge": "Le métronome diffuse sa propre horloge MIDI vers toutes les sorties MIDI : les appareils et DAWs qui la suivent jouent au tempo réglé ici. L'horloge est diffusée tant qu'au moins un synthé joue, avec un message Start au démarrage de la lecture et un Stop à son arrêt. Les contrôles de tempo restent actifs : ils pilotent tous les suiveurs en direct.",
+    "metronome.timeSignature": "Mesure partagée par le métronome et tous les synthés : elle définit la mesure (nombre de temps par mesure et valeur de note d'un temps) utilisée par les accents des synthés. La mesure est comptée depuis le début de la lecture et suit le Start du DAW en mode synchro. La changer reconstruit les grilles d'accent, qui ont un pas par temps.",
+    "synth.accentTitle": "Accent par mesure : la vélocité de chaque pixel est modulée par le niveau d'accent du temps sur lequel il démarre, en plus de sa saturation. La mesure et sa grille de temps viennent de la signature rythmique globale.",
+    "synth.accentToggle": "Active ou désactive l'accent pour ce synthé. Désactivé, chaque pixel garde la vélocité issue de sa saturation quel que soit le temps.",
+    "synth.accentStep": "Niveau d'accent de ce temps, cyclé au clic : off (aucun changement), faible, normal, fort. Le multiplicateur de vélocité de chaque niveau se règle globalement dans le fichier de config (accent_levels).",
     "synth.renameHint": "Double-cliquez le nom du synthé pour le personnaliser.",
     "synth.dragHandle": "Glissez pour déplacer ce synthé dans le stack ; l'ensemble du stack est renuméroté en conséquence.",
     "synth.infoToggle": "Replie ou déplie les informations de lecture du synthé : la position du pixel joué, sa couleur (RVB et TSL), la ou les notes produites, la vélocité, ainsi que la ou les plages de notes autorisées par les filtres basses/médiums/aigus — avec le nombre de notes réellement jouables selon la gamme et la tonique choisies. Le repli est global : il s'applique à toutes les cartes et est conservé entre les sessions.",

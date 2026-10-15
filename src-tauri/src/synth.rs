@@ -4,8 +4,8 @@ use crate::locks::MutexExt;
 use crate::metronome::remapped_cursor;
 use crate::midi::VolumeEvent;
 use crate::state::{
-    normalize_note_lengths, normalize_tempo_ratio, ImageState, MidiState, NoteLength, ProgramState,
-    ReadingDirection, Scale, Synth, SynthMode, SynthState, SynthView, Zone,
+    normalize_note_lengths, normalize_tempo_ratio, AccentLevel, ImageState, MidiState, NoteLength,
+    ProgramState, ReadingDirection, Scale, Synth, SynthMode, SynthState, SynthView, Zone,
 };
 use crate::zone::normalize_zones;
 use std::collections::{HashMap, HashSet};
@@ -38,9 +38,19 @@ pub fn set_synth_name(id: u32, name: String, state: State<SynthState>) -> Result
     }
 }
 
+/// First MIDI channel (0–15) not used by any synth of the stack, or 0
+/// (channel 1) when every channel is taken. Channels are considered across
+/// every synth, whatever their MIDI port.
+fn first_free_channel(synths: &HashMap<u32, Synth>) -> u8 {
+    let used: HashSet<u8> = synths.values().map(|s| s.config.channel).collect();
+    (0u8..16).find(|c| !used.contains(c)).unwrap_or(0)
+}
+
 /// Creates a synthesizer from the default-synth template of the global
 /// configuration, and returns its full initial state so the frontend can
-/// reflect it.
+/// reflect it. The new synth is given its own MIDI channel: the first one
+/// (1–16) not already used by the stack, or channel 1 when they are all
+/// taken — the template's channel is ignored.
 #[tauri::command]
 pub fn add_synth(
     config_state: State<ConfigState>,
@@ -65,7 +75,11 @@ pub fn add_synth(
 
     let mut synth = template.to_synth(id);
     synth.display_number = display_number;
-    state.synths.lock_safe().insert(id, synth.clone());
+    {
+        let mut synths = state.synths.lock_safe();
+        synth.config.channel = first_free_channel(&synths);
+        synths.insert(id, synth.clone());
+    }
 
     Ok(SynthView::from(&synth))
 }
@@ -941,6 +955,32 @@ pub fn set_synth_silence_pattern(
     }
 }
 
+/// Stores the synth's per-measure accent: whether it is applied and its
+/// pattern, one level per beat unit of the bar (read in the global time
+/// signature's order, slot 0 = downbeat). The pattern is normalized to
+/// exactly 16 slots (missing steps read as "off", i.e. no accent).
+#[tauri::command]
+pub fn set_synth_accent(
+    id: u32,
+    enabled: bool,
+    pattern: Vec<AccentLevel>,
+    state: State<SynthState>,
+) -> Result<(), AppError> {
+    let mut synths = state.synths.lock_safe();
+    match synths.get_mut(&id) {
+        Some(synth) => {
+            let mut levels = [AccentLevel::Off; 16];
+            for (i, &level) in pattern.iter().take(16).enumerate() {
+                levels[i] = level;
+            }
+            synth.config.accent_enabled = enabled;
+            synth.config.accent_pattern = levels;
+            Ok(())
+        }
+        None => Err(synth_not_found(id)),
+    }
+}
+
 /// Computes the mute cells resulting from stamping the synth's silence
 /// pattern at the pixel (col, row), and returns the complete list of
 /// muted cells as (col, row) pairs. Read-only: the frontend rebuilds its
@@ -1046,6 +1086,35 @@ mod tests {
 
     fn state_with_ids(ids: &[u32]) -> HashMap<u32, Synth> {
         ids.iter().map(|&id| (id, Synth::new(id))).collect()
+    }
+
+    #[test]
+    fn first_free_channel_of_an_empty_stack_is_one() {
+        assert_eq!(first_free_channel(&HashMap::new()), 0);
+    }
+
+    #[test]
+    fn first_free_channel_takes_the_lowest_unused() {
+        let mut synths = state_with_ids(&[1, 2, 3]);
+        synths.get_mut(&1).unwrap().config.channel = 0;
+        synths.get_mut(&2).unwrap().config.channel = 2;
+        synths.get_mut(&3).unwrap().config.channel = 1;
+        // 0, 1, 2 taken → 3
+        assert_eq!(first_free_channel(&synths), 3);
+        // A gap below (1 freed) → 1
+        synths.get_mut(&3).unwrap().config.channel = 5;
+        assert_eq!(first_free_channel(&synths), 1);
+    }
+
+    #[test]
+    fn first_free_channel_restarts_at_one_when_full() {
+        let ids: Vec<u32> = (1..=16).collect();
+        let mut synths = state_with_ids(&ids);
+        for (i, synth) in synths.values_mut().enumerate() {
+            synth.config.channel = i as u8;
+        }
+        // Every channel used → back to channel 1 (internal 0)
+        assert_eq!(first_free_channel(&synths), 0);
     }
 
     #[test]
@@ -1377,6 +1446,22 @@ mod tests {
         let sanitized = template.sanitized();
         assert_eq!(sanitized.silence_pattern, pattern(&[3, 7]));
         assert!(sanitized.silence_pattern_repeat);
+    }
+
+    #[test]
+    fn from_synth_preserves_the_accent() {
+        // Saving the current settings as the default template clones the
+        // whole config, so the accent must survive the trip too.
+        let mut synth = Synth::new(1);
+        synth.config.accent_enabled = true;
+        synth.config.accent_pattern[2] = AccentLevel::Strong;
+        let template = crate::state::SynthConfig::from_synth(&synth);
+        assert!(template.accent_enabled);
+        assert_eq!(template.accent_pattern[2], AccentLevel::Strong);
+        // Sanitizing (config file / session restore) keeps it too
+        let sanitized = template.sanitized();
+        assert!(sanitized.accent_enabled);
+        assert_eq!(sanitized.accent_pattern[2], AccentLevel::Strong);
     }
 
     #[test]

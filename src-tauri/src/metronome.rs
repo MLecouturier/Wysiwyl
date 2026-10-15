@@ -13,8 +13,8 @@ use crate::gate::{GateOff, GateState};
 use crate::locks::MutexExt;
 use crate::midi;
 use crate::state::{
-    CachedSequence, ImageState, MidiState, NoteLength, ReadingDirection, RowRun, Scale, Synth,
-    SynthMode, SynthState, Zone,
+    AccentLevel, AccentLevels, CachedSequence, ImageState, MidiState, NoteLength, ReadingDirection,
+    RowRun, Scale, Synth, SynthMode, SynthState, TimeSignature, Zone,
 };
 
 // ---------------------------------------------------------------------------
@@ -768,6 +768,8 @@ fn schedule_note_offs(app: &AppHandle, synth: &Synth, delay: Duration, skip_if_p
 struct TickConfig {
     note_range_bounds: [(u8, u8); 3],
     gate_ms: u32,
+    time_signature: TimeSignature,
+    accent_levels: AccentLevels,
 }
 
 impl TickConfig {
@@ -777,6 +779,8 @@ impl TickConfig {
         Self {
             note_range_bounds: config.note_range_bounds,
             gate_ms: config.pizzicato_gate_ms,
+            time_signature: config.time_signature,
+            accent_levels: config.accent_levels,
         }
     }
 }
@@ -813,6 +817,7 @@ fn step_synth_once(
     image: &DynamicImage,
     midi: &MidiState,
     tick: TickConfig,
+    wake: Option<u64>,
 ) -> Option<f64> {
     let width = image.width() as usize;
     let height = image.height() as usize;
@@ -894,11 +899,25 @@ fn step_synth_once(
     let luma = pixel_luma(r, g, b);
     let brightness_level = luma_to_level(luma);
     let saturation = pixel_saturation(r, g, b);
-    let velocity = saturation_to_velocity(
-        saturation,
-        synth.config.velocity_min,
-        synth.config.velocity_max,
-        synth.config.velocity_relative,
+    // Measure accent: the pixel's velocity is scaled by the accent level of
+    // the beat it starts on (global time signature + the synth's pattern).
+    // Disabled, on a manual step or past the bar's slots, the factor is
+    // neutral (100%) and the pixel keeps its saturation-derived velocity.
+    let accent = accent_percent(
+        tick.time_signature,
+        tick.accent_levels,
+        &synth.config.accent_pattern,
+        synth.config.accent_enabled,
+        wake,
+    );
+    let velocity = apply_accent(
+        saturation_to_velocity(
+            saturation,
+            synth.config.velocity_min,
+            synth.config.velocity_max,
+            synth.config.velocity_relative,
+        ),
+        accent,
     );
     synth.playback.velocity = velocity;
 
@@ -918,6 +937,7 @@ fn step_synth_once(
     let TickConfig {
         note_range_bounds,
         gate_ms,
+        ..
     } = tick;
 
     // Pizzicato with a minimum gate keeps `note_is_on` set until the
@@ -1140,6 +1160,55 @@ fn pick_note_length(synth: &Synth, brightness_level: u8) -> f64 {
     let n = lengths.len();
     let idx = (brightness_level as usize * n / 128).min(n - 1);
     lengths[idx]
+}
+
+/// Wakes per beat unit of a signature (the denominator note): a quarter
+/// note is 12 wakes, an eighth 6. Every offered signature divides evenly
+/// (see `TimeSignature`).
+fn wakes_per_unit(signature: TimeSignature) -> u64 {
+    WAKES_PER_BEAT * 4 / signature.denominator() as u64
+}
+
+/// Length of one bar of the signature, in wakes.
+fn bar_wakes(signature: TimeSignature) -> u64 {
+    signature.numerator() as u64 * wakes_per_unit(signature)
+}
+
+/// Accent slot of a wake within its bar: 0 = downbeat. The bar is walked
+/// from the metronome's absolute origin, so the grid is shared by every
+/// synth and follows the master / DAW clock.
+fn accent_slot(signature: TimeSignature, wake: u64) -> usize {
+    let unit = wakes_per_unit(signature).max(1);
+    ((wake % bar_wakes(signature)) / unit) as usize
+}
+
+/// Velocity multiplier (percent) of the accent sitting at `wake` in the
+/// synth's pattern: 100 (neutral) when the accent is off, when the slot
+/// falls past the signature's numerator, or on a manual step (`wake` None).
+fn accent_percent(
+    signature: TimeSignature,
+    levels: AccentLevels,
+    pattern: &[AccentLevel; 16],
+    enabled: bool,
+    wake: Option<u64>,
+) -> u8 {
+    let Some(wake) = wake else {
+        return 100;
+    };
+    if !enabled {
+        return 100;
+    }
+    let slot = accent_slot(signature, wake);
+    if slot >= signature.numerator() {
+        return 100;
+    }
+    levels.percent(pattern[slot])
+}
+
+/// Applies an accent multiplier (percent) to a velocity, clamped to 1–127:
+/// an accent never silences a note (rests stay the silence pattern's job).
+fn apply_accent(velocity: u8, percent: u8) -> u8 {
+    ((velocity as u32 * percent as u32) / 100).clamp(1, 127) as u8
 }
 
 /// Collects the (low, high) bounds of the enabled sub-ranges. Toggles are
@@ -1738,7 +1807,7 @@ fn tick_synth(
         synth.playback.start_pending = false;
         synth.playback.tempo_accumulator = 0.0;
         synth.playback.wakes_since_step = 0;
-        if let Some(length_beats) = step_synth_once(app, synth, image, midi, tick) {
+        if let Some(length_beats) = step_synth_once(app, synth, image, midi, tick, Some(wake)) {
             synth.playback.tempo_accumulator = 1.0 - length_beats;
         }
         return;
@@ -1794,7 +1863,7 @@ fn tick_synth(
     };
     synth.playback.tempo_accumulator = carry;
 
-    if let Some(length_beats) = step_synth_once(app, synth, image, midi, tick) {
+    if let Some(length_beats) = step_synth_once(app, synth, image, midi, tick, Some(wake)) {
         // Note lengths enabled: the played pixel occupies exactly its
         // note's duration. Rewind the accumulator so the next pixel is due
         // after `length_beats` beats of the synth's own tempo — keeping
@@ -2197,7 +2266,7 @@ pub fn step_synth(
         return Err(err("synth_is_playing").with_param("id", id));
     }
 
-    let played_length = step_synth_once(&app, synth, image, &midi_state, tick);
+    let played_length = step_synth_once(&app, synth, image, &midi_state, tick, None);
 
     // In the sustained articulation the notes are held for their full
     // duration, so schedule their Note Off: the pixel's note length when
@@ -3417,6 +3486,72 @@ mod tests {
         assert_eq!(wake, 2);
         // Unknown phase: the internal wake counter is kept, no jump
         assert_eq!(sync_engage_anchor(41, 7, None), (41, 7));
+    }
+
+    #[test]
+    fn bar_lengths_are_whole_numbers_of_wakes() {
+        assert_eq!(wakes_per_unit(TimeSignature::FourFour), 12);
+        assert_eq!(wakes_per_unit(TimeSignature::SixEight), 6);
+        assert_eq!(bar_wakes(TimeSignature::FourFour), 48);
+        assert_eq!(bar_wakes(TimeSignature::ThreeFour), 36);
+        assert_eq!(bar_wakes(TimeSignature::TwoFour), 24);
+        assert_eq!(bar_wakes(TimeSignature::SixEight), 36);
+        assert_eq!(bar_wakes(TimeSignature::FiveFour), 60);
+        // 7/8 is not a whole number of quarter notes (3.5) but is whole in
+        // wakes: 7 eighths of 6 wakes
+        assert_eq!(bar_wakes(TimeSignature::SevenEight), 42);
+    }
+
+    #[test]
+    fn accent_slot_follows_the_bar_grid() {
+        // 4/4: four quarter slots of 12 wakes
+        assert_eq!(accent_slot(TimeSignature::FourFour, 0), 0);
+        assert_eq!(accent_slot(TimeSignature::FourFour, 11), 0);
+        assert_eq!(accent_slot(TimeSignature::FourFour, 12), 1);
+        assert_eq!(accent_slot(TimeSignature::FourFour, 47), 3);
+        // The bar wraps around
+        assert_eq!(accent_slot(TimeSignature::FourFour, 48), 0);
+        assert_eq!(accent_slot(TimeSignature::FourFour, 48 + 24), 2);
+        // 6/8: six eighth slots of 6 wakes
+        assert_eq!(accent_slot(TimeSignature::SixEight, 6), 1);
+        assert_eq!(accent_slot(TimeSignature::SixEight, 35), 5);
+        assert_eq!(accent_slot(TimeSignature::SixEight, 36), 0);
+    }
+
+    #[test]
+    fn accent_percent_is_neutral_when_disabled_or_off_grid() {
+        let levels = AccentLevels::default();
+        let pattern = TimeSignature::FourFour.default_accent_pattern();
+        // Disabled: neutral whatever the wake
+        assert_eq!(
+            accent_percent(TimeSignature::FourFour, levels, &pattern, false, Some(0)),
+            100
+        );
+        // Manual step (no wake): neutral
+        assert_eq!(
+            accent_percent(TimeSignature::FourFour, levels, &pattern, true, None),
+            100
+        );
+        // Enabled: the downbeat reads the strong level, the off-beat weak
+        assert_eq!(
+            accent_percent(TimeSignature::FourFour, levels, &pattern, true, Some(0)),
+            levels.strong
+        );
+        assert_eq!(
+            accent_percent(TimeSignature::FourFour, levels, &pattern, true, Some(12)),
+            levels.weak
+        );
+    }
+
+    #[test]
+    fn apply_accent_scales_and_clamps_the_velocity() {
+        assert_eq!(apply_accent(100, 100), 100);
+        assert_eq!(apply_accent(100, 70), 70);
+        assert_eq!(apply_accent(100, 110), 110);
+        // Never silenced, never above the MIDI ceiling
+        assert_eq!(apply_accent(100, 0), 1);
+        assert_eq!(apply_accent(127, 200), 127);
+        assert_eq!(apply_accent(1, 0), 1);
     }
 }
 

@@ -71,6 +71,147 @@ pub enum Scale {
     WholeTone,
 }
 
+/// Common time signatures offered by the metronome. A signature defines the
+/// accent grid: the bar is split into `numerator` beat units (the
+/// denominator note), one accent slot each. Every entry here holds a whole
+/// number of engine wakes per bar, so the grid stays exact (see
+/// `metronome::wakes_per_unit`).
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug, Default)]
+pub enum TimeSignature {
+    #[default]
+    #[serde(rename = "4/4")]
+    FourFour,
+    #[serde(rename = "3/4")]
+    ThreeFour,
+    #[serde(rename = "2/4")]
+    TwoFour,
+    #[serde(rename = "6/8")]
+    SixEight,
+    #[serde(rename = "5/4")]
+    FiveFour,
+    #[serde(rename = "7/8")]
+    SevenEight,
+    #[serde(rename = "9/8")]
+    NineEight,
+    #[serde(rename = "12/8")]
+    TwelveEight,
+    #[serde(rename = "5/8")]
+    FiveEight,
+    #[serde(rename = "2/2")]
+    TwoTwo,
+}
+
+impl TimeSignature {
+    /// Beats per bar (the numerator): the number of accent slots.
+    pub fn numerator(self) -> usize {
+        match self {
+            TimeSignature::FourFour => 4,
+            TimeSignature::ThreeFour => 3,
+            TimeSignature::TwoFour => 2,
+            TimeSignature::SixEight => 6,
+            TimeSignature::FiveFour => 5,
+            TimeSignature::SevenEight => 7,
+            TimeSignature::NineEight => 9,
+            TimeSignature::TwelveEight => 12,
+            TimeSignature::FiveEight => 5,
+            TimeSignature::TwoTwo => 2,
+        }
+    }
+
+    /// Note value of one beat unit (the denominator).
+    pub fn denominator(self) -> usize {
+        match self {
+            TimeSignature::FourFour
+            | TimeSignature::ThreeFour
+            | TimeSignature::TwoFour
+            | TimeSignature::FiveFour => 4,
+            TimeSignature::SixEight
+            | TimeSignature::SevenEight
+            | TimeSignature::NineEight
+            | TimeSignature::TwelveEight
+            | TimeSignature::FiveEight => 8,
+            TimeSignature::TwoTwo => 2,
+        }
+    }
+
+    /// Default accent pattern: the downbeat is strong, the secondary pulses
+    /// (every third beat in a compound meter, every other beat otherwise)
+    /// normal, and the remaining beats weak. Padded to 16 slots; the entries
+    /// past `numerator` are unused.
+    pub fn default_accent_pattern(self) -> [AccentLevel; 16] {
+        let mut pattern = [AccentLevel::Off; 16];
+        let group = if self.denominator() == 8 && self.numerator().is_multiple_of(3) {
+            3
+        } else {
+            2
+        };
+        for (i, slot) in pattern.iter_mut().enumerate().take(self.numerator()) {
+            *slot = if i == 0 {
+                AccentLevel::Strong
+            } else if i % group == 0 {
+                AccentLevel::Normal
+            } else {
+                AccentLevel::Weak
+            };
+        }
+        pattern
+    }
+}
+
+/// Discrete accent level of one slot of a measure: a per-beat velocity
+/// scaling chosen by the user. The percentage each level maps to is global
+/// and hand-editable (`AppConfig::accent_levels`), so a level can be
+/// retuned without touching the synths.
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum AccentLevel {
+    /// No accent: the pixel's natural velocity is used unchanged.
+    Off,
+    /// Soft (attenuated) beat.
+    Weak,
+    /// Neutral intermediate level.
+    #[default]
+    Normal,
+    /// Strong (accented) beat.
+    Strong,
+}
+
+/// Global velocity multipliers (in percent) of the four accent levels,
+/// hand-editable in the config file. The accent multiplies a pixel's
+/// saturation-derived velocity by the percentage of the level sitting on
+/// its beat; the result is clamped to 1–127. 100 = neutral.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug)]
+#[serde(default)]
+pub struct AccentLevels {
+    pub off: u8,
+    pub weak: u8,
+    pub normal: u8,
+    pub strong: u8,
+}
+
+impl Default for AccentLevels {
+    fn default() -> Self {
+        Self {
+            off: 100,
+            weak: 70,
+            normal: 85,
+            strong: 110,
+        }
+    }
+}
+
+impl AccentLevels {
+    /// Velocity multiplier (percent) of a level.
+    pub fn percent(self, level: AccentLevel) -> u8 {
+        match level {
+            AccentLevel::Off => self.off,
+            AccentLevel::Weak => self.weak,
+            AccentLevel::Normal => self.normal,
+            AccentLevel::Strong => self.strong,
+        }
+    }
+}
+
 /// Sound currently selected on a MIDI channel, as heard on the MIDI input
 /// or sent by the app itself. Banks are optional: we only know them when
 /// a Bank Select has actually been received (a device's power-on bank
@@ -310,6 +451,15 @@ pub struct SynthConfig {
     /// Repeat the silence pattern across the whole zone (tiling, wrapping
     /// around the clicked pixel) instead of placing it once.
     pub silence_pattern_repeat: bool,
+    /// Accent the played pixels by their position in the measure: when on,
+    /// the velocity of each pixel is scaled by the accent level of the beat
+    /// it starts on (see `accent_pattern` and the global `accent_levels`).
+    pub accent_enabled: bool,
+    /// One accent level per beat unit of the bar, read in the global time
+    /// signature's order (slot 0 = downbeat). Padded to 16; the entries past
+    /// the signature's numerator are unused. Defaults to the 4/4 hierarchy.
+    #[serde(default = "default_accent_pattern")]
+    pub accent_pattern: [AccentLevel; 16],
 }
 
 /// Default silence pattern: every step is a silence (rest) except the four
@@ -321,6 +471,12 @@ pub fn default_silence_pattern() -> [bool; 16] {
         steps[i] = false;
     }
     steps
+}
+
+/// Default accent pattern (the 4/4 hierarchy): used when a config file or a
+/// session predates the accent fields.
+fn default_accent_pattern() -> [AccentLevel; 16] {
+    TimeSignature::FourFour.default_accent_pattern()
 }
 
 impl Default for SynthConfig {
@@ -353,6 +509,8 @@ impl Default for SynthConfig {
             quantize_beats: 4,
             silence_pattern: default_silence_pattern(),
             silence_pattern_repeat: false,
+            accent_enabled: false,
+            accent_pattern: TimeSignature::FourFour.default_accent_pattern(),
         }
     }
 }
@@ -591,5 +749,46 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(in_range.to_synth(1).config.tempo_ratio, 0.75);
+    }
+
+    #[test]
+    fn default_accent_pattern_marks_the_downbeat_strong() {
+        let p = TimeSignature::FourFour.default_accent_pattern();
+        assert_eq!(p[0], AccentLevel::Strong);
+        assert_eq!(p[1], AccentLevel::Weak);
+        assert_eq!(p[2], AccentLevel::Normal);
+        assert_eq!(p[3], AccentLevel::Weak);
+        // Slots past the numerator stay off
+        assert_eq!(p[4], AccentLevel::Off);
+        // A compound meter groups by three
+        let s = TimeSignature::SixEight.default_accent_pattern();
+        assert_eq!(s[0], AccentLevel::Strong);
+        assert_eq!(s[3], AccentLevel::Normal);
+        assert_eq!(s[6], AccentLevel::Off);
+    }
+
+    #[test]
+    fn accent_levels_map_each_level_to_its_percentage() {
+        let levels = AccentLevels {
+            off: 100,
+            weak: 60,
+            normal: 80,
+            strong: 120,
+        };
+        assert_eq!(levels.percent(AccentLevel::Off), 100);
+        assert_eq!(levels.percent(AccentLevel::Weak), 60);
+        assert_eq!(levels.percent(AccentLevel::Normal), 80);
+        assert_eq!(levels.percent(AccentLevel::Strong), 120);
+    }
+
+    #[test]
+    fn missing_accent_fields_default_to_the_four_four_hierarchy() {
+        // A session / config written before the accent fields existed
+        let config: SynthConfig = serde_json::from_str("{}").unwrap();
+        assert!(!config.accent_enabled);
+        assert_eq!(
+            config.accent_pattern,
+            TimeSignature::FourFour.default_accent_pattern()
+        );
     }
 }

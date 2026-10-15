@@ -1,12 +1,15 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
-use tauri::{AppHandle, Manager, State};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::thread;
+use std::time::{Duration, UNIX_EPOCH};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::error::{err, AppError};
 use crate::locks::MutexExt;
 use crate::metronome::{ClockMode, MetronomeState};
-use crate::state::{default_silence_pattern, Scale, SynthConfig};
+use crate::state::{default_silence_pattern, AccentLevels, Scale, SynthConfig, TimeSignature};
 
 /// Hard cap on the longest side of any image held by the app (import,
 /// session load, transform results): beyond it the grid rendering and the
@@ -73,6 +76,15 @@ pub struct AppConfig {
     /// follows the clock of one chosen input port, `master` broadcasts a
     /// MIDI clock to every output port while playing.
     pub clock_mode: ClockMode,
+    /// Time signature of the metronome: the accent grid's frame. Defines how
+    /// many beats make a bar and the note value of one beat; the accent
+    /// patterns of the synths are read against it.
+    pub time_signature: TimeSignature,
+    /// Velocity multipliers (in percent) of the four accent levels
+    /// (off/weak/normal/strong), hand-editable here. A pixel's velocity is
+    /// scaled by the percentage of the level sitting on its beat, then
+    /// clamped to 1–127. 100 = neutral.
+    pub accent_levels: AccentLevels,
     /// Input port name the clock sync follows when `clock_mode` is
     /// `input`. Stored as reported by the MIDI input listeners.
     pub clock_source: Option<String>,
@@ -123,6 +135,8 @@ impl Default for AppConfig {
             default_bpm: 120,
             clock_mode: ClockMode::Auto,
             clock_source: None,
+            time_signature: TimeSignature::FourFour,
+            accent_levels: AccentLevels::default(),
             default_synth: SynthConfig::default(),
             note_range_bounds: DEFAULT_NOTE_RANGE_BOUNDS,
             synth_colors: default_synth_colors(),
@@ -159,6 +173,12 @@ impl AppConfig {
             *lo = l.min(127);
             *hi = h.min(127);
         }
+        // Accent levels: a percentage multiplier, capped at 200 (a stronger
+        // boost is clamped by the velocity ceiling anyway)
+        self.accent_levels.off = self.accent_levels.off.min(200);
+        self.accent_levels.weak = self.accent_levels.weak.min(200);
+        self.accent_levels.normal = self.accent_levels.normal.min(200);
+        self.accent_levels.strong = self.accent_levels.strong.min(200);
         self.synth_colors.retain(|c| is_valid_hex_color(c));
         if self.synth_colors.is_empty() {
             self.synth_colors = default_synth_colors();
@@ -201,11 +221,35 @@ impl AppConfig {
 /// Managed state holding the loaded configuration.
 pub struct ConfigState {
     pub config: std::sync::Mutex<AppConfig>,
+    /// mtime of the config file (ns since the Unix epoch) at the app's last
+    /// read or write, or 0 when unknown. The watcher only reloads a file
+    /// whose mtime differs, so the app's own saves never trigger a reload.
+    pub known_mtime: AtomicU64,
+    /// Whether the config file watcher has been started (on first open of
+    /// the file through the UI). Guards against spawning it twice.
+    pub watcher_started: AtomicBool,
 }
 
 fn config_path(app: &AppHandle) -> Option<PathBuf> {
     let dir = app.path().app_config_dir().ok()?;
     Some(dir.join("config.json"))
+}
+
+/// mtime of `path` in nanoseconds since the Unix epoch, or None when the
+/// file is missing or its timestamp cannot be read.
+fn file_mtime_ns(path: &Path) -> Option<u64> {
+    fs::metadata(path)
+        .ok()?
+        .modified()
+        .ok()?
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|d| d.as_nanos() as u64)
+}
+
+/// mtime of the app's config file, if it exists.
+fn config_mtime_ns(app: &AppHandle) -> Option<u64> {
+    file_mtime_ns(&config_path(app)?)
 }
 
 /// Runs the one-time configuration migrations up to [`CONFIG_VERSION`],
@@ -352,6 +396,12 @@ pub fn save_config(app: &AppHandle, config: &AppConfig) {
         Ok(json) => {
             if let Err(e) = crate::fsutil::write_atomic(&path, json.as_bytes()) {
                 eprintln!("Unable to save the config file: {e}");
+            } else if let Some(mtime) = file_mtime_ns(&path) {
+                // Record our own write so the watcher does not treat it as an
+                // external change (see `start_config_watcher`).
+                if let Some(state) = app.try_state::<ConfigState>() {
+                    state.known_mtime.store(mtime, Ordering::Relaxed);
+                }
             }
         }
         Err(e) => eprintln!("Unable to serialize the config: {e}"),
@@ -360,8 +410,9 @@ pub fn save_config(app: &AppHandle, config: &AppConfig) {
 
 /// Opens the configuration file in the system's default text editor. The
 /// file is created with the current in-memory configuration if it doesn't
-/// exist yet, so the user always has something to look at. Hand-edits
-/// apply on the next application start.
+/// exist yet, so the user always has something to look at. Once opened, the
+/// file is watched (see `start_config_watcher`): hand-edits saved in the
+/// editor are reloaded live.
 #[tauri::command]
 pub fn open_config_file(app: AppHandle, state: State<'_, ConfigState>) -> Result<(), AppError> {
     let path = config_path(&app).ok_or_else(|| err("config_unavailable"))?;
@@ -371,7 +422,77 @@ pub fn open_config_file(app: AppHandle, state: State<'_, ConfigState>) -> Result
     }
     tauri_plugin_opener::open_path(&path, None::<&str>)
         .map_err(|e| err("open_config_failed").with_param("details", e))?;
+    start_config_watcher(app.clone());
     Ok(())
+}
+
+/// Interval of the config file watcher.
+const CONFIG_WATCH_INTERVAL: Duration = Duration::from_secs(1);
+
+/// Starts the config file watcher (once): every `CONFIG_WATCH_INTERVAL` it
+/// compares the config file's mtime to the last known one and, when the file
+/// was saved externally (a hand-edit in the editor opened from the UI),
+/// reloads it live. The in-memory config is replaced, the metronome's clock
+/// mode is re-applied (the tempo is left to the UI), and a `config-reloaded`
+/// event carries the new config to the frontend. The app's own saves refresh
+/// the known mtime (see `save_config`), so they never trigger a reload.
+///
+/// Called from `open_config_file`: the watcher only runs once the user has
+/// opened the file. A second call is a no-op.
+pub fn start_config_watcher(app: AppHandle) {
+    {
+        let state = app.state::<ConfigState>();
+        if state
+            .watcher_started
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return; // already watching
+        }
+        // Baseline: only a save after this point is an external change.
+        if let Some(mtime) = config_mtime_ns(&app) {
+            state.known_mtime.store(mtime, Ordering::Relaxed);
+        }
+    }
+    let spawned = thread::Builder::new()
+        .name("wysiwyl-config-watch".into())
+        .spawn(move || loop {
+            thread::sleep(CONFIG_WATCH_INTERVAL);
+            let Some(mtime) = config_mtime_ns(&app) else {
+                continue; // file missing or timestamp unreadable
+            };
+            let state = app.state::<ConfigState>();
+            if mtime == state.known_mtime.load(Ordering::Relaxed) {
+                continue;
+            }
+            let Some(path) = config_path(&app) else {
+                continue;
+            };
+            let Ok(content) = fs::read_to_string(&path) else {
+                continue;
+            };
+            // Record the mtime before applying: a broken (partially saved)
+            // file is not retried on every tick, and the next save bumps the
+            // mtime again.
+            state.known_mtime.store(mtime, Ordering::Relaxed);
+            let Some((mut config, _)) = parse_config(&content) else {
+                eprintln!("Config file is not valid JSON: reload skipped");
+                continue;
+            };
+            config.sanitize();
+            // Replace the in-memory config (the metronome reads it live on
+            // every wake), then re-apply only what is not read live.
+            {
+                let mut current = state.config.lock_safe();
+                *current = config.clone();
+            }
+            app.state::<MetronomeState>()
+                .apply_clock_mode(config.clock_mode, config.clock_source.clone());
+            let _ = app.emit("config-reloaded", config);
+        });
+    if let Err(e) = spawned {
+        eprintln!("Failed to start the config watcher: {e}");
+    }
 }
 
 #[tauri::command]
@@ -409,6 +530,23 @@ pub fn set_default_bpm(
     metronome
         .bpm
         .store(clamped, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Sets the metronome's time signature (the accent grid's frame) and
+/// persists it in the config file so it is restored on the next launch.
+/// The metronome thread reads it live through its per-wake config snapshot.
+#[tauri::command]
+pub fn set_time_signature(
+    app: AppHandle,
+    time_signature: TimeSignature,
+    state: State<'_, ConfigState>,
+) {
+    let snapshot = {
+        let mut config = state.config.lock_safe();
+        config.time_signature = time_signature;
+        config.clone()
+    };
+    save_config(&app, &snapshot);
 }
 
 /// Saves the current settings of an existing synthesizer as the default
@@ -784,5 +922,69 @@ mod tests {
         // the field-level default must read it as 0 so the migration runs
         let config: AppConfig = serde_json::from_str("{}").unwrap();
         assert_eq!(config.config_version, 0);
+    }
+
+    #[test]
+    fn config_without_time_signature_defaults_to_four_four() {
+        // A file written before the field existed
+        let config: AppConfig = serde_json::from_str(r#"{ "default_bpm": 120 }"#).unwrap();
+        assert_eq!(config.time_signature, TimeSignature::FourFour);
+        assert_eq!(config.accent_levels.strong, 110);
+        assert_eq!(config.accent_levels.off, 100);
+    }
+
+    #[test]
+    fn time_signature_serializes_as_a_fraction() {
+        let value = serde_json::to_value(AppConfig {
+            time_signature: TimeSignature::SevenEight,
+            ..AppConfig::default()
+        })
+        .unwrap();
+        assert_eq!(value["time_signature"], serde_json::json!("7/8"));
+        let config: AppConfig = serde_json::from_str(r#"{ "time_signature": "6/8" }"#).unwrap();
+        assert_eq!(config.time_signature, TimeSignature::SixEight);
+    }
+
+    #[test]
+    fn sanitize_clamps_accent_levels() {
+        let mut config = AppConfig {
+            accent_levels: AccentLevels {
+                off: 100,
+                weak: 70,
+                normal: 85,
+                strong: 255,
+            },
+            ..AppConfig::default()
+        };
+        config.sanitize();
+        assert_eq!(config.accent_levels.strong, 200);
+        assert_eq!(config.accent_levels.weak, 70);
+    }
+
+    #[test]
+    fn default_config_serializes_the_time_signature_and_accent_levels() {
+        let value = serde_json::to_value(AppConfig::default()).unwrap();
+        assert!(value.get("time_signature").is_some());
+        assert!(value.get("accent_levels").is_some());
+    }
+
+    #[test]
+    fn file_mtime_ns_tracks_existing_and_missing_files() {
+        let dir = std::env::temp_dir().join(format!("wysiwyl-config-mtime-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.json");
+
+        // Missing file: no timestamp
+        assert_eq!(file_mtime_ns(&path), None);
+
+        // Existing file: a timestamp; a later write does not go backwards
+        fs::write(&path, b"first").unwrap();
+        let first = file_mtime_ns(&path).expect("existing file has an mtime");
+        thread::sleep(Duration::from_millis(20));
+        fs::write(&path, b"second").unwrap();
+        let second = file_mtime_ns(&path).expect("rewritten file has an mtime");
+        assert!(second >= first);
+
+        fs::remove_dir_all(&dir).unwrap();
     }
 }

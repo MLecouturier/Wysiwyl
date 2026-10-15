@@ -27,6 +27,8 @@ pub fn run() {
         .manage(MidiState::default())
         .manage(ConfigState {
             config: std::sync::Mutex::new(config::AppConfig::default()),
+            known_mtime: std::sync::atomic::AtomicU64::new(0),
+            watcher_started: std::sync::atomic::AtomicBool::new(false),
         })
         .setup(|app| {
             let midi_state = app.state::<MidiState>();
@@ -67,6 +69,7 @@ pub fn run() {
             config::open_config_file,
             config::set_max_image_size,
             config::set_default_bpm,
+            config::set_time_signature,
             config::set_default_synth_from,
             // --- Image (image_processing.rs) ---
             image_processing::load_image,
@@ -117,6 +120,7 @@ pub fn run() {
             synth::set_synth_mute_zones,
             synth::set_synth_silence_pattern,
             synth::compute_synth_silence_pattern,
+            synth::set_synth_accent,
             synth::set_synth_mode,
             synth::set_synth_hue_shift,
             synth::set_synth_note_lengths,

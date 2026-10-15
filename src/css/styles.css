@@ -359,6 +359,11 @@ button.toggle-btn.active:hover {
   border-color: #888;
 }
 
+.icon-btn.config-reloaded {
+  border-color: #219a52;
+  color: #219a52;
+}
+
 .controls {
   flex: 0 0 auto;
 }
@@ -595,6 +600,12 @@ button.toggle-btn.active:hover {
 
 .clock-source-select {
   flex: 1 1 0;
+}
+
+.time-signature-select {
+  flex: 0 0 auto;
+  padding: 0.125rem 0.375rem;
+  font-size: 0.85rem;
 }
 
 .chrono-area {
@@ -1143,6 +1154,49 @@ button.toggle-btn.active:hover {
 }
 .pattern-step.silence::after {
   opacity: 1;
+}
+
+.synth-accent-section {
+  display: none;
+}
+
+.synth-accent-section.accent-on {
+  display: flex;
+}
+
+.synth-accent-steps {
+  display: flex;
+  flex: 1 1 auto;
+  gap: 3px;
+  min-width: 0;
+}
+
+.accent-step {
+  display: inline-flex;
+  flex: 1 1 0;
+  min-width: 1rem;
+  height: 1.25rem;
+  padding: 0;
+  border: 1px solid #333;
+  border-radius: 2px;
+  background-color: transparent;
+  cursor: pointer;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+.accent-step:hover {
+  border-color: #3a7bd5;
+}
+.accent-step.level-weak {
+  border-color: #3a7bd5;
+  background-color: rgba(58, 123, 213, 0.3);
+}
+.accent-step.level-normal {
+  border-color: #3a7bd5;
+  background-color: rgba(58, 123, 213, 0.6);
+}
+.accent-step.level-strong {
+  border-color: #3a7bd5;
+  background-color: #3a7bd5;
 }
 
 .synth-play {

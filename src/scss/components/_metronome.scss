@@ -161,3 +161,12 @@ $metronome-led-transition: .05s ease;
 // select takes the remaining width
 .clock-mode-select   { flex: 0 0 auto; }
 .clock-source-select { flex: 1 1 0; }
+
+// Time signature select, on the title line: the accent grid's frame (beats
+// per bar / beat unit), shared by every synth. Persisted by the backend and
+// applied live.
+.time-signature-select {
+    flex: 0 0 auto;
+    padding: .125rem .375rem;
+    font-size: .85rem;
+}

@@ -87,3 +87,10 @@ button.toggle-btn {
 
     &.active:hover { border-color: $color-text-muted; }
 }
+
+// Transient green confirmation (the config file was reloaded live): flashed
+// for a second by main.js on the `config-reloaded` event.
+.icon-btn.config-reloaded {
+    border-color: $color-accent-alt;
+    color: $color-accent-alt;
+}

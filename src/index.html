@@ -169,6 +169,18 @@
                                      whole text content, the badge must not live inside it -->
                                 <h2 class="metronome-title">
                                     <span data-i18n="metronome.title"></span>
+                                    <select id="time-signature-select" class="time-signature-select" data-i18n-title="metronome.timeSignature" data-i18n-aria-label="metronome.timeSignature">
+                                        <option value="4/4" selected>4/4</option>
+                                        <option value="3/4">3/4</option>
+                                        <option value="2/4">2/4</option>
+                                        <option value="6/8">6/8</option>
+                                        <option value="5/4">5/4</option>
+                                        <option value="7/8">7/8</option>
+                                        <option value="9/8">9/8</option>
+                                        <option value="12/8">12/8</option>
+                                        <option value="5/8">5/8</option>
+                                        <option value="2/2">2/2</option>
+                                    </select>
                                     <span id="sync-badge" class="sync-badge hidden" data-i18n="metronome.syncBadge" data-i18n-title="metronome.syncBadge"></span>
                                 </h2>
 
@@ -202,6 +214,8 @@
                                     </select>
                                     <select id="clock-source-select" class="clock-source-select hidden" data-i18n-title="metronome.clockSource"></select>
                                 </div>
+
+                                
                             </div>
                         </div>
                     </div>
