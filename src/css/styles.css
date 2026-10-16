@@ -967,7 +967,7 @@ button.toggle-btn.active:hover {
 }
 
 .synth-title-label {
-  width: 18rem;
+  width: 16rem;
   font-size: 1.125rem;
   font-weight: 600;
   text-align: center;
@@ -988,7 +988,8 @@ button.toggle-btn.active:hover {
 }
 
 .synth-toggle-menu,
-.synth-remove {
+.synth-remove,
+.synth-eye-btn {
   background-color: #262626;
 }
 
@@ -1095,7 +1096,7 @@ button.toggle-btn.active:hover {
 }
 
 .synth-section-title {
-  min-width: 5rem;
+  min-width: 4.75rem;
   font-size: 0.7rem;
   color: #888;
   text-transform: uppercase;
@@ -1164,7 +1165,7 @@ button.toggle-btn.active:hover {
 }
 
 .magic-wand-tolerance {
-  width: 3rem;
+  width: 2.5rem;
   visibility: hidden;
 }
 

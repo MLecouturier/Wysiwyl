@@ -34,6 +34,9 @@
         <button class="synth-toggle-menu icon-btn" data-i18n-title="synth.toggleMenu" data-i18n-aria-label="synth.toggleMenu">
             <span class="material-symbols-outlined" aria-hidden="true">more_vert</span>
         </button>
+        <button class="synth-eye-btn icon-btn active" data-i18n-title="synth.toggleHighlight" data-i18n-aria-label="synth.toggleHighlight">
+                    <span class="material-symbols-outlined" aria-hidden="true">visibility</span>
+                </button>
         <button class="synth-remove icon-btn" data-i18n-title="synth.remove" data-i18n-aria-label="synth.remove">
             <span class="material-symbols-outlined" aria-hidden="true">close</span>
         </button>
@@ -57,18 +60,9 @@
         <div class="synth-section synth-zones pb-2 bg-dark">
             <div class="synth-section-header">
                 <span class="synth-section-title" data-i18n="synth.zonesLabel"></span>
-                <span class="synth-section-value zones-val" data-i18n-title="synth.zonesBeatsInfo"></span>
-                <div class="flex-fill"></div>
-                <button class="synth-eye-btn icon-btn active" data-i18n-title="synth.toggleHighlight" data-i18n-aria-label="synth.toggleHighlight">
-                    <span class="material-symbols-outlined" aria-hidden="true">visibility</span>
-                </button>
-            </div>
-            <div class="synth-section-body">
-                <div class="flex-none w-20"></div>
                 <button class="synth-select-all-btn icon-btn" data-i18n-title="synth.selectAllZones" data-i18n-aria-label="synth.selectAllZones">
                     <span class="material-symbols-outlined" aria-hidden="true">select_all</span>
                 </button>
-                <div class="flex-none w-4"></div>
                 <button class="synth-add-zone-btn icon-btn" data-i18n-title="synth.addZone" data-i18n-aria-label="synth.addZone">
                     <span class="material-symbols-outlined" aria-hidden="true">select</span>
                 </button>
@@ -82,11 +76,10 @@
                 <button class="synth-silence-pattern-btn icon-btn" type="button" data-i18n-title="synth.silencePatternHint" data-i18n-aria-label="synth.silencePatternHint">
                     <span class="material-symbols-outlined" aria-hidden="true">steppers</span>
                 </button>
-                <div class="flex-none w-4"></div>                
+                <span class="synth-section-value zones-val" data-i18n-title="synth.zonesBeatsInfo"></span>            
                 <button class="synth-clear-zones-btn icon-btn" data-i18n-title="synth.clearZones" data-i18n-aria-label="synth.clearZones">
                     <span class="material-symbols-outlined" aria-hidden="true">remove_selection</span>
-                </button>
-                <div class="flex-fill"></div>
+                </button>                
             </div>
         </div>
         <!-- 2a. Motif de silences : grille de 16 pas + répétition (visible

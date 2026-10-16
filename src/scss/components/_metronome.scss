@@ -153,7 +153,7 @@ $metronome-led-transition: .05s ease;
 
 .clock-mode-select,
 .clock-source-select {
-    max-width: 12rem;
+    max-width: 6rem;
     padding: .125rem .375rem;
     font-size: .85rem;
 }
@@ -161,7 +161,10 @@ $metronome-led-transition: .05s ease;
 // The mode select only carries a fixed set of short labels; the source
 // select takes the remaining width
 .clock-mode-select   { flex: 0 0 auto; }
-.clock-source-select { flex: 1 1 0; }
+.clock-source-select { 
+    max-width: 12rem;
+    flex: 1 1 0; 
+}
 
 // Time signature, on the title line: the accent grid's frame (beats per bar
 // / beat unit), shared by every synth. Persisted by the backend and applied

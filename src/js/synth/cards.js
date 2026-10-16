@@ -1004,10 +1004,11 @@ export function createSynthElement(id, cfg = null) {
     // Collapsed card: clicking anywhere but its own controls expands it
     // (the disc stops propagation itself; the color picker stays usable
     // on a collapsed card; the remove button has its own confirm flow and
-    // must not toggle the accordion).
+    // must not toggle the accordion; the eye button toggles the highlight
+    // without expanding or activating the card).
     el.addEventListener('click', (e) => {
         if (e.target.closest('.synth-color-disc, .synth-color-picker')) return;
-        if (e.target.closest('.synth-remove')) return;
+        if (e.target.closest('.synth-remove, .synth-eye-btn')) return;
         if (el.classList.contains('active')) return;
         setActiveSynth(id);
     });

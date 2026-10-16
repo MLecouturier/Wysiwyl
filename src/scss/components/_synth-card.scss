@@ -15,7 +15,7 @@
 // Fixed width of the header title pill, shared by the expanded card and
 // the collapsed (inactive) accordion row so both align identically:
 // left-anchored after the color disc, with the actions pushed right.
-$synth-title-width: 18rem;
+$synth-title-width: 16rem;
 
 // Shared look for the small numeric inputs of the card (volume, quantize
 // period, magic-wand tolerance, program bank/number): same background,
@@ -110,7 +110,8 @@ $synth-title-width: 18rem;
 // Header actions keep the card's own background: the tinted header
 // band must not show through the buttons.
 .synth-toggle-menu,
-.synth-remove {
+.synth-remove,
+.synth-eye-btn {
     background-color: $color-bg-light;
 }
 
@@ -236,7 +237,7 @@ $synth-title-width: 18rem;
 }
 
 .synth-section-title {
-    min-width: 5rem;
+    min-width: 4.75rem;
     font-size: .7rem;
     color: $color-text-muted;
     text-transform: uppercase;
@@ -252,7 +253,11 @@ $synth-title-width: 18rem;
     font-variant-numeric: tabular-nums;
 }
 
-.synth-section-value { min-width: 4.5rem; }
+.synth-section-value { 
+    min-width: 4rem; 
+    max-width: 4.8rem;
+    flex-grow: 1;
+}
 .synth-pixel-info { white-space: pre-line; }
 
 // Zones value: clicking cycles beats → seconds → pixels
@@ -312,7 +317,7 @@ $synth-title-width: 18rem;
 // this card. The value is kept while hidden, ready for the next click.
 .magic-wand-tolerance {
     @extend %synth-wheel-input;
-    width: 3rem;
+    width: 2.5rem;
     visibility: hidden;
 }
 
