@@ -602,10 +602,44 @@ button.toggle-btn.active:hover {
   flex: 1 1 0;
 }
 
-.time-signature-select {
-  flex: 0 0 auto;
-  padding: 0.125rem 0.375rem;
-  font-size: 0.85rem;
+.time-signature-fields {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.time-signature-numerator {
+  padding: 0.25rem 0.375rem;
+  background-color: #232323;
+  color: #e0e0e0;
+  border: 1px solid #333;
+  border-radius: 0.25rem;
+  outline: none;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.time-signature-numerator::-webkit-inner-spin-button, .time-signature-numerator::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.time-signature-numerator:hover, .time-signature-numerator:focus {
+  border-color: #3a7bd5;
+}
+.time-signature-numerator {
+  height: 1.75rem;
+  font-size: 0.78rem;
+  cursor: ns-resize;
+  width: 2.75rem;
+}
+
+.time-signature-denominator {
+  width: 3.25rem;
+  padding: 0.25rem 0.25rem;
+  font-size: 0.78rem;
+}
+
+.time-signature-sep {
+  color: #888;
 }
 
 .chrono-area {
@@ -831,7 +865,7 @@ button.toggle-btn.active:hover {
 }
 
 .program-bank-manual,
-.program-number-manual, .synth-quantize-tempo, .synth-volume, .magic-wand-tolerance {
+.program-number-manual {
   padding: 0.25rem 0.375rem;
   background-color: #232323;
   color: #e0e0e0;
@@ -842,17 +876,34 @@ button.toggle-btn.active:hover {
   font-variant-numeric: tabular-nums;
 }
 .program-bank-manual::-webkit-inner-spin-button,
-.program-number-manual::-webkit-inner-spin-button, .synth-quantize-tempo::-webkit-inner-spin-button, .synth-volume::-webkit-inner-spin-button, .magic-wand-tolerance::-webkit-inner-spin-button, .program-bank-manual::-webkit-outer-spin-button,
-.program-number-manual::-webkit-outer-spin-button, .synth-quantize-tempo::-webkit-outer-spin-button, .synth-volume::-webkit-outer-spin-button, .magic-wand-tolerance::-webkit-outer-spin-button {
+.program-number-manual::-webkit-inner-spin-button, .program-bank-manual::-webkit-outer-spin-button,
+.program-number-manual::-webkit-outer-spin-button {
   -webkit-appearance: none;
   margin: 0;
 }
 .program-bank-manual:hover,
-.program-number-manual:hover, .synth-quantize-tempo:hover, .synth-volume:hover, .magic-wand-tolerance:hover, .program-bank-manual:focus,
-.program-number-manual:focus, .synth-quantize-tempo:focus, .synth-volume:focus, .magic-wand-tolerance:focus {
+.program-number-manual:hover, .program-bank-manual:focus,
+.program-number-manual:focus {
   border-color: #3a7bd5;
 }
 
+.synth-quantize-tempo, .synth-volume, .magic-wand-tolerance {
+  padding: 0.25rem 0.375rem;
+  background-color: #232323;
+  color: #e0e0e0;
+  border: 1px solid #333;
+  border-radius: 0.25rem;
+  outline: none;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.synth-quantize-tempo::-webkit-inner-spin-button, .synth-volume::-webkit-inner-spin-button, .magic-wand-tolerance::-webkit-inner-spin-button, .synth-quantize-tempo::-webkit-outer-spin-button, .synth-volume::-webkit-outer-spin-button, .magic-wand-tolerance::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.synth-quantize-tempo:hover, .synth-volume:hover, .magic-wand-tolerance:hover, .synth-quantize-tempo:focus, .synth-volume:focus, .magic-wand-tolerance:focus {
+  border-color: #3a7bd5;
+}
 .synth-quantize-tempo, .synth-volume, .magic-wand-tolerance {
   height: 1.75rem;
   font-size: 0.78rem;

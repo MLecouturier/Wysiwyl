@@ -169,18 +169,17 @@
                                      whole text content, the badge must not live inside it -->
                                 <h2 class="metronome-title">
                                     <span data-i18n="metronome.title"></span>
-                                    <select id="time-signature-select" class="time-signature-select" data-i18n-title="metronome.timeSignature" data-i18n-aria-label="metronome.timeSignature">
-                                        <option value="4/4" selected>4/4</option>
-                                        <option value="3/4">3/4</option>
-                                        <option value="2/4">2/4</option>
-                                        <option value="6/8">6/8</option>
-                                        <option value="5/4">5/4</option>
-                                        <option value="7/8">7/8</option>
-                                        <option value="9/8">9/8</option>
-                                        <option value="12/8">12/8</option>
-                                        <option value="5/8">5/8</option>
-                                        <option value="2/2">2/2</option>
-                                    </select>
+                                    <span class="time-signature-fields" data-i18n-title="metronome.timeSignature">
+                                        <input type="number" id="time-signature-numerator" class="time-signature-numerator" min="1" max="16" step="1" value="4" data-i18n-title="metronome.timeSignatureNumerator" data-i18n-aria-label="metronome.timeSignatureNumerator" />
+                                        <span class="time-signature-sep">/</span>
+                                        <select id="time-signature-denominator" class="time-signature-denominator" data-i18n-title="metronome.timeSignatureDenominator" data-i18n-aria-label="metronome.timeSignatureDenominator">
+                                            <option value="1">1</option>
+                                            <option value="2">2</option>
+                                            <option value="4" selected>4</option>
+                                            <option value="8">8</option>
+                                            <option value="16">16</option>
+                                        </select>
+                                    </span>
                                     <span id="sync-badge" class="sync-badge hidden" data-i18n="metronome.syncBadge" data-i18n-title="metronome.syncBadge"></span>
                                 </h2>
 

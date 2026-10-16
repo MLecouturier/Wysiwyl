@@ -62,13 +62,14 @@ export const getActiveSynthId = () => activeSynthId;
 // Measure accent: the four discrete levels of the backend's AccentLevel
 // enum, cycled by clicking a step. One step per beat unit of the global
 // time signature; the grid is rebuilt whenever the signature changes.
-const ACCENT_LEVELS = ['off', 'weak', 'normal', 'strong'];
+const ACCENT_LEVELS = ['off', 'strong', 'normal', 'weak'];
 
-// Number of accent slots of the current global time signature ("n/d" → n).
+// Number of accent slots of the current global time signature: its
+// numerator (capped at 16).
 function accentSlotCount() {
-    const value = document.querySelector('#time-signature-select')?.value || '4/4';
-    const numerator = Number.parseInt(value.split('/')[0], 10);
-    return Number.isFinite(numerator) && numerator > 0 ? numerator : 4;
+    const raw = document.querySelector('#time-signature-numerator')?.value;
+    const numerator = Number.parseInt(String(raw ?? ''), 10);
+    return Number.isFinite(numerator) && numerator > 0 ? Math.min(numerator, 16) : 4;
 }
 
 // The accent pattern stored on a card, padded to the backend's 16 slots.
@@ -947,7 +948,7 @@ export function createSynthElement(id, cfg = null) {
         else startZonePicking(id, btn, 'pattern');
     });
 
-    // ---- Measure accent: cycle each step through off/weak/normal/strong
+    // ---- Measure accent: cycle each step through off/strong/normal/weak
     // and toggle the whole accent on/off. The grid's slots follow the
     // global time signature (rebuilt by refreshAccentGrids on a change) ----
     const accentToggle = el.querySelector('.synth-accent-toggle');

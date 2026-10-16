@@ -81,7 +81,7 @@ pub struct AppConfig {
     /// patterns of the synths are read against it.
     pub time_signature: TimeSignature,
     /// Velocity multipliers (in percent) of the four accent levels
-    /// (off/weak/normal/strong), hand-editable here. A pixel's velocity is
+    /// (off/strong/normal/weak), hand-editable here. A pixel's velocity is
     /// scaled by the percentage of the level sitting on its beat, then
     /// clamped to 1–127. 100 = neutral.
     pub accent_levels: AccentLevels,
@@ -173,6 +173,9 @@ impl AppConfig {
             *lo = l.min(127);
             *hi = h.min(127);
         }
+        // Time signature: numerator 1–16, denominator snapped to a power of
+        // two up to 16 (a hand-edited file may hold anything)
+        self.time_signature = self.time_signature.sanitized();
         // Accent levels: a percentage multiplier, capped at 200 (a stronger
         // boost is clamped by the velocity ceiling anyway)
         self.accent_levels.off = self.accent_levels.off.min(200);
@@ -929,7 +932,7 @@ mod tests {
         // A file written before the field existed
         let config: AppConfig = serde_json::from_str(r#"{ "default_bpm": 120 }"#).unwrap();
         assert_eq!(config.time_signature, TimeSignature::FourFour);
-        assert_eq!(config.accent_levels.strong, 110);
+        assert_eq!(config.accent_levels.strong, 120);
         assert_eq!(config.accent_levels.off, 100);
     }
 

@@ -1,5 +1,5 @@
 use image::DynamicImage;
-use serde::{Deserialize, Serialize};
+use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -71,35 +71,44 @@ pub enum Scale {
     WholeTone,
 }
 
-/// Common time signatures offered by the metronome. A signature defines the
-/// accent grid: the bar is split into `numerator` beat units (the
-/// denominator note), one accent slot each. Every entry here holds a whole
-/// number of engine wakes per bar, so the grid stays exact (see
-/// `metronome::wakes_per_unit`).
-#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug, Default)]
+/// Time signature of the metronome: the frame the accent grid is read
+/// against. It defines the numerator (beats per bar, 1–16) and the
+/// denominator (note value of one beat: 1, 2, 4, 8 or 16). The common
+/// meters are named variants; any other combination within the bounds is
+/// held by `Custom`. Serialized as a `"n/d"` string, so a config file keeps
+/// `"4/4"` and accepts `"13/16"`, and a legacy string still parses.
+///
+/// The denominator is capped at 16 because the engine counts in wakes
+/// (1/12 of a quarter note): a beat unit divides evenly down to a sixteenth
+/// (3 wakes), while a thirty-second would need 1.5 wake.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum TimeSignature {
     #[default]
-    #[serde(rename = "4/4")]
     FourFour,
-    #[serde(rename = "3/4")]
     ThreeFour,
-    #[serde(rename = "2/4")]
     TwoFour,
-    #[serde(rename = "6/8")]
     SixEight,
-    #[serde(rename = "5/4")]
     FiveFour,
-    #[serde(rename = "7/8")]
     SevenEight,
-    #[serde(rename = "9/8")]
     NineEight,
-    #[serde(rename = "12/8")]
     TwelveEight,
-    #[serde(rename = "5/8")]
     FiveEight,
-    #[serde(rename = "2/2")]
     TwoTwo,
+    /// Any other numerator/denominator within the allowed bounds.
+    Custom {
+        numerator: u8,
+        denominator: u8,
+    },
 }
+
+/// Denominators offered by the UI and accepted from a hand-edited file:
+/// powers of two up to 16, the largest beat unit the wake grid divides
+/// exactly.
+pub const TIME_SIGNATURE_DENOMINATORS: [u8; 5] = [1, 2, 4, 8, 16];
+
+/// Highest numerator (beats per bar) the accent grid supports: one slot per
+/// beat, and the pattern is a fixed `[AccentLevel; 16]`.
+pub const TIME_SIGNATURE_MAX_NUMERATOR: u8 = 16;
 
 impl TimeSignature {
     /// Beats per bar (the numerator): the number of accent slots.
@@ -115,6 +124,7 @@ impl TimeSignature {
             TimeSignature::TwelveEight => 12,
             TimeSignature::FiveEight => 5,
             TimeSignature::TwoTwo => 2,
+            TimeSignature::Custom { numerator, .. } => numerator as usize,
         }
     }
 
@@ -131,7 +141,42 @@ impl TimeSignature {
             | TimeSignature::TwelveEight
             | TimeSignature::FiveEight => 8,
             TimeSignature::TwoTwo => 2,
+            TimeSignature::Custom { denominator, .. } => denominator as usize,
         }
+    }
+
+    /// Builds a signature from raw parts, sanitizing them: the numerator is
+    /// clamped to 1–16 and the denominator snapped to the nearest allowed
+    /// value (ties to the lower). A combination matching a named meter
+    /// returns that variant, so equality with the presets holds.
+    pub fn from_parts(numerator: u8, denominator: u8) -> Self {
+        let numerator = numerator.clamp(1, TIME_SIGNATURE_MAX_NUMERATOR);
+        let denominator = TIME_SIGNATURE_DENOMINATORS
+            .iter()
+            .copied()
+            .min_by_key(|&d| (d as i32 - denominator as i32).abs())
+            .unwrap_or(4);
+        match (numerator, denominator) {
+            (4, 4) => TimeSignature::FourFour,
+            (3, 4) => TimeSignature::ThreeFour,
+            (2, 4) => TimeSignature::TwoFour,
+            (6, 8) => TimeSignature::SixEight,
+            (5, 4) => TimeSignature::FiveFour,
+            (7, 8) => TimeSignature::SevenEight,
+            (9, 8) => TimeSignature::NineEight,
+            (12, 8) => TimeSignature::TwelveEight,
+            (5, 8) => TimeSignature::FiveEight,
+            (2, 2) => TimeSignature::TwoTwo,
+            _ => TimeSignature::Custom {
+                numerator,
+                denominator,
+            },
+        }
+    }
+
+    /// A copy with the parts brought into the allowed bounds.
+    pub fn sanitized(self) -> Self {
+        TimeSignature::from_parts(self.numerator() as u8, self.denominator() as u8)
     }
 
     /// Default accent pattern: the downbeat is strong, the secondary pulses
@@ -155,6 +200,32 @@ impl TimeSignature {
             };
         }
         pattern
+    }
+}
+
+/// Serialized as a `"n/d"` string: the config file stays terse and
+/// hand-editable (`"4/4"`, `"13/16"`) whatever the variant.
+impl Serialize for TimeSignature {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&format!("{}/{}", self.numerator(), self.denominator()))
+    }
+}
+
+/// Reads a `"n/d"` string (the legacy `"4/4"` form included) and sanitizes
+/// it, so a hand-edited file can never carry an out-of-range signature.
+impl<'de> Deserialize<'de> for TimeSignature {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        let (n, d) = value
+            .split_once('/')
+            .ok_or_else(|| de::Error::custom(format!("invalid time signature: {value:?}")))?;
+        let numerator = n.trim().parse::<u8>().map_err(|_| {
+            de::Error::custom(format!("invalid time signature numerator: {value:?}"))
+        })?;
+        let denominator = d.trim().parse::<u8>().map_err(|_| {
+            de::Error::custom(format!("invalid time signature denominator: {value:?}"))
+        })?;
+        Ok(TimeSignature::from_parts(numerator, denominator))
     }
 }
 
@@ -193,9 +264,9 @@ impl Default for AccentLevels {
     fn default() -> Self {
         Self {
             off: 100,
-            weak: 70,
-            normal: 85,
-            strong: 110,
+            weak: 45,
+            normal: 75,
+            strong: 120,
         }
     }
 }
@@ -790,5 +861,50 @@ mod tests {
             config.accent_pattern,
             TimeSignature::FourFour.default_accent_pattern()
         );
+    }
+
+    #[test]
+    fn time_signature_from_parts_clamps_and_maps_to_presets() {
+        // A named meter maps back to its variant (equality with the presets)
+        assert_eq!(TimeSignature::from_parts(6, 8), TimeSignature::SixEight);
+        assert_eq!(TimeSignature::from_parts(2, 2), TimeSignature::TwoTwo);
+        // Numerator clamped to 1–16
+        assert_eq!(TimeSignature::from_parts(17, 4).numerator(), 16);
+        assert_eq!(TimeSignature::from_parts(0, 4).numerator(), 1);
+        // Denominator snapped to the nearest power of two (ties to the lower)
+        assert_eq!(TimeSignature::from_parts(3, 32).denominator(), 16);
+        assert_eq!(TimeSignature::from_parts(3, 3).denominator(), 2);
+        // An unmapped combination stays custom
+        assert_eq!(
+            TimeSignature::from_parts(13, 16),
+            TimeSignature::Custom {
+                numerator: 13,
+                denominator: 16
+            }
+        );
+    }
+
+    #[test]
+    fn time_signature_round_trips_as_a_fraction() {
+        assert_eq!(
+            serde_json::to_value(TimeSignature::SevenEight).unwrap(),
+            serde_json::json!("7/8")
+        );
+        assert_eq!(
+            serde_json::to_value(TimeSignature::Custom {
+                numerator: 13,
+                denominator: 16
+            })
+            .unwrap(),
+            serde_json::json!("13/16")
+        );
+        let parsed: TimeSignature = serde_json::from_value(serde_json::json!("6/8")).unwrap();
+        assert_eq!(parsed, TimeSignature::SixEight);
+        // A hand-edited out-of-range value is sanitized on read
+        let parsed: TimeSignature = serde_json::from_value(serde_json::json!("20/32")).unwrap();
+        assert_eq!(parsed.numerator(), 16);
+        assert_eq!(parsed.denominator(), 16);
+        // Malformed input is rejected
+        assert!(serde_json::from_value::<TimeSignature>(serde_json::json!("nope")).is_err());
     }
 }

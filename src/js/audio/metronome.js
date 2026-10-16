@@ -265,26 +265,45 @@ export function createClockSource() {
 // Global time signature: the frame the per-synth accent patterns are read
 // against. The backend persists it and applies it live (the metronome reads
 // it on every wake); changing it re-renders the synths' accent grids, whose
-// number of slots follows the signature's numerator.
+// number of slots follows the signature's numerator. Entered directly as a
+// numerator (1–16) and a denominator (1/2/4/8/16).
+
+const TIME_SIGNATURE_MAX_NUMERATOR = 16;
 
 export function createTimeSignature({ onSignatureChange } = {}) {
     const { invoke } = window.__TAURI__.core;
 
-    const select = document.querySelector('#time-signature-select');
+    const numeratorInput = document.querySelector('#time-signature-numerator');
+    const denominatorSelect = document.querySelector('#time-signature-denominator');
 
-    // Applies the persisted value (startup / session restore) without
-    // echoing it back to the backend (it is already stored).
+    // The signature in force, as an "n/d" string (numerator clamped to 1–16).
+    function currentValue() {
+        const numerator = Math.min(
+            Math.max(Number(numeratorInput.value) || 1, 1), TIME_SIGNATURE_MAX_NUMERATOR);
+        return `${numerator}/${denominatorSelect.value}`;
+    }
+
+    function push() {
+        invoke('set_time_signature', { timeSignature: currentValue() })
+            .catch(err => console.error('Error in set_time_signature:', err));
+        onSignatureChange?.(currentValue());
+    }
+
+    // Applies the persisted value without echoing it back (already stored).
     function hydrate(value) {
-        if (value && select.querySelector(`option[value="${CSS.escape(value)}"]`)) {
-            select.value = value;
+        if (!value) return;
+        const [n, d] = String(value).split('/');
+        if (n) {
+            numeratorInput.value = String(
+                Math.min(Math.max(Number(n) || 4, 1), TIME_SIGNATURE_MAX_NUMERATOR));
+        }
+        if (d && denominatorSelect.querySelector(`option[value="${CSS.escape(d)}"]`)) {
+            denominatorSelect.value = d;
         }
     }
 
-    select.addEventListener('change', () => {
-        invoke('set_time_signature', { timeSignature: select.value })
-            .catch(err => console.error('Error in set_time_signature:', err));
-        onSignatureChange?.(select.value);
-    });
+    numeratorInput.addEventListener('change', push);
+    denominatorSelect.addEventListener('change', push);
 
-    return { hydrate, getValue: () => select.value };
+    return { hydrate, getValue: currentValue };
 }

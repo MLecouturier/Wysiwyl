@@ -2,6 +2,7 @@
 // Metronome
 // ==========================================================================
 @use '../variables' as *;
+@use '../mixins' as *;
 @use 'layout';
 
 $metronome-led-off: $color-disactivated;
@@ -162,11 +163,27 @@ $metronome-led-transition: .05s ease;
 .clock-mode-select   { flex: 0 0 auto; }
 .clock-source-select { flex: 1 1 0; }
 
-// Time signature select, on the title line: the accent grid's frame (beats
-// per bar / beat unit), shared by every synth. Persisted by the backend and
-// applied live.
-.time-signature-select {
-    flex: 0 0 auto;
-    padding: .125rem .375rem;
-    font-size: .85rem;
+// Time signature, on the title line: the accent grid's frame (beats per bar
+// / beat unit), shared by every synth. Persisted by the backend and applied
+// live. The numerator input matches the synth-card numeric inputs; the
+// denominator is a plain select.
+.time-signature-fields {
+    display: inline-flex;
+    align-items: center;
+    gap: .25rem;
+}
+
+.time-signature-numerator {
+    @include wheel-input;
+    width: 2.75rem;
+}
+
+.time-signature-denominator {
+    width: 3.25rem;
+    padding: .25rem .25rem;
+    font-size: .78rem;
+}
+
+.time-signature-sep {
+    color: $color-text-muted;
 }
