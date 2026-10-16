@@ -49,6 +49,13 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Signs the updater artifacts (the app's own minisign key, unrelated
+          # to the Apple code signing). Without these the bundler fails once
+          # `bundle.createUpdaterArtifacts` is enabled. The release stays a
+          # draft: publish it manually to make `latest.json` reachable by the
+          # auto-updater.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'Wysiwyl ${{ github.ref_name }}'

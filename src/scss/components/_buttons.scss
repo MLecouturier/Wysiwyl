@@ -94,3 +94,22 @@ button.toggle-btn {
     border-color: $color-accent-alt;
     color: $color-accent-alt;
 }
+
+// A newer release is available (js/core/updater.js): green tint plus a dot
+// badge in the corner, until the app is updated or the check finds nothing.
+.icon-btn.has-update {
+    position: relative;
+    border-color: $color-accent-alt;
+    color: $color-accent-alt;
+
+    &::after {
+        content: '';
+        position: absolute;
+        top: 2px;
+        right: 2px;
+        width: .4rem;
+        height: .4rem;
+        border-radius: 50%;
+        background-color: $color-accent-alt;
+    }
+}

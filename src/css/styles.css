@@ -364,6 +364,22 @@ button.toggle-btn.active:hover {
   color: #219a52;
 }
 
+.icon-btn.has-update {
+  position: relative;
+  border-color: #219a52;
+  color: #219a52;
+}
+.icon-btn.has-update::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 50%;
+  background-color: #219a52;
+}
+
 .controls {
   flex: 0 0 auto;
 }
@@ -1644,6 +1660,36 @@ kbd {
 .shortcut-gesture {
   font-style: italic;
   color: #e0e0e0;
+}
+
+.update-notes {
+  max-height: 12rem;
+  overflow-y: auto;
+  margin-bottom: 1rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #333;
+  border-radius: 0.25rem;
+  background-color: #262626;
+  color: #ccc;
+  font-family: inherit;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  white-space: pre-wrap;
+}
+
+.update-progress-wrap {
+  height: 0.35rem;
+  margin-bottom: 1rem;
+  border-radius: 0.25rem;
+  background-color: #262626;
+  overflow: hidden;
+}
+
+.update-progress-bar {
+  height: 100%;
+  width: 0;
+  background-color: #3a7bd5;
+  transition: width 0.15s linear;
 }
 
 .gap-2 {

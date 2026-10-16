@@ -211,3 +211,39 @@ kbd {
     font-style: italic;
     color: $color-text-primary;
 }
+
+// ==========================================================================
+// Auto-update dialog
+// ==========================================================================
+// Opened by the footer update button (js/core/updater.js): the release notes
+// scroll if long, the progress bar fills during the download.
+
+.update-notes {
+    max-height: 12rem;
+    overflow-y: auto;
+    margin-bottom: 1rem;
+    padding: .5rem .75rem;
+    border: 1px solid $color-border;
+    border-radius: $border-radius-base;
+    background-color: $color-bg-light;
+    color: $color-text-secondary;
+    font-family: inherit;
+    font-size: .8rem;
+    line-height: 1.4;
+    white-space: pre-wrap;
+}
+
+.update-progress-wrap {
+    height: .35rem;
+    margin-bottom: 1rem;
+    border-radius: $border-radius-base;
+    background-color: $color-bg-light;
+    overflow: hidden;
+}
+
+.update-progress-bar {
+    height: 100%;
+    width: 0;
+    background-color: $color-accent;
+    transition: width .15s linear;
+}

@@ -78,6 +78,20 @@ Un fichier de configuration JSON (ouvrable via le bouton engrenage des paramètr
 - **`pizzicato_gate_ms`** — durée minimale (ms) d'une note en articulation pizzicato (`note_sustain = false`) : le Note Off est différé d'autant au lieu d'être envoyé dans le même paquet que le Note On, pour que les synthés logiciels dont l'enveloppe a besoin de temps pour monter (Vital, etc.) produisent un vrai pluck. `0` restaure le comportement historique (Note Off immédiat, le release de l'instrument façonnant la queue) ; défaut `40`, borné à 0–1000. La durée effective est plafonnée par l'articulation suivante.
 - **`undo_depth`** — profondeur de l'historique d'annulation/rétablissement des zones et silences (nombre de pas conservés) ; défaut `25`, borné à 1–500. Annuler/rétablir via Cmd/Ctrl+Z et Cmd/Ctrl+Shift+Z.
 
+### Mises à jour automatiques
+
+Wysiwyl vérifie les releases GitHub à la recherche d'une version **stable** plus récente et peut se mettre à jour sur place :
+
+- **Vérification** — une vérification silencieuse a lieu au démarrage, et une vérification manuelle est accessible via le bouton de mise à jour dans le pied de page. Quand une version plus récente existe, le bouton reçoit une pastille et la barre de titre l'affiche juste après le numéro de version (ex. `Wysiwyl 2.8.0 — Mise à jour 2.9.0`).
+- **Installation** — le bouton ouvre une boîte de dialogue avec les notes de version et une action « Installer et redémarrer » : le paquet signé est téléchargé (avec une barre de progression), vérifié par rapport à la clé publique de l'app, installé, puis l'application redémarre.
+- **Canal** — seules les releases publiées non préliminaires sont suivies (`releases/latest`) ; les versions beta/rc sont ignorées. La CI conserve les releases en brouillon : une release doit donc être publiée manuellement avant que l'updater ne la voie.
+- **Intégrité** — le paquet téléchargé est vérifié avec la clé minisign propre à l'app (clé privée dans le secret CI `TAURI_SIGNING_PRIVATE_KEY`, clé publique dans `tauri.conf.json`). C'est indépendant de la signature Apple (optionnelle).
+- **macOS** — les builds sont signés en ad-hoc (`signingIdentity: "-"`) ; Gatekeeper demande toujours à l'utilisateur d'autoriser l'app au premier lancement (et après une mise à jour). Une notarisation complète nécessiterait un compte Apple Developer payant.
+
+Les artefacts d'updater (et le manifeste `latest.json` que `tauri-action` joint à chaque release) sont produits grâce à `bundle.createUpdaterArtifacts`.
+
+**Configuration initiale** — générez la paire de clés de l'updater avec `cargo tauri signer generate -w ~/.tauri/wysiwyl.key`, placez la clé publique dans `tauri.conf.json` (`plugins.updater.pubkey`, en remplaçant la valeur de remplacement) et la clé privée ainsi que son mot de passe dans les secrets GitHub `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Conservez la clé privée précieusement : la perdre signifie qu'aucune application déjà installée ne pourra plus jamais être mise à jour. Un `cargo tauri build` local nécessite alors que `TAURI_SIGNING_PRIVATE_KEY` soit définie (la CI la fournit), sinon le bundler ne peut pas signer les artefacts de mise à jour.
+
 ## Stack technique
 
 - **Tauri 2** pour l'application desktop et la communication entre le frontend et le backend.
@@ -85,6 +99,7 @@ Un fichier de configuration JSON (ouvrable via le bouton engrenage des paramètr
 - **HTML, SCSS/CSS et JavaScript vanilla** pour l'interface utilisateur, sans framework ni bundler frontend.
 - Crates Rust pertinentes :
   - [`tauri`](https://crates.io/crates/tauri) et [`tauri-plugin-dialog`](https://crates.io/crates/tauri-plugin-dialog) pour l'application et les boîtes de dialogue natives ;
+  - [`tauri-plugin-updater`](https://crates.io/crates/tauri-plugin-updater) pour les mises à jour automatiques dans l'application ;
   - [`image`](https://crates.io/crates/image) pour le chargement et le traitement d'images ;
   - [`midir`](https://crates.io/crates/midir) pour la sortie MIDI en temps réel ;
   - [`serde`](https://crates.io/crates/serde) et [`serde_json`](https://crates.io/crates/serde_json) pour l'échange de données entre le frontend et le backend ;
@@ -212,10 +227,11 @@ wysiwyl/
         ├── image_processing.rs
         ├── synth.rs
         ├── metronome.rs
-        └── midi.rs
+        ├── midi.rs
+        └── updater.rs
 ```
 
-Le backend expose des commandes Tauri pour charger les images, appliquer les ajustements, récupérer les données de pixels, gérer les synthétiseurs (création, lecture, canal et port MIDI, mode, zones, tempo, longueurs de note, plages MIDI, sens de lecture, vélocité), piloter le métronome commun, persister la configuration globale et sauvegarder/charger les sessions de travail.
+Le backend expose des commandes Tauri pour charger les images, appliquer les ajustements, récupérer les données de pixels, gérer les synthétiseurs (création, lecture, canal et port MIDI, mode, zones, tempo, longueurs de note, plages MIDI, sens de lecture, vélocité), piloter le métronome commun, persister la configuration globale, sauvegarder/charger les sessions de travail, et vérifier/installer les mises à jour automatiques.
 
 ## Licence
 

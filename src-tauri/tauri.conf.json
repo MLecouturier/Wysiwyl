@@ -37,6 +37,10 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
+    "macOS": {
+      "signingIdentity": "-"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -44,5 +48,13 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDg3MUNGNzA0QzcxQjA1QTcKUldTbkJSdkhCUGNjaDVHbnJpUGFuSytXR0hYK01TeDF3eWV2aWwzbjJWZWFyYW53L3BnQzRDS2oK",
+      "endpoints": [
+        "https://github.com/MLecouturier/Wysiwyl/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

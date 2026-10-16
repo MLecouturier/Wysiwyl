@@ -83,6 +83,20 @@ A JSON configuration file (opened with a gear button in the application settings
 - **`pizzicato_gate_ms`** — minimum duration (ms) of a note in the pizzicato articulation (`note_sustain = false`): the Note Off is deferred by that much instead of being sent in the same packet as the Note On, so software synths whose envelope needs time to rise (Vital, etc.) produce an audible pluck. `0` restores the historical behavior (immediate Note Off, the instrument's release shaping the tail); default `40`, clamped to 0–1000. The effective duration is capped by the next articulation.
 - **`undo_depth`** — depth of the undo/redo history for zone and silence edits (number of steps kept); default `25`, clamped to 1–500. Undo/redo use Cmd/Ctrl+Z and Cmd/Ctrl+Shift+Z.
 
+### Automatic Updates
+
+Wysiwyl checks the GitHub releases for a newer **stable** version and can update itself in place:
+
+- **Check** — a silent check runs at startup, and a manual one is available from the update button in the footer. When a newer release exists, the button is badged and the window title shows it right after the version number (e.g. `Wysiwyl 2.8.0 — Update 2.9.0`).
+- **Install** — the update button opens a dialog with the release notes and an "Install and restart" action: the signed bundle is downloaded (with a progress bar), verified against the app's public key, installed, and the app is relaunched.
+- **Channel** — only published, non-prerelease releases are followed (`releases/latest`); beta/rc builds are ignored. The CI keeps releases as drafts, so a release must be published manually before the updater can see it.
+- **Integrity** — the downloaded bundle is verified with the app's own minisign key (the private key lives in the CI secret `TAURI_SIGNING_PRIVATE_KEY`, the public key in `tauri.conf.json`). This is independent from the optional Apple code signing.
+- **macOS** — builds are ad-hoc signed (`signingIdentity: "-"`); Gatekeeper still asks the user to allow the app on first launch (and after an update). Full notarization would require a paid Apple Developer account.
+
+The updater artifacts (and the `latest.json` manifest that `tauri-action` attaches to each release) are produced thanks to `bundle.createUpdaterArtifacts`.
+
+**One-time setup** — generate the updater keypair with `cargo tauri signer generate -w ~/.tauri/wysiwyl.key`, put the public key in `tauri.conf.json` (`plugins.updater.pubkey`, replacing the placeholder) and the private key plus its password in the GitHub secrets `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Keep the private key safe: losing it means no already-installed app can ever be updated again. A local `cargo tauri build` then needs `TAURI_SIGNING_PRIVATE_KEY` set (the CI provides it), otherwise the bundler cannot sign the updater artifacts.
+
 ## Tech Stack
 
 - **Tauri 2** for the desktop application and communication between the frontend and backend.
@@ -90,6 +104,7 @@ A JSON configuration file (opened with a gear button in the application settings
 - **Vanilla HTML, SCSS/CSS, and JavaScript** for the user interface, without any frontend framework or bundler.
 - Relevant Rust crates:
   - [`tauri`](https://crates.io/crates/tauri) and [`tauri-plugin-dialog`](https://crates.io/crates/tauri-plugin-dialog) for the application and native dialogs;
+  - [`tauri-plugin-updater`](https://crates.io/crates/tauri-plugin-updater) for the in-app automatic updates;
   - [`image`](https://crates.io/crates/image) for loading and processing images;
   - [`midir`](https://crates.io/crates/midir) for real-time MIDI output;
   - [`serde`](https://crates.io/crates/serde) and [`serde_json`](https://crates.io/crates/serde_json) for data exchange between the frontend and backend;
@@ -217,10 +232,11 @@ wysiwyl/
         ├── image_processing.rs
         ├── synth.rs
         ├── metronome.rs
-        └── midi.rs
+        ├── midi.rs
+        └── updater.rs
 ```
 
-The backend exposes Tauri commands to load images, apply adjustments, retrieve pixel data, manage synthesizers (creation, playback, MIDI channel and port, mode, zones, tempo, note lengths, note ranges, reading direction, velocity), drive the shared metronome, persist the global configuration, and save/load work sessions.
+The backend exposes Tauri commands to load images, apply adjustments, retrieve pixel data, manage synthesizers (creation, playback, MIDI channel and port, mode, zones, tempo, note lengths, note ranges, reading direction, velocity), drive the shared metronome, persist the global configuration, save/load work sessions, and check/install automatic updates.
 
 ## License
 

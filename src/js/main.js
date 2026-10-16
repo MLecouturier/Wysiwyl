@@ -50,6 +50,7 @@ import {
 } from './synth/cards.js';
 import { initSynthMenu } from './synth/menu.js';
 import './core/shortcuts-dialog.js';
+import { initUpdater } from './core/updater.js';
 import {
     syncLabels, updatePreviewSrc, refresh, exitCropMode, closeTransformPanel,
     isTransformActive, redrawTransformOverlay,
@@ -630,6 +631,10 @@ sessionState.refreshTitle();
 // Modules that mutate saved state without holding the session instance
 // (zone edits, synth commands) mark the session dirty through the bus.
 appEvents.on('session-dirty', () => sessionState.markDirty());
+
+// Auto-update: the footer button opens the install modal; the startup check
+// marks the window title (and the button) when a newer release exists.
+initUpdater({ onUpdateAvailable: (version) => sessionState.setUpdateAvailable(version) });
 
 // Collects the frontend-owned state (metronome tempo, image sliders, synth
 // colors in display order); the backend owns the rest (image, synths).

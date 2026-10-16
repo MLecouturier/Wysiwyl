@@ -76,6 +76,16 @@
     "openFile": "Open the configuration file in a text editor (changes apply on restart)",
     "showShortcuts": "Keyboard shortcuts"
   },
+  "update": {
+    "check": "Check for updates",
+    "title": "Update available",
+    "versions": "Installed version: {current} — new version: {next}",
+    "install": "Install and restart",
+    "later": "Later",
+    "installing": "Downloading…",
+    "installingPercent": "Downloading… {percent}%",
+    "titleBadge": "Update {version}"
+  },
   "shortcuts": {
     "title": "Keyboard shortcuts",
     "close": "Close",
@@ -371,6 +381,9 @@
     "session_version_unsupported": "This session was saved by an older version of Wysiwyl (format {version}) and cannot be loaded anymore.",
     "session_invalid": "Invalid or corrupted session file ({details}).",
     "invalid_zones": "Invalid zone selection.",
-    "image_changed": "The image changed during processing."
+    "image_changed": "The image changed during processing.",
+    "update_check_failed": "Could not check for updates (check your connection).",
+    "update_install_failed": "Could not install the update.",
+    "no_pending_update": "No update to install."
   }
 }

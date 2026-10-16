@@ -52,11 +52,13 @@ export function createSessionState({
     let currentPath = null;
     let currentName = null;
     let dirty = false;
+    let updateVersion = null; // newer release available (js/core/updater.js)
     let suppress = false;   // disables tracking while a load rebuilds the UI
     let allowClose = false; // set once the close outcome is settled
 
     // Mirrors the configured window title ("Wysiwyl <version>"), extended
-    // with the loaded session's name and a "*" while changes are unsaved.
+    // with an update marker (right after the version), the loaded session's
+    // name and a "*" while changes are unsaved.
     async function refreshTitle() {
         let title = 'Wysiwyl';
         try {
@@ -64,6 +66,7 @@ export function createSessionState({
         } catch (err) {
             // Fall back to the plain name
         }
+        if (updateVersion) title += ` — ${t('update.titleBadge', { version: updateVersion })}`;
         if (currentName) title += ` — ${currentName}`;
         if (dirty) title += ' *';
         try {
@@ -71,6 +74,14 @@ export function createSessionState({
         } catch (err) {
             console.error('Error while updating the window title:', err);
         }
+    }
+
+    // Called by the updater after each check: a version string marks the
+    // title, `null` clears it. Kept here so the title has a single owner.
+    function setUpdateAvailable(version) {
+        if (updateVersion === version) return;
+        updateVersion = version || null;
+        refreshTitle();
     }
 
     function setDirty(value) {
@@ -189,6 +200,7 @@ export function createSessionState({
         markDirty,
         setDirty,
         setPath,
+        setUpdateAvailable,
         refreshTitle,
         getPath: () => currentPath,
         isDirty: () => dirty,

@@ -76,6 +76,16 @@
     "openFile": "Ouvrir le fichier de configuration dans un éditeur de texte (les modifications s'appliquent au redémarrage)",
     "showShortcuts": "Raccourcis clavier"
   },
+  "update": {
+    "check": "Rechercher une mise à jour",
+    "title": "Mise à jour disponible",
+    "versions": "Version installée : {current} — nouvelle version : {next}",
+    "install": "Installer et redémarrer",
+    "later": "Plus tard",
+    "installing": "Téléchargement…",
+    "installingPercent": "Téléchargement… {percent} %",
+    "titleBadge": "Mise à jour {version}"
+  },
   "shortcuts": {
     "title": "Raccourcis clavier",
     "close": "Fermer",
@@ -371,6 +381,9 @@
     "session_version_unsupported": "Cette session a été enregistrée par une version antérieure de Wysiwyl (format {version}) et ne peut plus être chargée.",
     "session_invalid": "Fichier de session invalide ou corrompu ({details}).",
     "invalid_zones": "Sélection de zones invalide.",
-    "image_changed": "L'image a changé pendant le traitement."
+    "image_changed": "L'image a changé pendant le traitement.",
+    "update_check_failed": "Impossible de vérifier les mises à jour (vérifiez votre connexion).",
+    "update_install_failed": "Impossible d'installer la mise à jour.",
+    "no_pending_update": "Aucune mise à jour à installer."
   }
 }

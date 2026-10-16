@@ -9,6 +9,7 @@ pub mod midi;
 pub mod session;
 pub mod state;
 pub mod synth;
+pub mod updater;
 pub mod zone;
 
 use config::ConfigState;
@@ -21,10 +22,12 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(ImageState::default())
         .manage(MetronomeState::default())
         .manage(SynthState::default())
         .manage(MidiState::default())
+        .manage(updater::PendingUpdate::default())
         .manage(ConfigState {
             config: std::sync::Mutex::new(config::AppConfig::default()),
             known_mtime: std::sync::atomic::AtomicU64::new(0),
@@ -131,6 +134,9 @@ pub fn run() {
             synth::set_synth_note_ranges,
             synth::set_synth_scale,
             synth::set_synth_channel_enabled,
+            // --- Auto-update (updater.rs) ---
+            updater::check_update,
+            updater::install_update,
         ])
         .run(tauri::generate_context!())
         .expect("Error while launching the Tauri application");
