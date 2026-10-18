@@ -5903,7 +5903,7 @@ dependencies = [
 
 [[package]]
 name = "wysiwyl"
-version = "2.8.1"
+version = "2.9.0"
 dependencies = [
  "base64 0.22.1",
  "crossbeam-channel",
