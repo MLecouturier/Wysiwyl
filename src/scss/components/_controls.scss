@@ -144,11 +144,16 @@
 }
 
 // Boolean option row of an effect panel (the drag effect's "colored"
-// toggle): the checkbox sits on the title line, right-aligned by the
-// control-head rule.
-.effect-panel input[type="checkbox"] {
-    accent-color: $color-accent;
-    cursor: pointer;
+// tint): the option name on the left, an icon toggle button on the
+// right, highlighted with the accent when on (shared .icon-btn.active).
+.effect-option-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: .5rem;
+    margin-top: .5rem;
+    font-size: .8rem;
+    color: $color-text-secondary;
 }
 
 // Row of a mode panel: hint, ratio buttons or the apply/cancel actions

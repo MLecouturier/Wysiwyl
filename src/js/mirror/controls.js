@@ -43,7 +43,7 @@ export function createMirrorEffectControls({ getState, onEffectChange, onOptionC
 
     // Rebuilds the options panel of the active effect: the synth
     // selection row on top for effects that target the cursors, then one
-    // row per declared option — a checkbox for a boolean option, a
+    // row per declared option — a toggle button for a boolean option, a
     // label + slider row otherwise, mirroring the image control rows.
     function buildPanel() {
         const def = currentEffect();
@@ -55,6 +55,43 @@ export function createMirrorEffectControls({ getState, onEffectChange, onOptionC
         for (const opt of def.options) {
             const value = options[opt.id] ?? opt.def;
 
+            if (opt.type === 'bool') {
+                // Boolean option: the option name with an icon toggle
+                // button (the Material "colors" glyph) instead of the
+                // value/slider row. It travels as 0/1 through the numeric
+                // option pipeline.
+                const row = document.createElement('div');
+                row.className = 'effect-option-toggle';
+
+                const name = document.createElement('span');
+                name.textContent = t(opt.labelKey);
+
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.id = `mirror-effect-${opt.id}`;
+                btn.className = 'icon-btn toggle-btn';
+                btn.title = t(opt.helpKey);
+                btn.classList.toggle('active', value >= 0.5);
+                btn.setAttribute('aria-pressed', String(value >= 0.5));
+                const icon = document.createElement('span');
+                icon.className = 'material-symbols-outlined';
+                icon.setAttribute('aria-hidden', 'true');
+                icon.textContent = 'colors';
+                btn.append(icon);
+                // Flip the button's own state: the callback updates the
+                // factory, but never rebuilds this panel.
+                btn.addEventListener('click', () => {
+                    const next = btn.getAttribute('aria-pressed') !== 'true';
+                    btn.setAttribute('aria-pressed', String(next));
+                    btn.classList.toggle('active', next);
+                    onOptionChange?.(opt.id, next ? 1 : 0);
+                });
+
+                row.append(name, btn);
+                panel.append(row);
+                continue;
+            }
+
             const label = document.createElement('label');
             label.title = t(opt.helpKey);
 
@@ -63,20 +100,6 @@ export function createMirrorEffectControls({ getState, onEffectChange, onOptionC
             const name = document.createElement('span');
             name.textContent = t(opt.labelKey);
             head.append(name);
-
-            if (opt.type === 'bool') {
-                // Boolean option: the checkbox replaces the value/slider.
-                // It travels as 0/1 through the numeric option pipeline.
-                const box = document.createElement('input');
-                box.type = 'checkbox';
-                box.id = `mirror-effect-${opt.id}`;
-                box.checked = value >= 0.5;
-                box.addEventListener('change', () => onOptionChange?.(opt.id, box.checked ? 1 : 0));
-                head.append(box);
-                label.append(head);
-                panel.append(label);
-                continue;
-            }
 
             const valueEl = document.createElement('span');
             valueEl.className = 'control-value';

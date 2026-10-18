@@ -490,9 +490,14 @@ button.toggle-btn.active:hover {
   transform: scale(1.15);
 }
 
-.effect-panel input[type=checkbox] {
-  accent-color: #3a7bd5;
-  cursor: pointer;
+.effect-option-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+  font-size: 0.8rem;
+  color: #ccc;
 }
 
 .mode-bar {
@@ -1033,6 +1038,14 @@ button.toggle-btn.active:hover {
 .synth-remove,
 .synth-eye-btn {
   background-color: #262626;
+}
+
+.synth-eye-btn.active {
+  border-color: var(--synth-color, #3a7bd5);
+  color: var(--synth-color, #3a7bd5);
+}
+.synth-eye-btn.active:hover {
+  border-color: var(--synth-color, #3a7bd5);
 }
 
 .synth-remove:hover, .synth-remove.confirm-pending:hover {

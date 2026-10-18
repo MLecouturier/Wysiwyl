@@ -47,9 +47,10 @@
   "mirrorEffect": {
     "none": "None",
     "drag": "Drag",
-    "trailLength": "Length",
-    "trailColored": "Colored",
-    "trailFade": "Fade"
+    "frontline": "Frontline",
+    "length": "Length",
+    "colored": "Colored",
+    "fade": "Fade"
   },
   "metronome": {
     "title": "Tempo (BPM)",
@@ -292,11 +293,14 @@
     "controls.help": "Enables the contextual help mode: hover any control in the app to display a detailed explanation. Click again or press Escape to disable.",
     "controls.mirror": "Opens a mirror window of the image area on a second screen or projector, and puts it in fullscreen. Double-click the mirror to switch between fullscreen and a floating window you can drag to another screen. Click this button again to close the mirror. Active only when a second screen is connected.",
     "controls.mirrorZones": "Cycles through three zone displays in the projection window: every synthesizer's selected pixel zones, only those of the synths visible in the main window (eye button), or none at all. The main window always keeps its own per-synth visibility.",
-    "controls.mirrorEffect": "Selects the masking effect applied to the projection window: the projection stacks the two versions of the image permanently (the processed grid over the original), and the effect pierces the top layer to reveal the other one. \"None\" keeps the top layer fully opaque; \"Drag\" reveals the bottom image behind every playing synthesizer's playhead, as a trail of recently played cells that fades out.",
-    "controls.mirrorEffectOptions": "Opens the options of the active projection effect (trail length, color, fade). The panel overlays the tempo area; press Escape or click the button again to close it.",
-    "controls.mirrorEffectTrailLength": "Length of the trail behind the playhead, in grid cells of the processed image.",
-    "controls.mirrorEffectTrailColored": "Tints the trail with the synth's color (screen blend mode), making the reveal brighter and colored. Otherwise the trail simply lets the other version of the image show through.",
-    "controls.mirrorEffectTrailFade": "Number of cells over which the trail's fade-out is spread, at its oldest end. At 0 the edge is hard.",
+    "controls.mirrorEffect": "Selects the masking effect applied to the projection window: the projection stacks the two versions of the image permanently (the processed grid over the original), and the effect pierces the top layer to reveal the other one. \"None\" keeps the top layer fully opaque; \"Drag\" reveals the bottom image behind every playing synthesizer's playhead, as a trail of recently played cells that fades out; \"Frontline\" reveals the line perpendicular to the cursor's movement.",
+    "controls.mirrorEffectOptions": "Opens the options of the active projection effect (length, color, fade). The panel overlays the tempo area; press Escape or click the button again to close it.",
+    "controls.mirrorEffectDragLength": "Length of the trail behind the playhead, in grid cells of the processed image.",
+    "controls.mirrorEffectDragColored": "Tints the trail with the synth's color (screen blend mode), making the reveal brighter and colored. Otherwise the trail simply lets the other version of the image show through.",
+    "controls.mirrorEffectDragFade": "Number of cells over which the trail's fade-out is spread, at its oldest end. At 0 the edge is hard.",
+    "controls.mirrorEffectFrontlineLength": "Extent of the line on each side of the playhead, in grid cells. At 0 the whole line is revealed.",
+    "controls.mirrorEffectFrontlineColored": "Tints the line with the synth's color (screen blend mode), making the reveal brighter and colored. Otherwise the line simply lets the other version of the image show through.",
+    "controls.mirrorEffectFrontlineFade": "Number of cells over which the line's fade-out is spread, at each of its ends. At 0 the edge is hard.",
     "config.openFile": "Opens the global configuration file: default settings for new synths, note ranges, enabled scales, maximum image size.",
     "config.showShortcuts": "Lists every keyboard shortcut and mouse gesture of the app: playback, session, image editing, zone selection.",
     "session.save": "Saves the whole working session: the image and its adjustments, every synth with its zones and settings.",

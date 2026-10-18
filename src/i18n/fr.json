@@ -47,9 +47,10 @@
   "mirrorEffect": {
     "none": "Aucun",
     "drag": "Traînée",
-    "trailLength": "Longueur",
-    "trailColored": "Colorée",
-    "trailFade": "Atténuation"
+    "frontline": "Frontline",
+    "length": "Longueur",
+    "colored": "Colorée",
+    "fade": "Atténuation"
   },
   "metronome": {
     "title": "Tempo (BPM)",
@@ -292,11 +293,14 @@
     "controls.help": "Active le mode d'aide contextuelle : survolez n'importe quel contrôle du programme pour afficher une explication détaillée. Cliquez à nouveau ou appuyez sur Échap pour désactiver.",
     "controls.mirror": "Ouvre une fenêtre miroir de la zone d'image sur un second écran ou projecteur, en plein écran. Double-cliquez sur le miroir pour basculer entre plein écran et fenêtre volante, que vous pouvez glisser sur un autre écran. Cliquez à nouveau sur ce bouton pour fermer le miroir. Actif uniquement lorsqu'un second écran est connecté.",
     "controls.mirrorZones": "Fait défiler trois affichages des zones dans la fenêtre de projection : les zones de pixels sélectionnées de tous les synthétiseurs, uniquement celles des synthés visibles dans la fenêtre principale (bouton œil), ou aucune. La fenêtre principale conserve toujours sa propre visibilité par synthé.",
-    "controls.mirrorEffect": "Sélectionne l'effet de masquage appliqué à la fenêtre de projection : la projection empile en permanence les deux versions de l'image (la grille traitée sur l'original), et l'effet perce le calque supérieur pour révéler l'autre. « Aucun » garde le calque supérieur entièrement opaque ; « Traînée » révèle l'image du bas derrière le curseur de lecture de chaque synthé en train de jouer, sous forme d'une traînée de cases récemment jouées qui s'estompe.",
-    "controls.mirrorEffectOptions": "Ouvre les options de l'effet de projection actif (longueur de la traînée, couleur, atténuation). Le volet recouvre la zone du tempo ; Échap ou un nouveau clic sur le bouton le referme.",
-    "controls.mirrorEffectTrailLength": "Longueur de la traînée derrière le curseur, en nombre de cases de la grille de l'image modifiée.",
-    "controls.mirrorEffectTrailColored": "Colore la traînée avec la couleur du synthé (mode de fusion écran) : la révélation devient plus lumineuse et colorée. Sinon la traînée laisse simplement apparaître l'autre version de l'image.",
-    "controls.mirrorEffectTrailFade": "Nombre de cases sur lesquelles l'atténuation de la traînée est répartie, à son extrémité la plus ancienne. À 0, le bord est net.",
+    "controls.mirrorEffect": "Sélectionne l'effet de masquage appliqué à la fenêtre de projection : la projection empile en permanence les deux versions de l'image (la grille traitée sur l'original), et l'effet perce le calque supérieur pour révéler l'autre. « Aucun » garde le calque supérieur entièrement opaque ; « Traînée » révèle l'image du bas derrière le curseur de lecture de chaque synthé en train de jouer, sous forme d'une traînée de cases récemment jouées qui s'estompe ; « Frontline » révèle la ligne perpendiculaire au déplacement du curseur.",
+    "controls.mirrorEffectOptions": "Ouvre les options de l'effet de projection actif (longueur, couleur, atténuation). Le volet recouvre la zone du tempo ; Échap ou un nouveau clic sur le bouton le referme.",
+    "controls.mirrorEffectDragLength": "Longueur de la traînée derrière le curseur, en nombre de cases de la grille de l'image modifiée.",
+    "controls.mirrorEffectDragColored": "Colore la traînée avec la couleur du synthé (mode de fusion écran) : la révélation devient plus lumineuse et colorée. Sinon la traînée laisse simplement apparaître l'autre version de l'image.",
+    "controls.mirrorEffectDragFade": "Nombre de cases sur lesquelles l'atténuation de la traînée est répartie, à son extrémité la plus ancienne. À 0, le bord est net.",
+    "controls.mirrorEffectFrontlineLength": "Étendue de la ligne de part et d'autre du curseur, en nombre de cases. À 0, la ligne entière est révélée.",
+    "controls.mirrorEffectFrontlineColored": "Colore la ligne avec la couleur du synthé (mode de fusion écran) : la révélation devient plus lumineuse et colorée. Sinon la ligne laisse simplement apparaître l'autre version de l'image.",
+    "controls.mirrorEffectFrontlineFade": "Nombre de cases sur lesquelles l'atténuation de la ligne est répartie, à chacune de ses extrémités. À 0, le bord est net.",
     "config.openFile": "Ouvre le fichier de configuration global : réglages par défaut des nouveaux synthés, plages de notes, gammes activées, taille d'image maximale.",
     "config.showShortcuts": "Liste tous les raccourcis clavier et gestes souris de l'application : lecture, session, édition de l'image, sélection de zones.",
     "session.save": "Enregistre la session de travail complète : l'image et ses réglages, tous les synthés avec leurs zones et paramètres.",

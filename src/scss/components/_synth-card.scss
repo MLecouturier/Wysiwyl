@@ -115,6 +115,17 @@ $synth-title-width: 16rem;
     background-color: $color-bg-light;
 }
 
+// The eye button's active highlight echoes the synth's identification
+// color instead of the shared accent — the button sits in the tinted
+// header, so the card reads as one. Hover keeps the color too (the
+// generic active-toggle rule would otherwise gray the border out).
+.synth-eye-btn.active {
+    border-color: var(--synth-color, #{$color-accent});
+    color: var(--synth-color, #{$color-accent});
+
+    &:hover { border-color: var(--synth-color, #{$color-accent}); }
+}
+
 // Remove: destructive action guarded by a confirmation click.
 // Hover warns in red; the first click arms the button ($color-stop)
 // for 3 s — a second click within that window actually removes the
