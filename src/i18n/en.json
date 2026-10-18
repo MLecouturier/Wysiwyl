@@ -94,7 +94,7 @@
     "later": "Later",
     "installing": "Downloading…",
     "installingPercent": "Downloading… {percent}%",
-    "titleBadge": "Update {version}"
+    "titleBadge": "Update {version} available"
   },
   "shortcuts": {
     "title": "Keyboard shortcuts",

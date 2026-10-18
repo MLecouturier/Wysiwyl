@@ -94,7 +94,7 @@
     "later": "Plus tard",
     "installing": "Téléchargement…",
     "installingPercent": "Téléchargement… {percent} %",
-    "titleBadge": "Mise à jour {version}"
+    "titleBadge": "Version {version} disponible"
   },
   "shortcuts": {
     "title": "Raccourcis clavier",
