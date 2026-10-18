@@ -1,15 +1,27 @@
-// Projection mirror window: a display-only Tauri window that mirrors the
-// image area on a second screen/projector. The main window stays fully
-// interactive and pushes its viewer state to the mirror through Tauri
-// events, funneled through the same single points that repaint the main
-// viewer (pushImage from updatePreviewSrc, pushZones from
+// Projection mirror window: a display-only Tauri window that mirrors
+// the image area on a second screen/projector. The main window stays
+// fully interactive and pushes its viewer state to the mirror through
+// Tauri events, funneled through the same single points that repaint
+// the main viewer (pushImage from updatePreviewSrc, pushZones from
 // redrawAllHighlights, pushCursors on each playback tick).
+//
+// The mirror permanently stacks the two versions of the image (the
+// processed grid over the original) and masks the top layer through the
+// active effect (see effects.js). Accordingly pushImage always carries
+// BOTH surfaces: the original snapshot is rebuilt only when the
+// original changes (image load, reshape), the processed snapshot on
+// every repaint — the live transform preview is deliberately NOT sent,
+// the mirror keeps showing the committed image until a reshape is
+// applied. The layer order follows the "Show original" toggle, and the
+// effect state (id + options) is pushed on change and on open.
 //
 // Extracted from main.js as a factory with injected dependencies: the
 // shared per-synth maps (passed by reference, they are never reassigned),
 // a viewer-state getter, the mute-cell computation, and the cross-domain
 // callbacks (reroute the image when the mirror opens, mark the session
 // dirty when the zones mode changes).
+
+import { NO_EFFECT, effectOrDefault, defaultOptions, sanitizeOptions } from './effects.js';
 
 const MIRROR_LABEL = 'mirror';
 // Zone display in the mirror, cycled by the zones button: 'all' (every
@@ -19,11 +31,11 @@ const MIRROR_LABEL = 'mirror';
 // the eye buttons.
 const MIRROR_ZONES_MODES = ['all', 'active', 'none'];
 
-// Snapshot of the currently displayed surface, downscaled for the
-// projection: photographic content (original, transform live preview)
-// ships as JPEG for fluidity — the full-resolution RGBA would be tens of
-// MB per frame through IPC — while the grid render ships as PNG so the
-// cells stay crisp on the projector.
+// Snapshot of the currently displayed surfaces, downscaled for the
+// projection: photographic content (the original) ships as JPEG for
+// fluidity — the full-resolution RGBA would be tens of MB per frame
+// through IPC — while the processed grid ships as PNG so the cells stay
+// crisp on the projector.
 const MIRROR_SNAPSHOT_MAX_W = 1600;
 
 // Trailing throttle: live manipulations (transform sliders) repaint far
@@ -33,6 +45,9 @@ const MIRROR_IMAGE_MIN_INTERVAL = 33; // ms
 // drags call redrawAllHighlights at mousemove rate while the committed
 // zones stay unchanged — identical consecutive payloads are not re-sent.
 const MIRROR_ZONES_MIN_INTERVAL = 33; // ms
+// Effect options ride the same pattern: option sliders drag at
+// mousemove rate, identical consecutive payloads are not re-sent.
+const MIRROR_EFFECT_MIN_INTERVAL = 33; // ms
 
 // The original <img> may not be decoded yet when the snapshot is taken
 // (its src was just set): the snapshot decodes its own copy and waits.
@@ -45,6 +60,7 @@ function decodeImage(source) {
 
 export function createMirror({
     synthColors, synthHighlights, synthCursors, synthCursorGrid, synthCursorMuted,
+    synthEffectExcluded, isSynthPlaying,
     getViewerState, computeMuteCells, onReady, onZonesModeChanged,
 }) {
     const { emit, listen } = window.__TAURI__.event;
@@ -54,9 +70,10 @@ export function createMirror({
     const fullscreenBtn = document.querySelector('#fullscreen-btn');
     const mirrorZonesBtn = document.querySelector('#mirror-zones-btn');
     const showOriginalBtn = document.querySelector('#show-original-btn');
-    const previewCanvas = document.querySelector('#processed-preview');
 
     let zonesMode = 'all';
+    let effectId = NO_EFFECT;
+    let effectOptions = {}; // sanitized options of the active effect
     let creating = false; // window creation in flight (guards double clicks)
     let windowRef = null; // live WebviewWindow while the mirror is open
 
@@ -64,7 +81,36 @@ export function createMirror({
     let imageTimer = 0;
     let zonesLast = 0;
     let zonesTimer = 0;
+    let effectLast = 0;
+    let effectTimer = 0;
     let lastZonesJson = null;
+    let lastEffectJson = null;
+    let lastLayersTop = null;
+
+    // Full-resolution copy of the processed grid pixels, repainted on
+    // each push before the downscale (the snapshot is downscaled from
+    // here, never from the main viewer's canvases: they may carry the
+    // transient transform preview the mirror must not show).
+    const gridCanvas = document.createElement('canvas');
+
+    // Identity of the last original pushed to the mirror: the base64
+    // PNG is replaced wholesale on every load/reshape, so a reference
+    // comparison reliably skips the decode + re-encode while it is
+    // unchanged (slider repaints push the image at ~30 fps).
+    let lastOriginalPng = null;
+    let lastOriginalSnapshot = null;
+
+    // Same reference dedup for the processed pixels: repaints that do
+    // not re-render the grid (transform preview drags, layer toggles)
+    // skip the PNG re-encode entirely.
+    let lastProcessedPixels = null;
+    let lastProcessedSnapshot = null;
+
+    // Snapshots actually sent to the mirror: a cached snapshot (unchanged
+    // original or grid) is not re-emitted — repaints that do not touch
+    // the surfaces only carry the layer order.
+    let emittedOriginal = null;
+    let emittedProcessed = null;
 
     const isOpen = () => windowRef !== null;
 
@@ -201,12 +247,18 @@ export function createMirror({
     // Playhead cursors: the positions of every playing synth, pushed on
     // each tick (tiny payloads, low frequency — no throttling needed). A
     // muted pixel keeps its position and is drawn at half opacity, matching
-    // the main viewer.
+    // the main viewer. A synth that is not playing never reaches the
+    // mirror: a pixel tick still in flight when the synth stops can
+    // re-register its cursor after the erase, and the projection would
+    // otherwise show the stale cell — the play state filter (injected from
+    // main.js, reading the same card buttons as anySynthPlaying) makes the
+    // mirror immune to that race.
     function pushCursors() {
         if (!isOpen()) return;
         const { gridW, gridH } = getViewerState();
         const cursors = [];
         synthCursors.forEach((cursor, sid) => {
+            if (isSynthPlaying && !isSynthPlaying(sid)) return;
             const color = synthColors.get(sid);
             if (!color) return;
             // The grid dims the cursor was recorded on travel with it: the
@@ -214,6 +266,7 @@ export function createMirror({
             // when the column count changes while synths are playing
             const g = synthCursorGrid.get(sid);
             cursors.push({
+                id: sid, // identifies the synth: the effect filters by id
                 cursor, color,
                 muted: !!synthCursorMuted.get(sid),
                 w: g ? g.w : gridW,
@@ -223,29 +276,19 @@ export function createMirror({
         emit('mirror:cursors', { cursors });
     }
 
-    async function imageSnapshot() {
-        const state = getViewerState();
-        const showOrig = showOriginalBtn.classList.contains('active');
-        const pixels = state.transformPreviewPixels ?? (showOrig ? null : state.processedPixels);
+    // Original snapshot: JPEG downscale of the original image, rebuilt only
+    // when the original changed (reference comparison, see lastOriginalPng)
+    // — adjustment repaints reuse the last snapshot verbatim.
+    async function originalSnapshot(state) {
+        if (!state.originalPng) return null;
+        if (state.originalPng === lastOriginalPng) return lastOriginalSnapshot;
 
-        let source, w, h, lossy;
-        if (pixels) {
-            source = previewCanvas; // freshly painted by updatePreviewSrc
-            w = pixels.width;
-            h = pixels.height;
-            lossy = state.transformPreviewPixels !== null; // full-res preview → JPEG
-        } else if (showOrig && state.originalPng) {
-            const img = new Image();
-            const decoded = decodeImage(img);
-            img.src = `data:image/png;base64,${state.originalPng}`;
-            source = await decoded;
-            w = img.naturalWidth || state.origWidth;
-            h = img.naturalHeight || state.origHeight;
-            lossy = true;
-        } else {
-            return null;
-        }
-
+        const img = new Image();
+        const decoded = decodeImage(img);
+        img.src = `data:image/png;base64,${state.originalPng}`;
+        const source = await decoded;
+        const w = img.naturalWidth || state.origWidth;
+        const h = img.naturalHeight || state.origHeight;
         const scale = Math.min(1, MIRROR_SNAPSHOT_MAX_W / w);
         const cw = Math.max(1, Math.round(w * scale));
         const ch = Math.max(1, Math.round(h * scale));
@@ -254,18 +297,73 @@ export function createMirror({
         offCanvas.width = cw;
         offCanvas.height = ch;
         const ctx = offCanvas.getContext('2d');
-        ctx.imageSmoothingEnabled = lossy;
+        ctx.imageSmoothingEnabled = true;
         ctx.drawImage(source, 0, 0, cw, ch);
 
-        return {
-            src: lossy ? offCanvas.toDataURL('image/jpeg', 0.85)
-                       : offCanvas.toDataURL('image/png'),
-            lossy, // false = grid render: the mirror displays it pixelated, like the main viewer
-            gridW: state.gridW,
-            gridH: state.gridH,
+        lastOriginalSnapshot = {
+            src: offCanvas.toDataURL('image/jpeg', 0.85),
+            lossy: true, // photographic content: the mirror displays it smooth
+            w: cw,
+            h: ch,
         };
+        lastOriginalPng = state.originalPng;
+        return lastOriginalSnapshot;
     }
 
+    // Processed snapshot: PNG downscale of the committed grid render (the
+    // transform preview is deliberately ignored — the mirror keeps showing
+    // the committed image until the reshape is applied). Deduplicated by
+    // pixel-buffer reference: every render replaces it wholesale.
+    function processedSnapshot(state) {
+        const pixels = state.processedPixels;
+        if (!pixels) return null;
+        if (pixels !== lastProcessedPixels) {
+            if (gridCanvas.width !== pixels.width) gridCanvas.width = pixels.width;
+            if (gridCanvas.height !== pixels.height) gridCanvas.height = pixels.height;
+            gridCanvas.getContext('2d').putImageData(
+                new ImageData(pixels.rgba, pixels.width, pixels.height), 0, 0);
+
+            const scale = Math.min(1, MIRROR_SNAPSHOT_MAX_W / pixels.width);
+            const cw = Math.max(1, Math.round(pixels.width * scale));
+            const ch = Math.max(1, Math.round(pixels.height * scale));
+
+            const offCanvas = document.createElement('canvas');
+            offCanvas.width = cw;
+            offCanvas.height = ch;
+            const ctx = offCanvas.getContext('2d');
+            ctx.imageSmoothingEnabled = false; // grid cells stay crisp blocks
+            ctx.drawImage(gridCanvas, 0, 0, cw, ch);
+
+            lastProcessedSnapshot = {
+                src: offCanvas.toDataURL('image/png'),
+                lossy: false, // grid render: the mirror displays it pixelated
+                w: cw,
+                h: ch,
+                gridW: state.gridW,
+                gridH: state.gridH,
+            };
+            lastProcessedPixels = pixels;
+        }
+        return lastProcessedSnapshot;
+    }
+
+    // Layer order in the mirror: the "Show original" toggle alternates
+    // which version sits on top (and is therefore the one the effect
+    // masks). Piggy-backed on pushImage: every path that toggles the
+    // button repaints the main viewer (updatePreviewSrc →
+    // viewer-image-changed → pushImage), so the layers travel with the
+    // same throttled push — including programmatic resets (image load)
+    // that fire no dedicated event.
+    function pushLayers() {
+        if (!isOpen()) return;
+        const top = showOriginalBtn.classList.contains('active') ? 'original' : 'processed';
+        if (top === lastLayersTop) return;
+        lastLayersTop = top;
+        emit('mirror:layers', { top });
+    }
+
+    // Pushes both surfaces to the mirror. Throttled: adjustment repaints
+    // call this at high frequency, ~30 fps is plenty for the projection.
     async function pushImage() {
         if (!isOpen()) return;
         const now = performance.now();
@@ -280,10 +378,20 @@ export function createMirror({
         }
         imageLast = now;
         try {
-            const snapshot = await imageSnapshot();
-            if (snapshot) emit('mirror:image', snapshot);
+            const state = getViewerState();
+            const original = await originalSnapshot(state);
+            if (original && original !== emittedOriginal) {
+                emittedOriginal = original;
+                emit('mirror:original', original);
+            }
+            const processed = processedSnapshot(state);
+            if (processed && processed !== emittedProcessed) {
+                emittedProcessed = processed;
+                emit('mirror:image', processed);
+            }
+            pushLayers();
         } catch (err) {
-            console.error('Error while building the mirror snapshot:', err);
+            console.error('Error while building the mirror snapshots:', err);
         }
     }
 
@@ -326,6 +434,53 @@ export function createMirror({
         emit('mirror:zones', payload);
     }
 
+    // Effect state (id + options), throttled and deduplicated: the options
+    // sliders drag at mousemove rate without changing the committed value
+    // between steps.
+    function pushEffect() {
+        if (!isOpen()) return;
+        const now = performance.now();
+        const elapsed = now - effectLast;
+        if (elapsed < MIRROR_EFFECT_MIN_INTERVAL) {
+            if (effectTimer) return;
+            effectTimer = setTimeout(() => {
+                effectTimer = 0;
+                pushEffect();
+            }, MIRROR_EFFECT_MIN_INTERVAL - elapsed);
+            return;
+        }
+        effectLast = now;
+        // The payload carries the effect's excluded synths: a cursor-based
+        // effect filters them on the mirror side (the set is injected by
+        // reference, so renamings/renumbering are picked up on the next
+        // push — 'synth-list-changed' triggers one).
+        const payload = {
+            effect: effectId,
+            options: effectOptions,
+            excluded: Array.from(synthEffectExcluded ?? []),
+        };
+        const json = JSON.stringify(payload);
+        if (json === lastEffectJson) return;
+        lastEffectJson = json;
+        emit('mirror:effect', payload);
+    }
+
+    // Selects the active effect: an unknown id (session saved by a newer
+    // version) loads as the no-op effect. The options reset to the new
+    // effect's defaults; pass options right after for a session restore.
+    function setEffect(id) {
+        const def = effectOrDefault(id);
+        effectId = def.id;
+        effectOptions = defaultOptions(def);
+    }
+
+    // Merges and sanitizes option values onto the active effect: unknown
+    // keys and out-of-range values never reach the painter.
+    function setEffectOptions(options) {
+        effectOptions = sanitizeOptions(
+            effectOrDefault(effectId), { ...effectOptions, ...options });
+    }
+
     fullscreenBtn.addEventListener('click', toggle);
 
     mirrorZonesBtn.addEventListener('click', () => {
@@ -339,25 +494,35 @@ export function createMirror({
     // The mirror announces itself when loaded, and reports its own closing
     // (its close-requested handler runs before the window goes away).
     listen('mirror:ready', () => {
-        // Opening the mirror reroutes the original image to it (when the
-        // toggle is on): the main viewer falls back to the grid render.
-        // onReady also pushes the mirror image snapshot, covering the
-        // initial push in the same repaint.
+        // Opening the mirror takes over the "Show original" toggle: it
+        // becomes the projection's layer order while the main viewer
+        // falls back to the grid render (see updatePreviewSrc). onReady
+        // repaints the main viewer, whose viewer-image-changed covers
+        // the initial image push in the same repaint.
         onReady?.();
-        // A freshly opened mirror must receive the current snapshots even
-        // when they are identical to the last session's (the dedup would
-        // otherwise skip the push to a window that never got them)
+        // A freshly opened mirror must receive the current state even
+        // when it is identical to the last session's (the dedup would
+        // otherwise skip the push to a window that never got it)
         lastZonesJson = null;
+        lastEffectJson = null;
+        lastLayersTop = null;
+        // The snapshots stay cached across a close/reopen (the content
+        // did not change); only their emission is replayed — a fresh
+        // window never received them.
+        emittedOriginal = null;
+        emittedProcessed = null;
         pushZones();
         pushCursors();
+        pushImage(); // original + processed + layers
+        pushEffect();
     });
 
     listen('mirror:closed', () => {
         windowRef = null;
-        // The original image was rerouted to the (now gone) mirror: the
-        // main viewer already shows the grid render, and the toggle goes
-        // back to inactive so its state keeps meaning "the original is
-        // visible somewhere" (one click shows it in the main viewer again)
+        // The layer order only exists in the mirror: closing the window
+        // resets the toggle, so its state keeps meaning "the original is
+        // on top of the projection" (with the mirror closed, the toggle
+        // shows the original in the main viewer instead)
         showOriginalBtn.classList.remove('active');
         updateButtonStates();
     });
@@ -378,7 +543,12 @@ export function createMirror({
         pushCursors,
         pushZones,
         pushImage,
+        pushEffect,
         getZonesMode: () => zonesMode,
         setZonesMode: (mode) => { zonesMode = mode; updateZonesButton(); },
+        getEffect: () => effectId,
+        setEffect,
+        getEffectOptions: () => effectOptions,
+        setEffectOptions,
     };
 }

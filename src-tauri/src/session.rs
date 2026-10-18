@@ -40,6 +40,23 @@ pub struct SessionUi {
         deserialize_with = "deserialize_mirror_zones_mode"
     )]
     pub mirror_zones_mode: String,
+    /// Active masking effect of the projection mirror's top layer (see
+    /// the frontend effects registry, `mirror/effects.js`). Absent when
+    /// the frontend state predates the feature. Unlike the zones mode,
+    /// the id is not validated here: the registry belongs to the
+    /// frontend and grows independently — an unknown id falls back to
+    /// the no-op effect on restore.
+    #[serde(default = "default_mirror_effect")]
+    pub mirror_effect: String,
+    /// Numeric options of the active effect, keyed by option id.
+    #[serde(default)]
+    pub mirror_effect_options: HashMap<String, f64>,
+    /// Synth ids the effect does not apply to (see the frontend's
+    /// `synthEffectExcluded` set: the ids are stack positions, remapped
+    /// by the frontend on its id renumbering). Absent when the session
+    /// predates the feature: the effect applies to every synth.
+    #[serde(default)]
+    pub mirror_effect_synths: Vec<u32>,
     pub synth_colors: Vec<SynthUiEntry>,
 }
 
@@ -53,6 +70,13 @@ pub struct SynthUiEntry {
 /// frontend state) predates the three-mode toggle: zones hidden, the
 /// historical default.
 fn default_mirror_zones_mode() -> String {
+    "none".into()
+}
+
+/// Masking effect of the projection mirror when the session (or the
+/// frontend state) predates the feature: no effect, the historical
+/// single-surface display.
+fn default_mirror_effect() -> String {
     "none".into()
 }
 
@@ -117,6 +141,15 @@ pub struct SessionImageSettings {
         deserialize_with = "deserialize_mirror_zones_mode"
     )]
     pub mirror_zones_mode: String,
+    /// Active masking effect of the projection mirror (see SessionUi).
+    #[serde(default = "default_mirror_effect")]
+    pub mirror_effect: String,
+    /// Numeric options of the active effect (see SessionUi).
+    #[serde(default)]
+    pub mirror_effect_options: HashMap<String, f64>,
+    /// Synth ids the effect does not apply to (see SessionUi).
+    #[serde(default)]
+    pub mirror_effect_synths: Vec<u32>,
 }
 
 /// A synthesizer as stored in a session file: its identity, display color,
@@ -379,6 +412,9 @@ fn save_session_blocking(
             simplify: ui.simplify,
             auto_levels: ui.auto_levels,
             mirror_zones_mode: ui.mirror_zones_mode,
+            mirror_effect: ui.mirror_effect,
+            mirror_effect_options: ui.mirror_effect_options,
+            mirror_effect_synths: ui.mirror_effect_synths,
         },
         synths,
     };
@@ -662,20 +698,101 @@ mod tests {
             simplify: 0.0,
             auto_levels: true,
             mirror_zones_mode: "active".into(),
+            mirror_effect: "none".into(),
+            mirror_effect_options: HashMap::new(),
+            mirror_effect_synths: Vec::new(),
         })
         .unwrap();
         let restored: SessionImageSettings = serde_json::from_str(&json).unwrap();
         assert_eq!(restored.mirror_zones_mode, "active");
 
         // An unknown mode is a parse error rather than a silent fallback
-        let invalid = r##"{
+        let invalid = r#"{
             "grid_slider": 800,
             "contrast": 10.0,
             "brightness": 5,
             "posterize_levels": 4,
             "mirror_zones_mode": "sometimes"
-        }"##;
+        }"#;
         assert!(serde_json::from_str::<SessionImageSettings>(invalid).is_err());
+    }
+
+    /// The projection effect is optional: sessions saved before the
+    /// feature load with the no-op default, and an id + options set
+    /// survives a save → file → load cycle. Unlike the zones mode, an
+    /// unknown id is not a parse error — the frontend registry owns
+    /// the ids and falls back on restore.
+    #[test]
+    fn image_settings_mirror_effect_defaults_and_round_trip() {
+        // Session saved before the feature: the keys are absent
+        let legacy = r#"{
+            "grid_slider": 800,
+            "contrast": 10.0,
+            "brightness": 5,
+            "posterize_levels": 4
+        }"#;
+        let s: SessionImageSettings = serde_json::from_str(legacy).unwrap();
+        assert_eq!(s.mirror_effect, "none");
+        assert!(s.mirror_effect_options.is_empty());
+        assert!(s.mirror_effect_synths.is_empty());
+
+        // Newer session: the effect and its options round-trip
+        let json = serde_json::to_string(&SessionImageSettings {
+            grid_slider: 800,
+            contrast: 10.0,
+            brightness: 5,
+            vibrance: -30.0,
+            posterize_levels: Some(4),
+            texture: 0.0,
+            clarity: 0.0,
+            simplify: 0.0,
+            auto_levels: true,
+            mirror_zones_mode: "all".into(),
+            mirror_effect: "drag".into(),
+            mirror_effect_options: HashMap::from([
+                ("length".into(), 20.0),
+                ("colored".into(), 1.0),
+                ("fade".into(), 6.0),
+            ]),
+            mirror_effect_synths: vec![2, 3],
+        })
+        .unwrap();
+        let restored: SessionImageSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.mirror_effect, "drag");
+        assert_eq!(restored.mirror_effect_options.get("length"), Some(&20.0));
+        assert_eq!(restored.mirror_effect_synths, vec![2, 3]);
+
+        // An id the registry does not know (yet) parses fine
+        let unknown = r#"{
+            "grid_slider": 800,
+            "contrast": 10.0,
+            "brightness": 5,
+            "posterize_levels": 4,
+            "mirror_effect": "holograms"
+        }"#;
+        let s: SessionImageSettings = serde_json::from_str(unknown).unwrap();
+        assert_eq!(s.mirror_effect, "holograms");
+    }
+
+    /// The save payload (SessionUi) accepts the mirror effect keys as
+    /// optional too: an older frontend state saves without them.
+    #[test]
+    fn session_ui_without_mirror_effect_loads_with_default() {
+        let legacy = r#"{
+            "bpm": 120,
+            "grid_slider": 800,
+            "contrast": 10.0,
+            "brightness": 5,
+            "vibrance": 0.0,
+            "posterize_levels": null,
+            "texture": 0.0,
+            "clarity": 0.0,
+            "simplify": 0.0,
+            "synth_colors": []
+        }"#;
+        let ui: SessionUi = serde_json::from_str(legacy).unwrap();
+        assert_eq!(ui.mirror_effect, "none");
+        assert!(ui.mirror_effect_options.is_empty());
     }
 
     fn session_with(synths: Vec<SessionSynth>) -> SessionFile {

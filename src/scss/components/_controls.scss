@@ -94,6 +94,63 @@
     box-shadow: $shadow-panel;
 }
 
+// Options panel of the active projection effect: overlays the chrono and
+// tempo areas (anchored on their relative wrapper) instead of pushing
+// the display row above. Stretches over the whole wrapper, unlike the
+// crop/transform panels that hang below their row.
+.effect-panel {
+    top: 0;
+    bottom: 0;
+    height: auto;
+}
+
+// Effect selector of the projection mirror, in the display row next to
+// the mirror buttons. Compact: the effect names must not stretch the row.
+.mirror-effect-select {
+    max-width: 8rem;
+    font-size: .85rem;
+}
+
+// Synth selection row of a cursor-targeting effect (see effects.js):
+// one toggle per synthesizer, a disc tinted with its identification
+// color — filled when the effect applies, hollow when the synth is
+// excluded. The synth name only shows as a hover tooltip, keeping the
+// row to a minimum footprint. Wraps on narrow columns.
+.effect-synth-list {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: .375rem;
+}
+
+.effect-synth-toggle {
+    flex: 0 0 auto;
+    width: 1rem;
+    height: 1rem;
+    padding: 0;
+    border: 2px solid var(--synth-color, #808080);
+    border-radius: 50%;
+    background-color: transparent;
+    cursor: pointer;
+    transition: background-color $transition-fast, transform $transition-fast;
+
+    &[aria-pressed="true"] {
+        background-color: var(--synth-color, #808080);
+    }
+
+    &:hover {
+        transform: scale(1.15);
+    }
+}
+
+// Boolean option row of an effect panel (the drag effect's "colored"
+// toggle): the checkbox sits on the title line, right-aligned by the
+// control-head rule.
+.effect-panel input[type="checkbox"] {
+    accent-color: $color-accent;
+    cursor: pointer;
+}
+
 // Row of a mode panel: hint, ratio buttons or the apply/cancel actions
 .mode-bar {
     display: flex;

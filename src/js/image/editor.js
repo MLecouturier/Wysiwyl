@@ -97,8 +97,10 @@ export function paintPreviewCanvas(pixels) {
 // toggle), the canvas for everything that comes as raw pixels (processed
 // image, transform live preview — the latter taking precedence).
 // The original is routed by the toggle: in the main viewer while the
-// projection mirror is closed, in the mirror only while it is open (the
-// main viewer then falls back to the grid render and stays interactive).
+// projection mirror is closed. While the mirror is open, both surfaces
+// are stacked there permanently (the toggle swaps their order instead,
+// see mirror/window.js), and the main viewer falls back to the grid
+// render and stays interactive.
 export function updatePreviewSrc() {
     const showOrig = showOriginalBtn.classList.contains('active') && !hooks.isMirrorOpen();
     const pixels = viewer.transformPreviewPixels ?? (showOrig ? null : viewer.processedPixels);

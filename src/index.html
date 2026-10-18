@@ -151,72 +151,83 @@
                                     <span class="material-symbols-outlined" aria-hidden="true">present_to_all</span>
                                 </button>
                                 <div class="flex-fill"></div>
-                                <button id="mirror-zones-btn" class="toggle-btn" data-i18n-title="controls.mirrorZones">
+                                <select id="mirror-effect-select" class="mirror-effect-select" data-i18n-title="controls.mirrorEffect" data-i18n-aria-label="controls.mirrorEffect"></select>
+                                <button id="mirror-effect-opts-btn" class="icon-btn toggle-btn" data-i18n-title="controls.mirrorEffectOptions" disabled>
+                                    <span class="material-symbols-outlined" aria-hidden="true">tune</span>
+                                </button>
+                                
+                                <button id="mirror-zones-btn" class="icon-btn toggle-btn" data-i18n-title="controls.mirrorZones">
                                     <span class="material-symbols-outlined" aria-hidden="true">grid_view</span>
                                 </button>
-                                <button id="show-original-btn" class="toggle-btn" data-i18n-title="controls.showOriginal">
+                                <button id="show-original-btn" class="icon-btn toggle-btn" data-i18n-title="controls.showOriginal">
                                     <span class="material-symbols-outlined" aria-hidden="true">compare</span>
-                                </button>
+                                </button>                                
                             </div>
-                            <div id="chrono" class="chrono-area">
-                                <div class="timer"></div>
-                                <button id="reset-timer" class="timer-reset-btn icon-btn" type="button" data-i18n-title="chrono.reset">
-                                    <span class="material-symbols-outlined" aria-hidden="true">timer</span>
-                                </button>
-                            </div>
-                            <div id="metronome" class="metronome-area">
-                                <!-- The title has its own span: data-i18n replaces the
-                                     whole text content, the badge must not live inside it -->
-                                <h2 class="metronome-title">
-                                    <span data-i18n="metronome.title"></span>
-                                    <div class="flex-fill"></div>
-                                    <span class="time-signature-fields" data-i18n-title="metronome.timeSignature">
-                                        <input type="number" id="time-signature-numerator" class="time-signature-numerator" min="1" max="16" step="1" value="4" data-i18n-title="metronome.timeSignatureNumerator" data-i18n-aria-label="metronome.timeSignatureNumerator" />
-                                        <span class="time-signature-sep">/</span>
-                                        <select id="time-signature-denominator" class="time-signature-denominator" data-i18n-title="metronome.timeSignatureDenominator" data-i18n-aria-label="metronome.timeSignatureDenominator">
-                                            <option value="1">1</option>
-                                            <option value="2">2</option>
-                                            <option value="4" selected>4</option>
-                                            <option value="8">8</option>
-                                            <option value="16">16</option>
-                                        </select>
-                                    </span>
-                                    <span id="sync-badge" class="sync-badge hidden" data-i18n="metronome.syncBadge" data-i18n-title="metronome.syncBadge"></span>
-                                </h2>
+                            <!-- Relative wrapper of the chrono and tempo areas: the
+                                 effect options panel overlays them without pushing
+                                 the display row above -->
+                            <div class="relative flex flex-col gap-2">
+                                <div id="chrono" class="chrono-area">
+                                    <div class="timer"></div>
+                                    <button id="reset-timer" class="timer-reset-btn icon-btn" type="button" data-i18n-title="chrono.reset">
+                                        <span class="material-symbols-outlined" aria-hidden="true">timer</span>
+                                    </button>
+                                </div>
+                                <div id="metronome" class="metronome-area">
+                                    <!-- The title has its own span: data-i18n replaces the
+                                         whole text content, the badge must not live inside it -->
+                                    <h2 class="metronome-title">
+                                        <span data-i18n="metronome.title"></span>
+                                        <div class="flex-fill"></div>
+                                        <span class="time-signature-fields" data-i18n-title="metronome.timeSignature">
+                                            <input type="number" id="time-signature-numerator" class="time-signature-numerator" min="1" max="16" step="1" value="4" data-i18n-title="metronome.timeSignatureNumerator" data-i18n-aria-label="metronome.timeSignatureNumerator" />
+                                            <span class="time-signature-sep">/</span>
+                                            <select id="time-signature-denominator" class="time-signature-denominator" data-i18n-title="metronome.timeSignatureDenominator" data-i18n-aria-label="metronome.timeSignatureDenominator">
+                                                <option value="1">1</option>
+                                                <option value="2">2</option>
+                                                <option value="4" selected>4</option>
+                                                <option value="8">8</option>
+                                                <option value="16">16</option>
+                                            </select>
+                                        </span>
+                                        <span id="sync-badge" class="sync-badge hidden" data-i18n="metronome.syncBadge" data-i18n-title="metronome.syncBadge"></span>
+                                    </h2>
 
-                                <div class="metronome-controls">
-                                    <div class="bpm-input-group">
-                                        <div class="bpm-step-group">
-                                            <button id="bpm-minus10" class="bpm-step" title="-10 BPM">-10</button>
-                                            <button id="bpm-minus5" class="bpm-step" title="-5 BPM">-5</button>
-                                        </div>
-                                        <div class="bpm-input-wrapper">
-                                            <input type="number" id="bpm-input" class="bpm-input" min="20" max="300" value="120" />
-                                            <div class="bpm-spinner">
-                                                <button id="bpm-up" class="bpm-spinner-btn" type="button" title="+1 BPM"><span class="material-symbols-outlined" aria-hidden="true">keyboard_arrow_up</span></button>
-                                                <button id="bpm-down" class="bpm-spinner-btn" type="button" title="-1 BPM"><span class="material-symbols-outlined" aria-hidden="true">keyboard_arrow_down</span></button>
+                                    <div class="metronome-controls">
+                                        <div class="bpm-input-group">
+                                            <div class="bpm-step-group">
+                                                <button id="bpm-minus10" class="bpm-step" title="-10 BPM">-10</button>
+                                                <button id="bpm-minus5" class="bpm-step" title="-5 BPM">-5</button>
+                                            </div>
+                                            <div class="bpm-input-wrapper">
+                                                <input type="number" id="bpm-input" class="bpm-input" min="20" max="300" value="120" />
+                                                <div class="bpm-spinner">
+                                                    <button id="bpm-up" class="bpm-spinner-btn" type="button" title="+1 BPM"><span class="material-symbols-outlined" aria-hidden="true">keyboard_arrow_up</span></button>
+                                                    <button id="bpm-down" class="bpm-spinner-btn" type="button" title="-1 BPM"><span class="material-symbols-outlined" aria-hidden="true">keyboard_arrow_down</span></button>
+                                                </div>
+                                            </div>
+                                            <div class="bpm-step-group">
+                                                <button id="bpm-plus5" class="bpm-step" title="+5 BPM">+5</button>
+                                                <button id="bpm-plus10" class="bpm-step" title="+10 BPM">+10</button>
                                             </div>
                                         </div>
-                                        <div class="bpm-step-group">
-                                            <button id="bpm-plus5" class="bpm-step" title="+5 BPM">+5</button>
-                                            <button id="bpm-plus10" class="bpm-step" title="+10 BPM">+10</button>
-                                        </div>
+                                        <div id="metronome-led" class="metronome-led"></div>
                                     </div>
-                                    <div id="metronome-led" class="metronome-led"></div>
-                                </div>
 
-                                <div class="metronome-clock">
-                                    <select id="clock-mode-select" class="clock-mode-select" data-i18n-title="metronome.clockMode">
-                                        <option value="off" data-i18n="metronome.clockOff"></option>
-                                        <option value="auto" data-i18n="metronome.clockAuto" selected></option>
-                                        <option value="input" data-i18n="metronome.clockInput"></option>
-                                        <option value="master" data-i18n="metronome.clockMaster"></option>
-                                    </select>
-                                    <div class="flex-fill"></div>
+                                    <div class="metronome-clock">
+                                        <select id="clock-mode-select" class="clock-mode-select" data-i18n-title="metronome.clockMode">
+                                            <option value="off" data-i18n="metronome.clockOff"></option>
+                                            <option value="auto" data-i18n="metronome.clockAuto" selected></option>
+                                            <option value="input" data-i18n="metronome.clockInput"></option>
+                                            <option value="master" data-i18n="metronome.clockMaster"></option>
+                                        </select>
+                                        <div class="flex-fill"></div>
                                     <select id="clock-source-select" class="clock-source-select hidden" data-i18n-title="metronome.clockSource"></select>
                                 </div>
-
-                                
+                            </div>
+                                <!-- Options of the active projection effect; rows are
+                                     built by mirror/controls.js -->
+                                <div id="mirror-effect-panel" class="mode-panel effect-panel hidden"></div>
                             </div>
                         </div>
                     </div>

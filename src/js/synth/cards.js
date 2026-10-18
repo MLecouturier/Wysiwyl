@@ -10,7 +10,8 @@ import { rectZone, zoneCellSet, rebuildZones } from '../core/geometry.js';
 import { viewer } from '../core/state.js';
 import {
     synthNames, synthDisplayNumbers, synthColors, synthHighlights,
-    synthCursors, synthCursorGrid, synthCursorMuted, removeSynthFromRegistry,
+    synthCursors, synthCursorGrid, synthCursorMuted, synthEffectExcluded,
+    removeSynthFromRegistry,
 } from '../core/state.js';
 import { appEvents } from '../core/state.js';
 import { synthElementById } from './model.js';
@@ -1453,6 +1454,12 @@ export async function renumberSynthIds() {
     rekey(synthHighlights);
     rekey(synthNames);
     rekey(synthDisplayNumbers);
+    // The effect's excluded ids follow the same renumbering
+    const excludedSnapshot = new Set(synthEffectExcluded);
+    synthEffectExcluded.clear();
+    order.forEach((oldId, i) => {
+        if (excludedSnapshot.has(oldId)) synthEffectExcluded.add(i + 1);
+    });
 
     // The active synth follows the same renumbering (its .active class
     // stays on the same DOM element; only the tracked id changes)
@@ -1480,6 +1487,11 @@ export async function renumberSynthIds() {
 
     // Ids changed: any stored history would target stale ids, so start over
     resetHistory();
+
+    // Composition or ids changed: the effect panel's checkbox row and the
+    // mirror's pushed synth selection follow (main.js forwards this to
+    // both).
+    appEvents.emit('synth-list-changed');
 }
 
 // Double-click confirmation for synth removal: only one remove button can
@@ -1572,6 +1584,12 @@ export async function onSynthRemoveClick(id, el) {
     if (synthListBody.querySelectorAll('.synth-block').length === 0) {
         placeholder.classList.remove('hidden');
     }
+    // Composition changed: emit even when the renumbering above was a
+    // no-op (removing the bottom synth leaves ids already sequential)
+    // — main.js resyncs the effect panel and pushes the pruned synth
+    // selection to the mirror. The renumbering itself emits too; both
+    // are idempotent on the receiving side.
+    appEvents.emit('synth-list-changed');
     syncPlayAllButton();
     await hooks.stopMetronomeIfIdle();
     hooks.updateImageControlsLockState();

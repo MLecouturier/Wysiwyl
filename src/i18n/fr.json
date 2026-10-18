@@ -25,6 +25,8 @@
     "transformGrid": "Grille",
     "mirror": "Ouvrir/fermer la fenêtre de projection sur le second écran",
     "mirrorZones": "Faire défiler les zones dans la fenêtre de projection : tous les synthétiseurs, uniquement les visibles, ou aucune",
+    "mirrorEffect": "Effet de masquage de la fenêtre de projection",
+    "mirrorEffectOptions": "Options de l'effet de projection",
     "help": "Aide interactive",
     "apply": "Appliquer",
     "cancel": "Annuler",
@@ -41,6 +43,13 @@
     "simplify": "Simplification",
     "autoLevels": "Auto-niveaux",
     "dimensionsInfo": "Original : {origWidth} × {origHeight}  —  Grille : {width} × {height}  ({cellCount} px)"
+  },
+  "mirrorEffect": {
+    "none": "Aucun",
+    "drag": "Traînée",
+    "trailLength": "Longueur",
+    "trailColored": "Colorée",
+    "trailFade": "Atténuation"
   },
   "metronome": {
     "title": "Tempo (BPM)",
@@ -270,7 +279,7 @@
     "controls.crop": "Active le mode recadrage : dessinez un rectangle directement sur l'image pour n'en conserver que cette partie.",
     "controls.transform": "Ouvre le panneau de transformation de l'image : rotation fine (-45° à +45°) et perspective verticale/horizontale. Appliquez pour valider, annulez pour revenir en arrière.",
     "controls.transformGrid": "Affiche ou masque la grille de lecture superposée à l'image.",
-    "controls.showOriginal": "Affiche l'image d'origine, sans les réglages, le temps de comparer. Relâchez pour revenir à l'image traitée.",
+    "controls.showOriginal": "Affiche l'image d'origine, sans les réglages, pour la comparer à la grille traitée. Fenêtre de projection fermée : elle remplace l'image dans le viewer principal. Fenêtre ouverte : elle échange l'ordre des deux calques empilés dans la projection (voir le sélecteur d'effet de projection pour percer l'un à travers l'autre).",
     "controls.columns": "Nombre de colonnes de la grille de lecture. Chaque colonne est jouée à son tour ; plus la grille est fine, plus la séquence est longue et détaillée. Modifier ce réglage redécoupe les zones existantes. Double-cliquez sur le nombre affiché pour saisir une valeur exacte (refusée si elle dépasse la largeur de l'image originale), ou sur le curseur pour revenir au réglage par défaut.",
     "controls.contrast": "Renforce ou atténue l'écart entre zones sombres et claires. Un contraste élevé rend la séquence plus tranchée : des notes nettes entourées de silences. Double-cliquez sur le curseur pour remettre le réglage à zéro.",
     "controls.brightness": "Éclaircit ou assombrit l'image entière. La luminosité pilote la correspondance vers les longueurs de note lorsqu'elles sont activées : ce réglage façonne donc le rythme. Double-cliquez sur le curseur pour remettre le réglage à zéro.",
@@ -283,6 +292,11 @@
     "controls.help": "Active le mode d'aide contextuelle : survolez n'importe quel contrôle du programme pour afficher une explication détaillée. Cliquez à nouveau ou appuyez sur Échap pour désactiver.",
     "controls.mirror": "Ouvre une fenêtre miroir de la zone d'image sur un second écran ou projecteur, en plein écran. Double-cliquez sur le miroir pour basculer entre plein écran et fenêtre volante, que vous pouvez glisser sur un autre écran. Cliquez à nouveau sur ce bouton pour fermer le miroir. Actif uniquement lorsqu'un second écran est connecté.",
     "controls.mirrorZones": "Fait défiler trois affichages des zones dans la fenêtre de projection : les zones de pixels sélectionnées de tous les synthétiseurs, uniquement celles des synthés visibles dans la fenêtre principale (bouton œil), ou aucune. La fenêtre principale conserve toujours sa propre visibilité par synthé.",
+    "controls.mirrorEffect": "Sélectionne l'effet de masquage appliqué à la fenêtre de projection : la projection empile en permanence les deux versions de l'image (la grille traitée sur l'original), et l'effet perce le calque supérieur pour révéler l'autre. « Aucun » garde le calque supérieur entièrement opaque ; « Traînée » révèle l'image du bas derrière le curseur de lecture de chaque synthé en train de jouer, sous forme d'une traînée de cases récemment jouées qui s'estompe.",
+    "controls.mirrorEffectOptions": "Ouvre les options de l'effet de projection actif (longueur de la traînée, couleur, atténuation). Le volet recouvre la zone du tempo ; Échap ou un nouveau clic sur le bouton le referme.",
+    "controls.mirrorEffectTrailLength": "Longueur de la traînée derrière le curseur, en nombre de cases de la grille de l'image modifiée.",
+    "controls.mirrorEffectTrailColored": "Colore la traînée avec la couleur du synthé (mode de fusion écran) : la révélation devient plus lumineuse et colorée. Sinon la traînée laisse simplement apparaître l'autre version de l'image.",
+    "controls.mirrorEffectTrailFade": "Nombre de cases sur lesquelles l'atténuation de la traînée est répartie, à son extrémité la plus ancienne. À 0, le bord est net.",
     "config.openFile": "Ouvre le fichier de configuration global : réglages par défaut des nouveaux synthés, plages de notes, gammes activées, taille d'image maximale.",
     "config.showShortcuts": "Liste tous les raccourcis clavier et gestes souris de l'application : lecture, session, édition de l'image, sélection de zones.",
     "session.save": "Enregistre la session de travail complète : l'image et ses réglages, tous les synthés avec leurs zones et paramètres.",

@@ -13,7 +13,13 @@
         <div class="column column-left">
             <div class="content-area image-viewer-container" id="image-viewer-container">
                 <div id="image-viewer" class="image-viewer">
-                    <img id="mirror-image" class="hidden" alt="" />
+                    <!-- Bottom layer of the projection stack: the surface
+                         not on top (object-fit: contain, like the main
+                         viewer). The top layer is the #mirror-top canvas,
+                         composited with the active effect's mask. -->
+                    <img id="mirror-bottom" class="hidden" alt="" />
+                    <canvas id="mirror-top" class="mirror-top"></canvas>
+                    <canvas id="trail-overlay" class="trail-overlay"></canvas>
                     <canvas id="pixel-overlay" class="pixel-overlay"></canvas>
                     <canvas id="cursor-overlay" class="cursor-overlay"></canvas>
                 </div>

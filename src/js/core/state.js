@@ -104,6 +104,13 @@ export const synthCursorGrid = new Map();
 // drawn, at half opacity.
 export const synthCursorMuted = new Map();
 
+// Synth ids excluded from the projection mirror's effect (see
+// mirror/effects.js). Empty — the default — means the effect applies to
+// every synth: the options panel shows one checked checkbox per synth,
+// unchecking one adds it here. Keyed like the maps above: the set is
+// re-keyed by the id renumbering and pruned on synth removal.
+export const synthEffectExcluded = new Set();
+
 // Empties every map (full reset / session load).
 export function clearSynthRegistry() {
     synthNames.clear();
@@ -113,6 +120,7 @@ export function clearSynthRegistry() {
     synthCursors.clear();
     synthCursorGrid.clear();
     synthCursorMuted.clear();
+    synthEffectExcluded.clear();
 }
 
 // Drops every entry of one synth (removal). The cursor overlay must be
@@ -125,6 +133,7 @@ export function removeSynthFromRegistry(id) {
     synthCursors.delete(id);
     synthCursorGrid.delete(id);
     synthCursorMuted.delete(id);
+    synthEffectExcluded.delete(id);
 }
 
 // Viewer/image state: the loaded image, its grid dimensions and the

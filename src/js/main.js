@@ -12,7 +12,7 @@ import { installFocusPolicy, enterConsumed, spaceConsumed, digitConsumed, isText
 import { undo, redo, resetHistory, setHistoryDepth } from './synth/history.js';
 import {
     synthNames, synthColors, synthHighlights,
-    synthCursors, synthCursorGrid, synthCursorMuted,
+    synthCursors, synthCursorGrid, synthCursorMuted, synthEffectExcluded,
     clearSynthRegistry,
 } from './core/state.js';
 import { sliderToPosterizeLevels, posterizeLevelsToSlider } from './core/utils.js';
@@ -20,6 +20,7 @@ import { installInputStepper, setTrackpadThreshold } from './audio/stepper.js';
 import { createClockSource, createTimeSignature } from './audio/metronome.js';
 import { createMetronome, clampBpm } from './audio/metronome.js';
 import { createMirror } from './mirror/window.js';
+import { createMirrorEffectControls } from './mirror/controls.js';
 import { createSessionState } from './session/session.js';
 import { setSynthColors, setNoteRangeBounds, setEnabledScales, refreshScaleSelects } from './synth/model.js';
 import { synthElementById } from './synth/model.js';
@@ -651,6 +652,9 @@ function buildSessionUi() {
         simplify: Number(simplify.value),
         auto_levels: autoLevelsBtn.classList.contains('active'),
         mirror_zones_mode: mirror.getZonesMode(),
+        mirror_effect: mirror.getEffect(),
+        mirror_effect_options: mirror.getEffectOptions(),
+        mirror_effect_synths: Array.from(synthEffectExcluded),
         synth_colors: Array.from(synthListBody.querySelectorAll('.synth-block')).map(el => ({
             id: Number(el.dataset.synthId),
             color: synthColors.get(Number(el.dataset.synthId)),
@@ -727,6 +731,21 @@ async function openSession() {
         simplify.value = session.image_settings.simplify ?? 0;
         autoLevelsBtn.classList.toggle('active', session.image_settings.auto_levels ?? false);
         mirror.setZonesMode(session.image_settings.mirror_zones_mode);
+        // Projection effect: an id saved by a newer version falls back to
+        // the no-op effect (see setEffect); the options ride along when
+        // the effect declares them. The excluded synths are restored as
+        // raw ids — a session file with legacy id gaps is renumbered after
+        // this point, and the renumbering re-keys the set (the ids are
+        // positions, see cards.js).
+        mirror.setEffect(session.image_settings.mirror_effect ?? 'none');
+        mirror.setEffectOptions(session.image_settings.mirror_effect_options ?? {});
+        synthEffectExcluded.clear();
+        for (const id of session.image_settings.mirror_effect_synths ?? []) {
+            const n = Number(id);
+            if (Number.isFinite(n)) synthEffectExcluded.add(n);
+        }
+        effectControls.sync();
+        mirror.pushEffect();
         showOriginalBtn.classList.remove('active');
         viewerEmpty.classList.add('hidden');
         syncLabels();
@@ -776,6 +795,23 @@ async function openSession() {
         // A failed restore must never leave the tracking disabled
         sessionState.endRestore();
     }
+
+    // Drop the excluded ids the restored session does not know (a
+    // hand-edited file, an id beyond the restored stack): an unknown id
+    // would otherwise collide with a synth created later and exclude it
+    // by surprise. The ids are final at this point — the renumbering
+    // above already re-keyed the set.
+    const liveIds = new Set(Array.from(synthListBody.querySelectorAll('.synth-block'))
+        .map(el => Number(el.dataset.synthId)));
+    let pruned = false;
+    for (const id of [...synthEffectExcluded]) {
+        if (!liveIds.has(id)) {
+            synthEffectExcluded.delete(id);
+            pruned = true;
+        }
+    }
+    if (pruned) mirror.pushEffect(); // keep an open mirror in sync
+
     sessionState.setPath(session.path);
     sessionState.setDirty(false);
     resetHistory(); // a loaded session is a fresh undo baseline
@@ -818,11 +854,19 @@ registerShortcut({
 // mirror through the same single points that repaint the main viewer.
 const mirror = createMirror({
     synthColors, synthHighlights, synthCursors, synthCursorGrid, synthCursorMuted,
+    synthEffectExcluded,
+    // Play state probed from the cards' own buttons — the same source of
+    // truth as anySynthPlaying — so the mirror never shows the cursor of
+    // a synth that stopped (a pixel tick in flight at stop time can
+    // re-register a stale cursor after the erase)
+    isSynthPlaying: (sid) => {
+        const el = synthElementById(sid);
+        return !!el && el.querySelector('.synth-play').classList.contains('active');
+    },
     getViewerState: () => ({
         gridW: viewer.gridW,
         gridH: viewer.gridH,
         processedPixels: viewer.processedPixels,
-        transformPreviewPixels: viewer.transformPreviewPixels,
         originalPng: viewer.originalPng,
         origWidth: viewer.origWidth,
         origHeight: viewer.origHeight,
@@ -830,6 +874,39 @@ const mirror = createMirror({
     computeMuteCells,
     onReady: updatePreviewSrc,
     onZonesModeChanged: sessionState.markDirty,
+});
+
+// Effect selector + options panel of the projection mirror. The mirror
+// factory owns the effect state; user changes flow through here (and
+// mark the session dirty), while the session restore calls the factory
+// directly then syncs the widgets.
+const effectControls = createMirrorEffectControls({
+    getState: () => ({ effect: mirror.getEffect(), options: mirror.getEffectOptions() }),
+    onEffectChange: (id) => {
+        mirror.setEffect(id);
+        mirror.pushEffect();
+        sessionState.markDirty();
+    },
+    onOptionChange: (optionId, value) => {
+        mirror.setEffectOptions({ [optionId]: value });
+        mirror.pushEffect();
+        sessionState.markDirty();
+    },
+    onSynthToggle: (sid, checked) => {
+        if (checked) synthEffectExcluded.delete(sid);
+        else synthEffectExcluded.add(sid);
+        mirror.pushEffect();
+        sessionState.markDirty();
+    },
+});
+
+// A synth composition change (add, remove, reorder, id renumbering) must
+// reach both surfaces: the synth toggle row is rebuilt, and the
+// renumbered synth selection re-enters the mirror's effect payload
+// (pushEffect deduplicates — an unchanged selection emits nothing).
+appEvents.on('synth-list-changed', () => {
+    effectControls.sync();
+    mirror.pushEffect();
 });
 
 // The overlay and the cards emit through the bus; forward those to the
@@ -945,6 +1022,10 @@ addSynthBtn.addEventListener('click', async () => {
         placeholder.classList.add('hidden');
         const el = createSynthElement(synth.id, synth);
         synthDevices.appendChild(el);
+        // The composition changed: the effect panel's synth row and the
+        // mirror's selection follow (the renumbering below is a no-op
+        // when appending, so it does not emit by itself)
+        appEvents.emit('synth-list-changed');
         // A new synth is a structural change: start a fresh undo baseline
         resetHistory();
         // Expand the newly created card (new synths stack at the end of
