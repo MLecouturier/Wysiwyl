@@ -16,12 +16,18 @@ import { registerEscape } from '../core/shortcuts.js';
 import { synthColors, synthEffectExcluded } from '../core/state.js';
 import { synthDisplayName } from '../synth/model.js';
 
+// The options panel overlays the chrono and tempo areas; after this idle
+// delay with no option touched it closes on its own, so those areas come
+// back without a manual click.
+const PANEL_IDLE_MS = 10000;
+
 export function createMirrorEffectControls({ getState, onEffectChange, onOptionChange, onSynthToggle }) {
     const select  = document.querySelector('#mirror-effect-select');
     const optsBtn = document.querySelector('#mirror-effect-opts-btn');
     const panel   = document.querySelector('#mirror-effect-panel');
 
-    let open = false; // options panel visibility
+    let open = false;      // options panel visibility
+    let closeTimer = 0;    // idle auto-close handle
 
     function currentEffect() {
         return effectOrDefault(getState().effect);
@@ -185,6 +191,15 @@ export function createMirrorEffectControls({ getState, onEffectChange, onOptionC
         optsBtn.classList.toggle('active', open && hasPanelContent());
     }
 
+    // (Re)starts the idle countdown: any option change pushes the panel's
+    // auto-close back, so it only disappears after a full idle period.
+    function armAutoClose() {
+        clearTimeout(closeTimer);
+        closeTimer = 0;
+        if (!open) return;
+        closeTimer = setTimeout(closePanel, PANEL_IDLE_MS);
+    }
+
     function openPanel() {
         open = true;
         // Rebuild from the canonical state on every open: the checkbox
@@ -194,10 +209,13 @@ export function createMirrorEffectControls({ getState, onEffectChange, onOptionC
         buildPanel();
         panel.classList.remove('hidden');
         updateButton();
+        armAutoClose();
     }
 
     function closePanel() {
         open = false;
+        clearTimeout(closeTimer);
+        closeTimer = 0;
         panel.classList.add('hidden');
         updateButton();
     }
@@ -215,12 +233,19 @@ export function createMirrorEffectControls({ getState, onEffectChange, onOptionC
     select.addEventListener('change', () => {
         onEffectChange?.(select.value);
         sync(); // the new effect's options replace the previous ones
+        armAutoClose(); // an effect switch counts as activity
     });
 
     optsBtn.addEventListener('click', () => {
         if (optsBtn.disabled) return;
         open ? closePanel() : openPanel();
     });
+
+    // Any option interaction inside the panel (slider drag, double-click
+    // reset, toggle click) pushes the idle auto-close back. Delegated so
+    // the builders stay untouched by the timer.
+    panel.addEventListener('input', armAutoClose);
+    panel.addEventListener('click', armAutoClose);
 
     // Escape closes the options panel; priority 50 sits above the
     // interactive modes (crop/transform at 40) — a transient popover
