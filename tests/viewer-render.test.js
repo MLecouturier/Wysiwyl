@@ -6,7 +6,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { computeLayout, cellSetFromZones, MUTE_GLYPH } from '../src/js/core/geometry.js';
+import {
+    computeLayout, cellSetFromZones, MUTE_GLYPH,
+    clampZoom, clampZoomCenter, computeZoomedLayout, zoomAtPoint,
+} from '../src/js/core/geometry.js';
 
 test('computeLayout contains a square grid in a square viewer', () => {
     assert.deepEqual(computeLayout(100, 100, 10, 10), {
@@ -57,3 +60,62 @@ test('cellSetFromZones enumerates the covered cells as col,row keys', () => {
 test('MUTE_GLYPH is the music rest character', () => {
     assert.equal(MUTE_GLYPH, '\u{1d19d}');
 });
+
+// ---------- Zoomed layout ----------
+
+test('clampZoom keeps the zoom within its bounds', () => {
+    assert.equal(clampZoom(0.2), 1);
+    assert.equal(clampZoom(1000), 40);
+    assert.equal(clampZoom(NaN), 1);
+    assert.equal(clampZoom(2.5), 2.5);
+});
+
+test('clampZoomCenter centers an axis smaller than the viewer', () => {
+    const c = clampZoomCenter(0.1, 0.9, 100, 100, 50, 200);
+    assert.equal(c.x, 0.5); // 50 <= 100: centered
+    // 200 > 100: margin = 100/(2*200) = 0.25, so 0.9 clamps to 0.75
+    assert.equal(c.y, 0.75);
+});
+
+test('computeZoomedLayout falls back to the plain fit at zoom 1', () => {
+    assert.deepEqual(
+        computeZoomedLayout(100, 100, 10, 10, 1, 0.2, 0.8),
+        computeLayout(100, 100, 10, 10),
+    );
+});
+
+test('computeZoomedLayout magnifies around the center fraction', () => {
+    const l = computeZoomedLayout(100, 100, 10, 10, 2, 0.5, 0.5);
+    assert.equal(l.renderW, 200);
+    assert.equal(l.renderH, 200);
+    assert.equal(l.offsetX, -50); // 50 - 0.5 * 200
+    assert.equal(l.offsetY, -50);
+    assert.equal(l.cellW, 20);
+    assert.equal(l.cellH, 20);
+});
+
+test('computeZoomedLayout clamps the center to keep the edges flush', () => {
+    // Center asked at 0 (top-left): clamped to the margin 100/(2*200)
+    const l = computeZoomedLayout(100, 100, 10, 10, 2, 0, 0);
+    assert.equal(l.offsetX, 0);
+    assert.equal(l.offsetY, 0);
+});
+
+test('zoomAtPoint keeps the image point under the cursor fixed', () => {
+    const base = computeLayout(100, 100, 10, 10);
+    const current = base; // zoom 1
+    const next = zoomAtPoint(base, current, 25, 25, 2, 100, 100);
+    assert.equal(next.zoom, 2);
+    const l = computeZoomedLayout(100, 100, 10, 10, next.zoom, next.centerX, next.centerY);
+    // The fraction 0.25 must land back under x = 25
+    assert.ok(Math.abs(l.offsetX + 0.25 * l.renderW - 25) < 1e-9);
+    assert.ok(Math.abs(l.offsetY + 0.25 * l.renderH - 25) < 1e-9);
+});
+
+test('zoomAtPoint resets to fit when the new zoom is at or below 1', () => {
+    const base = computeLayout(100, 100, 10, 10);
+    assert.deepEqual(zoomAtPoint(base, base, 30, 30, 0.5, 100, 100),
+        { zoom: 1, centerX: 0.5, centerY: 0.5 });
+});
+
+

@@ -15,7 +15,7 @@
             <div class="content-area image-viewer-container" id="image-viewer-container" tabindex="-1">
                 <div id="image-viewer" class="image-viewer">
                     <canvas id="processed-preview" class="processed-preview hidden"></canvas>
-                    <img id="preview" data-i18n-alt="viewer.previewAlt" class="hidden" />
+                    <img id="preview" data-i18n-alt="viewer.previewAlt" class="viewer-image hidden" draggable="false" />
                     <canvas id="pixel-overlay" class="pixel-overlay"></canvas>
                     <canvas id="cursor-overlay" class="cursor-overlay"></canvas>
                     <p id="viewer-empty" class="text-muted italic" data-i18n="viewer.noImage"></p>
@@ -372,6 +372,10 @@
                     <dt><span class="shortcut-gesture" data-i18n="shortcuts.gestureWheel"></span></dt><dd data-i18n="shortcuts.wheelValue"></dd>
                     <dt><kbd data-mod="shift"></kbd><span class="shortcut-plus">+</span><span class="shortcut-gesture" data-i18n="shortcuts.gestureWheel"></span></dt><dd data-i18n="shortcuts.wheelVelocity"></dd>
                     <dt><span class="shortcut-gesture" data-i18n="shortcuts.gestureWheel"></span></dt><dd data-i18n="shortcuts.wheelVolume"></dd>
+                    <dt><span class="shortcut-gesture" data-i18n="shortcuts.gestureWheel"></span></dt><dd data-i18n="shortcuts.wheelZoom"></dd>
+                    <dt><span class="shortcut-gesture" data-i18n="shortcuts.gestureDrag"></span></dt><dd data-i18n="shortcuts.dragPan"></dd>
+                    <dt><kbd data-i18n="shortcuts.keySpace"></kbd><span class="shortcut-plus">+</span><span class="shortcut-gesture" data-i18n="shortcuts.gestureDrag"></span></dt><dd data-i18n="shortcuts.spacePan"></dd>
+                    <dt><span class="shortcut-gesture" data-i18n="shortcuts.gestureDoubleClick"></span></dt><dd data-i18n="shortcuts.dblZoomReset"></dd>
                     <dt><span class="shortcut-gesture" data-i18n="shortcuts.gestureDoubleClick"></span></dt><dd data-i18n="shortcuts.dblMirror"></dd>
                 </dl>
             </section>

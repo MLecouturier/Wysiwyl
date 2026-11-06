@@ -137,6 +137,10 @@
     "wheelValue": "Over a field or a slider: adjust it",
     "wheelVelocity": "Over the velocity range: move the upper handle",
     "wheelVolume": "Over a synth tab: adjust its volume",
+    "wheelZoom": "Over the image: zoom around the cursor",
+    "dragPan": "Over a zoomed image without a tool: move it",
+    "spacePan": "Over a zoomed image with a zone tool armed: move it",
+    "dblZoomReset": "On a zoomed image: fit it back to the viewer",
     "dblMirror": "In the projection window: toggle fullscreen"
   },
   "session": {

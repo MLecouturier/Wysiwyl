@@ -20,6 +20,7 @@
     align-items: center;
     justify-content: center;
     position: relative;
+    overflow: hidden; // clips the magnified image to the viewer
     background-image:
         linear-gradient(45deg, $color-bg-panel 25%, transparent 25%),
         linear-gradient(-45deg, $color-bg-panel 25%, transparent 25%),
@@ -31,13 +32,26 @@
     border-radius: $border-radius-base;
 }
 
-// The original image (<img>) and the processed image (canvas painted
-// from raw pixels) share the same layout: fill the viewer and scale
-// down with contain behavior
-.image-viewer img,
-.processed-preview {
+// Projection mirror's bottom layer: fills the viewer, contain-fit.
+.image-viewer img {
     width: 100%;
     height: 100%;
+    object-fit: contain;
+
+    // Display cells as crisp blocks, without smoothing
+    &.pixelated {
+        image-rendering: pixelated;
+        image-rendering: crisp-edges;
+    }
+}
+
+// Main viewer surfaces: the original (<img>) and the processed image
+// (canvas painted from raw pixels). Positioned and sized by
+// image/zoom.js to the zoom-aware layout rect, so the zoom can exceed
+// the viewer.
+.viewer-image,
+.processed-preview {
+    position: absolute;
     object-fit: contain;
 
     // Display cells as crisp blocks, without smoothing

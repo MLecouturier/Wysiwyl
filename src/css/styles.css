@@ -124,6 +124,7 @@ h2 {
   align-items: center;
   justify-content: center;
   position: relative;
+  overflow: hidden;
   background-image: linear-gradient(45deg, #1a1a1a 25%, transparent 25%), linear-gradient(-45deg, #1a1a1a 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #1a1a1a 75%), linear-gradient(-45deg, transparent 75%, #1a1a1a 75%);
   background-size: 1rem 1rem;
   background-position: 0 0, 0 0.5rem, 0.5rem -0.5rem, -0.5rem 0;
@@ -131,13 +132,22 @@ h2 {
   border-radius: 0.25rem;
 }
 
-.image-viewer img,
-.processed-preview {
+.image-viewer img {
   width: 100%;
   height: 100%;
   object-fit: contain;
 }
-.image-viewer img.pixelated,
+.image-viewer img.pixelated {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+.viewer-image,
+.processed-preview {
+  position: absolute;
+  object-fit: contain;
+}
+.viewer-image.pixelated,
 .processed-preview.pixelated {
   image-rendering: pixelated;
   image-rendering: crisp-edges;

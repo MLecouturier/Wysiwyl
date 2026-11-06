@@ -13,6 +13,7 @@ import {
     sliderToPosterizeLevels,
 } from '../core/utils.js';
 import { decodePixelResponse } from '../core/utils.js';
+import { computeZoomedLayout } from '../core/geometry.js';
 import { synthHighlights } from '../core/state.js';
 import { clearOverlay, redrawAllHighlights, getImageLayout } from '../synth/selection.js';
 import { sendSynthZones, sendSynthMuteZones } from '../synth/selection.js';
@@ -22,6 +23,7 @@ import { cancelZonePicking } from '../synth/selection.js';
 import { resetHistory } from '../synth/history.js';
 import { registerShortcut, registerEscape, SCOPE } from '../core/shortcuts.js';
 import { enterConsumed } from '../core/focus.js';
+import { resetZoom, syncViewerSurfaces } from './zoom.js';
 
 // Deferred so importing this module does not touch the Tauri globals.
 const invoke = (...args) => window.__TAURI__.core.invoke(...args);
@@ -120,6 +122,10 @@ export function updatePreviewSrc() {
 
     // The processed view is the grid render: show cells as crisp blocks
     previewCanvas.classList.toggle('pixelated', !showOrig && viewer.transformPreviewPixels === null);
+
+    // The surfaces are positioned explicitly (the zoom can exceed the
+    // viewer): size them to the zoom-aware layout of the shown pixels.
+    syncViewerSurfaces();
 
     appEvents.emit('viewer-image-changed');
 }
@@ -235,6 +241,7 @@ loadBtn.addEventListener('click', async () => {
     resetAllSynthZones();
     await refresh();
     resetHistory(); // a new image is a fresh undo baseline
+    resetZoom();    // a new image starts fit to the viewer
   } catch (err) {
     console.error('Error while loading the image:', err);
     dimensionsInfo.textContent = translateError(err);
@@ -270,6 +277,7 @@ export async function applyReshapedImage(result) {
     updatePreviewSrc();
     await refresh();
     resetHistory(); // a reshape is a fresh undo baseline
+    resetZoom();    // the reshaped image starts fit to the viewer
 }
 
 // ---------- Rotation (90° steps) ----------
@@ -498,6 +506,7 @@ export function enterCropMode() {
     if (!viewer.hasImage || cropState.mode) return;
     cancelZonePicking();
     closeTransformPanel();
+    resetZoom(); // crop works on the fit view, not on a magnified one
     cropState.mode = true;
     cropState.rect = null;
     cropState.drag = null;
@@ -607,22 +616,17 @@ export function isTransformPending() {
 // ---------- Alignment grid overlay ----------
 // Computes the render rect of the image currently displayed in the viewer:
 // the transform preview while the panel is open (its canvas changes size
-// with the rotation/perspective), the processed grid otherwise.
+// with the rotation/perspective), the processed grid otherwise. Follows
+// the viewer zoom like the rest of the overlays.
 export function getDisplayedImageLayout() {
     const vw = pixelOverlay.width;
     const vh = pixelOverlay.height;
     const pixels = viewer.transformPreviewPixels ?? viewer.processedPixels;
     if (!pixels || !pixels.width || !pixels.height || !vw || !vh) return null;
-    const imgRatio  = pixels.width / pixels.height;
-    const viewRatio = vw / vh;
-    let renderW, renderH;
-    if (imgRatio > viewRatio) { renderW = vw; renderH = vw / imgRatio; }
-    else                      { renderH = vh; renderW = vh * imgRatio; }
-    return {
-        renderW, renderH,
-        offsetX: (vw - renderW) / 2,
-        offsetY: (vh - renderH) / 2,
-    };
+    return computeZoomedLayout(
+        vw, vh, pixels.width, pixels.height,
+        viewer.zoom, viewer.zoomCenterX, viewer.zoomCenterY,
+    );
 }
 
 // Rule of thirds plus a finer 12-division grid, drawn over the displayed
@@ -721,6 +725,7 @@ export function openTransformPanel() {
     if (!viewer.hasImage || transformActive) return;
     cancelZonePicking();
     exitCropMode();
+    resetZoom(); // the transform preview is evaluated on the fit view
     transformActive = true;
     transformBtn.classList.add('active');
     transformPanel.classList.remove('hidden');

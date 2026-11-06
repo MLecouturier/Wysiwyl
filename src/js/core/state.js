@@ -153,4 +153,7 @@ export const viewer = {
     gridW: 1,                     // current grid width in pixels
     gridH: 1,                     // current grid height in pixels
     transformPreviewPixels: null, // live preview { width, height, rgba }, shown instead of the normal image
+    zoom: 1,                      // viewer magnification (1 = fit)
+    zoomCenterX: 0.5,             // image fraction (0..1) shown at the viewer center
+    zoomCenterY: 0.5,
 };

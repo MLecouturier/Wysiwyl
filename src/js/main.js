@@ -32,7 +32,7 @@ import { programMap, programKey, refreshProgramDisplays } from './synth/model.js
 import { setSynthPlaying, retranslateSynthElement, syncEyeButton } from './synth/model.js';
 import {
     resizeOverlay, drawSynthPixel, eraseSynthCursor, clearOverlay,
-    computeMuteCells, redrawAllHighlights,
+    computeMuteCells, redrawAllHighlights, redrawAllCursors,
 } from './synth/selection.js';
 import {
     zoneState, cancelZonePicking, zoneDragRect,
@@ -59,6 +59,9 @@ import {
     applyCropRatioToRect, clampCropRect, CROP_HANDLE_CURSORS,
     cropApplyBtn, transformApplyBtn, refreshDimensionsInfo, configureImageEditor,
 } from './image/editor.js';
+import {
+    canPan, isSpacePanModifier, isPanning, syncViewerSurfaces, configureZoom,
+} from './image/zoom.js';
 
 const { invoke } = window.__TAURI__.core;
 
@@ -375,7 +378,9 @@ registerShortcut({
 
 registerShortcut({
     id: 'play-all', key: ' ', scope: SCOPE.GLOBAL, primary: false, alt: false, shift: false,
-    when: e => !spaceConsumed(e.target),
+    // With a zone tool armed over a magnified image, Space is the pan
+    // modifier (see image/zoom.js)
+    when: e => !spaceConsumed(e.target) && !isSpacePanModifier(),
     run: () => playAllBtn.click(),
 });
 
@@ -430,7 +435,15 @@ window.addEventListener('blur', () => cancelTransientTools());
 
 installFocusPolicy();
 
+// The zoom module needs to know when a modal editor owns the left-drag
+// (crop / transform): panning is disabled then (see image/zoom.js).
+configureZoom({ isModalEditorActive: () => cropState.mode || isTransformActive() });
+
 pixelOverlay.addEventListener('mousedown', (e) => {
+    // A left-drag pans the image (see image/zoom.js): never start a
+    // zone edit underneath. Handled on #image-viewer, which receives the
+    // event whether or not a tool makes the overlay interactive.
+    if (canPan()) return;
     if (cropState.mode) {
         if (!viewer.hasImage) return;
         e.preventDefault(); // prevents image dragging during selection
@@ -454,6 +467,9 @@ pixelOverlay.addEventListener('mousedown', (e) => {
         drawCropOverlay();
         return;
     }
+    // The second click of a double-click (the viewer zoom reset) must not
+    // toggle a single-cell zone.
+    if (e.detail > 1) return;
     if (!zoneState.pick || !viewer.hasImage) return;
     const cell = cellFromClientPoint(e.clientX, e.clientY);
     if (!cell) return;
@@ -500,6 +516,7 @@ pixelOverlay.addEventListener('mousedown', (e) => {
 });
 
 pixelOverlay.addEventListener('mousemove', (e) => {
+    if (isPanning()) return;
     if (cropState.mode && !cropState.drag) {
         // Hover feedback: the cursor hints at what a press would grab
         const rect = pixelOverlay.getBoundingClientRect();
@@ -544,6 +561,7 @@ pixelOverlay.addEventListener('mousemove', (e) => {
 pixelOverlay.addEventListener('mouseleave', () => hideGridNoteHover());
 
 window.addEventListener('mouseup', (e) => {
+    if (isPanning()) return; // pan ends on its own mouseup (zoom.js)
     if (cropState.drag) {
         const wasNewFrame = cropState.drag.kind === 'new';
         cropState.drag = null;
@@ -592,6 +610,7 @@ window.addEventListener('mouseup', (e) => {
 
 new ResizeObserver(() => {
     resizeOverlay();
+    syncViewerSurfaces(); // the zoom stays centered on its image fraction
     clearOverlay();
     if (cropState.mode) {
         // The overlay was resized: overlay pixels changed meaning, re-fit the
@@ -914,6 +933,21 @@ appEvents.on('synth-list-changed', () => {
 appEvents.on('cursors-changed', () => mirror.pushCursors());
 appEvents.on('highlights-changed', () => mirror.pushZones());
 appEvents.on('viewer-image-changed', () => mirror.pushImage());
+
+// The viewer transform (zoom/pan) changed: repaint every overlay that
+// lives in layout space. Coalesced on the next frame — a trackpad zoom
+// fires a burst of wheel events.
+let zoomRedrawRaf = null;
+appEvents.on('viewer-zoom-changed', () => {
+    if (zoomRedrawRaf !== null) return;
+    zoomRedrawRaf = requestAnimationFrame(() => {
+        zoomRedrawRaf = null;
+        redrawAllHighlights();
+        redrawAllCursors();
+        if (cropState.mode) drawCropOverlay();
+        else if (isTransformActive()) redrawTransformOverlay();
+    });
+});
 
 // The image editor reaches the mirror routing through this hook (the
 // mirror is created above).

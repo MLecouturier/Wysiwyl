@@ -137,6 +137,10 @@
     "wheelValue": "Sur un champ ou un slider : l'ajuster",
     "wheelVelocity": "Sur la plage de vélocité : déplacer la poignée haute",
     "wheelVolume": "Sur l'onglet d'un synthé : régler son volume",
+    "wheelZoom": "Sur l'image : zoomer autour du curseur",
+    "dragPan": "Sur une image zoomée sans outil : la déplacer",
+    "spacePan": "Sur une image zoomée avec un outil de zone armé : la déplacer",
+    "dblZoomReset": "Sur une image zoomée : la réajuster au viewer",
     "dblMirror": "Dans la fenêtre de projection : basculer le plein écran"
   },
   "session": {

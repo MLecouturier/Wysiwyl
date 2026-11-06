@@ -1,7 +1,7 @@
 // Synth selection: the zone/mute editing, the overlay highlights and
 // the mouse-based zone selection tools.
 
-import { cellSetFromZones, computeLayout, drawCursorCell, drawZones, rebuildZones, strokeCellOutline, zoneCellSet } from '../core/geometry.js';
+import { cellSetFromZones, computeZoomedLayout, drawCursorCell, drawZones, rebuildZones, strokeCellOutline, zoneCellSet } from '../core/geometry.js';
 import { appEvents, synthColors, synthCursorGrid, synthCursorMuted, synthCursors, synthHighlights, viewer } from '../core/state.js';
 import { syncEyeButton, updateZonesLabel, synthNoteForPixel } from './model.js';
 import { midiNoteNameHtml } from '../core/utils.js';
@@ -228,25 +228,13 @@ export function drawSynthPixel(synthId, cursor, muted, w = viewer.gridW, h = vie
 
     const ctx = cursorOverlay.getContext('2d');
 
-    // Rendered dimensions of the image in the viewer (object-fit: contain)
-    const vw = cursorOverlay.width;
-    const vh = cursorOverlay.height;
-    const imgRatio = w / h;
-    const viewRatio = vw / vh;
-
-    let renderW, renderH, offsetX, offsetY;
-    if (imgRatio > viewRatio) {
-        renderW = vw;
-        renderH = vw / imgRatio;
-    } else {
-        renderH = vh;
-        renderW = vh * imgRatio;
-    }
-    offsetX = (vw - renderW) / 2;
-    offsetY = (vh - renderH) / 2;
-
-    const cellW = renderW / w;
-    const cellH = renderH / h;
+    // Zoom-aware layout: the playhead follows the viewer magnification
+    const layout = computeZoomedLayout(
+        cursorOverlay.width, cursorOverlay.height, w, h,
+        viewer.zoom, viewer.zoomCenterX, viewer.zoomCenterY,
+    );
+    if (!layout) return;
+    const { offsetX, offsetY, cellW, cellH } = layout;
 
     // Only clear the previous pixel of this synth — decoded against the
     // grid it was recorded on. When that grid is the one that just
@@ -317,11 +305,34 @@ export function clearOverlay() {
     synthCursorGrid.clear();
     appEvents.emit('cursors-changed');
 }
-// Computes the render dimensions of the image in the viewer (object-fit:
-// contain). Thin binding of the shared renderer on the main window's
-// overlay canvas, so every call site keeps the same signature.
+
+// Repaints every playhead on the cursor layer: called when the viewer
+// layout changes (zoom/pan) so the cursors stay on their cells. Each
+// cursor is decoded against the grid it was recorded on.
+export function redrawAllCursors() {
+    const ctx = cursorOverlay.getContext('2d');
+    ctx.clearRect(0, 0, cursorOverlay.width, cursorOverlay.height);
+    synthCursors.forEach((cursor, sid) => {
+        const grid = synthCursorGrid.get(sid);
+        if (!grid || !grid.w || !grid.h) return;
+        const layout = computeZoomedLayout(
+            cursorOverlay.width, cursorOverlay.height, grid.w, grid.h,
+            viewer.zoom, viewer.zoomCenterX, viewer.zoomCenterY,
+        );
+        if (!layout) return;
+        drawPixelAt(ctx, sid, cursor, layout.offsetX, layout.offsetY, layout.cellW, layout.cellH, synthCursorMuted.get(sid), grid.w);
+    });
+    appEvents.emit('cursors-changed');
+}
+// Computes the render dimensions of the image in the viewer, magnified by
+// the viewer zoom (1 = plain contain-fit). Thin binding of the shared
+// renderer on the main window's overlay canvas, so every call site keeps
+// the same signature and follows the zoom automatically.
 export function getImageLayout() {
-    return computeLayout(pixelOverlay.width, pixelOverlay.height, viewer.gridW, viewer.gridH);
+    return computeZoomedLayout(
+        pixelOverlay.width, pixelOverlay.height, viewer.gridW, viewer.gridH,
+        viewer.zoom, viewer.zoomCenterX, viewer.zoomCenterY,
+    );
 }
 
 // Mute cells of a synth: the manually silenced pixels, precomputed so the

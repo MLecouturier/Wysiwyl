@@ -208,6 +208,75 @@ export function computeLayout(viewW, viewH, gridW, gridH) {
     };
 }
 
+// ---------- Zoomed viewer layout ----------
+// The main viewer can be magnified for precise zone selection on busy
+// images. computeLayout stays the plain contain-fit used by the
+// projection mirror; the helpers below wrap it for the interactive main
+// viewer only. All pure, unit-tested.
+
+export const MIN_ZOOM = 1;
+export const MAX_ZOOM = 40;
+
+// Clamps a magnification factor into the supported range.
+export function clampZoom(zoom) {
+    if (!Number.isFinite(zoom)) return MIN_ZOOM;
+    return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom));
+}
+
+// Keeps the view inside the image: on an axis where the rendered image is
+// larger than the viewer, the center fraction is constrained so no empty
+// gap shows past an edge; otherwise the axis is centered.
+export function clampZoomCenter(centerX, centerY, viewW, viewH, renderW, renderH) {
+    const clampAxis = (c, view, render) => {
+        if (render <= view) return 0.5;
+        const m = view / (2 * render);
+        return Math.min(1 - m, Math.max(m, c));
+    };
+    return {
+        x: clampAxis(centerX, viewW, renderW),
+        y: clampAxis(centerY, viewH, renderH),
+    };
+}
+
+// Contain-fit layout magnified by `zoom`, positioned so the image
+// fraction (centerX, centerY) sits at the viewer center. At zoom <= 1 it
+// is exactly computeLayout.
+export function computeZoomedLayout(viewW, viewH, gridW, gridH, zoom = 1, centerX = 0.5, centerY = 0.5) {
+    const base = computeLayout(viewW, viewH, gridW, gridH);
+    if (!base) return null;
+    const z = clampZoom(zoom);
+    if (z <= 1) return base;
+    const renderW = base.renderW * z;
+    const renderH = base.renderH * z;
+    const c = clampZoomCenter(centerX, centerY, viewW, viewH, renderW, renderH);
+    return {
+        renderW, renderH,
+        offsetX: viewW / 2 - c.x * renderW,
+        offsetY: viewH / 2 - c.y * renderH,
+        cellW: renderW / gridW,
+        cellH: renderH / gridH,
+        gridW, gridH,
+    };
+}
+
+// New zoom + center that keeps the image point under (viewX, viewY)
+// (viewer-relative pixels) fixed while magnifying. `base` is the fit
+// layout, `current` the current zoomed layout.
+export function zoomAtPoint(base, current, viewX, viewY, newZoom, viewW, viewH) {
+    const z = clampZoom(newZoom);
+    if (z <= 1) return { zoom: 1, centerX: 0.5, centerY: 0.5 };
+    const fx = (viewX - current.offsetX) / current.renderW;
+    const fy = (viewY - current.offsetY) / current.renderH;
+    const renderW = base.renderW * z;
+    const renderH = base.renderH * z;
+    const c = clampZoomCenter(
+        fx + (viewW / 2 - viewX) / renderW,
+        fy + (viewH / 2 - viewY) / renderH,
+        viewW, viewH, renderW, renderH,
+    );
+    return { zoom: z, centerX: c.x, centerY: c.y };
+}
+
 // Builds the set of selected cells from zones (connected components
 // stored as runs): "col,row" keys, one per covered cell.
 export function cellSetFromZones(zones) {
