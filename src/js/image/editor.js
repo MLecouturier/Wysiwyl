@@ -62,6 +62,14 @@ const simplify = document.querySelector('#simplify');
 const simplifyValue = document.querySelector('#simplify-value');
 const autoLevelsBtn = document.querySelector('#auto-levels-btn');
 const dimensionsInfo = document.querySelector('#dimensions-info');
+const ditherBtn = document.querySelector('#dither-btn');
+const ditherOptionBtn = document.querySelector('#dither-option-btn');
+const ditherPanel = document.querySelector('#dither-panel');
+const ditherLevels = document.querySelector('#dither-levels');
+const ditherLevelsValue = document.querySelector('#dither-levels-value');
+const ditherStrength = document.querySelector('#dither-strength');
+const ditherStrengthValue = document.querySelector('#dither-strength-value');
+const ditherSerpentineBtn = document.querySelector('#dither-serpentine-btn');
 
 // Crop state, exported so main.js's shared pixelOverlay listeners can
 // drive it without a large accessor surface.
@@ -84,6 +92,10 @@ export function buildParams() {
     clarity:          Number(clarity.value),
     simplify:         Number(simplify.value),
     auto_levels:      autoLevelsBtn.classList.contains('active'),
+    dither:            ditherBtn.classList.contains('active'),
+    dither_levels:     Number(ditherLevels.value),
+    dither_strength:   Number(ditherStrength.value),
+    dither_serpentine: ditherSerpentineBtn.classList.contains('active'),
   };
 }
 
@@ -138,6 +150,8 @@ export function syncLabels() {
   textureValue.textContent    = Number(texture.value).toFixed(0);
   clarityValue.textContent    = Number(clarity.value).toFixed(0);
   simplifyValue.textContent   = Number(simplify.value).toFixed(0);
+  ditherLevelsValue.textContent   = Number(ditherLevels.value).toFixed(0);
+  ditherStrengthValue.textContent = Number(ditherStrength.value).toFixed(0);
 
   const p = sliderToPosterizeLevels(Number(posterize.value));
   posterizeValue.textContent = p ? t('controls.posterizeLevels', { count: p }) : t('controls.posterizeOff');
@@ -219,6 +233,7 @@ loadBtn.addEventListener('click', async () => {
 
     exitCropMode();
     closeTransformPanel();
+    closeDitherPanel();
 
     viewer.origWidth   = result.orig_width;
     viewer.origHeight  = result.orig_height;
@@ -506,6 +521,7 @@ export function enterCropMode() {
     if (!viewer.hasImage || cropState.mode) return;
     cancelZonePicking();
     closeTransformPanel();
+    closeDitherPanel();
     resetZoom(); // crop works on the fit view, not on a magnified one
     cropState.mode = true;
     cropState.rect = null;
@@ -725,6 +741,7 @@ export function openTransformPanel() {
     if (!viewer.hasImage || transformActive) return;
     cancelZonePicking();
     exitCropMode();
+    closeDitherPanel();
     resetZoom(); // the transform preview is evaluated on the fit view
     transformActive = true;
     transformBtn.classList.add('active');
@@ -827,6 +844,72 @@ transformApplyBtn.addEventListener('click', async () => {
     }
 });
 
+// ---------- Dithering (Floyd-Steinberg) ----------
+// The toggle arms the finishing quantization step; the options panel is a
+// live popover (its sliders re-render the grid immediately) that closes on
+// its own after a short idle, like the projection effect options.
+const DITHER_PANEL_IDLE_MS = 10000;
+let ditherPanelOpen = false;
+let ditherPanelCloseTimer = 0;
+
+function armDitherPanelClose() {
+    clearTimeout(ditherPanelCloseTimer);
+    ditherPanelCloseTimer = 0;
+    if (!ditherPanelOpen) return;
+    ditherPanelCloseTimer = setTimeout(closeDitherPanel, DITHER_PANEL_IDLE_MS);
+}
+
+export function openDitherPanel() {
+    if (!viewer.hasImage || ditherPanelOpen) return;
+    cancelZonePicking();
+    exitCropMode();
+    closeTransformPanel();
+    ditherPanelOpen = true;
+    ditherOptionBtn.classList.add('active');
+    ditherPanel.classList.remove('hidden');
+    armDitherPanelClose();
+}
+
+export function closeDitherPanel() {
+    if (!ditherPanelOpen) return;
+    ditherPanelOpen = false;
+    clearTimeout(ditherPanelCloseTimer);
+    ditherPanelCloseTimer = 0;
+    ditherOptionBtn.classList.remove('active');
+    ditherPanel.classList.add('hidden');
+}
+
+ditherBtn.addEventListener('click', () => {
+    if (!viewer.hasImage) return;
+    ditherBtn.classList.toggle('active');
+    appEvents.emit('session-dirty');
+    scheduleRefresh();
+});
+
+ditherOptionBtn.addEventListener('click', () => {
+    ditherPanelOpen ? closeDitherPanel() : openDitherPanel();
+});
+
+ditherSerpentineBtn.addEventListener('click', () => {
+    ditherSerpentineBtn.classList.toggle('active');
+    appEvents.emit('session-dirty');
+    scheduleRefresh();
+});
+
+[ditherLevels, ditherStrength].forEach(el => {
+    el.addEventListener('input', () => {
+        syncLabels();
+        scheduleRefresh();
+    });
+});
+
+// Any interaction inside the panel pushes the idle auto-close back
+ditherPanel.addEventListener('input', armDitherPanelClose);
+ditherPanel.addEventListener('click', armDitherPanelClose);
+
+// A transient popover goes before the interactive modes (crop/transform at 40)
+registerEscape(50, () => ditherPanelOpen, closeDitherPanel);
+
 // ---------- Reset ----------
 resetBtn.addEventListener('click', () => {
   gridSlider.value  = SLIDER_STEPS;
@@ -838,6 +921,10 @@ resetBtn.addEventListener('click', () => {
   clarity.value    = 0;
   simplify.value   = 0;
   autoLevelsBtn.classList.remove('active');
+  ditherBtn.classList.remove('active');
+  ditherLevels.value = 4;
+  ditherStrength.value = 100;
+  ditherSerpentineBtn.classList.remove('active');
 
   appEvents.emit('session-dirty');
   syncLabels();
@@ -867,6 +954,8 @@ const sliderDefaults = new Map([
   [texture, 0],
   [clarity, 0],
   [simplify, 0],
+  [ditherLevels, 4],
+  [ditherStrength, 100],
 ]);
 sliderDefaults.forEach((def, el) => {
   el.addEventListener('dblclick', () => {

@@ -45,9 +45,16 @@
                                     <span class="material-symbols-outlined" aria-hidden="true">crop</span>
                                 </button>
                                 <button id="transform-img-btn" class="icon-btn" data-i18n-title="controls.transform">
+                                    <span class="material-symbols-outlined" aria-hidden="true">straighten</span>
+                                </button>
+                                <div class="flex-none w-2"></div>
+                                <button id="dither-btn" class="icon-btn" data-i18n-title="controls.dither">
+                                    <span class="material-symbols-outlined" aria-hidden="true">blur_on</span>
+                                </button>
+                                <button id="dither-option-btn" class="icon-btn" data-i18n-title="controls.ditherOptions">
                                     <span class="material-symbols-outlined" aria-hidden="true">tune</span>
                                 </button>
-                                <div class="flex-none w-4"></div>
+                                <div class="flex-none w-2"></div>
                                 <label class="flex-auto columns-control" data-i18n-title="controls.columns">
                                     <span class="control-head"><span data-i18n="controls.columns"></span> <span id="grid-width-value" class="control-value">-</span></span>
                                     <input type="range" id="grid-width" min="0" max="1000" value="1000" />
@@ -106,6 +113,25 @@
                                         <div class="flex-fill"></div>
                                         <button id="transform-apply-btn" class="primary" data-i18n="controls.apply"></button>
                                         <button id="transform-cancel-btn" class="secondary" data-i18n="controls.cancel"></button>
+                                    </div>
+                                </div>
+                                <div id="dither-panel" class="mode-panel hidden">
+                                    <div class="flex flex-auto items-center gap-4">
+                                        <label class="w-2-5" data-i18n-title="controls.ditherLevels">
+                                            <span class="control-head"><span data-i18n="controls.ditherLevels"></span> <span id="dither-levels-value" class="control-value">4</span></span>
+                                            <input type="range" id="dither-levels" min="2" max="64" value="4" step="1" />
+                                        </label>
+                                        <label class="w-2-5" data-i18n-title="controls.ditherStrength">
+                                            <span class="control-head"><span data-i18n="controls.ditherStrength"></span> <span id="dither-strength-value" class="control-value">100</span></span>
+                                            <input type="range" id="dither-strength" min="0" max="100" value="100" step="1" />
+                                        </label>
+                                    </div>
+                                    <div class="mode-bar flex-auto">
+                                        <button id="dither-serpentine-btn" class="toggle-btn" data-i18n-title="controls.ditherSerpentine">
+                                            <span class="material-symbols-outlined" aria-hidden="true">swap_horiz</span>
+                                            <span data-i18n="controls.ditherSerpentine"></span>
+                                        </button>
+                                        <div class="flex-fill"></div>
                                     </div>
                                 </div>
 

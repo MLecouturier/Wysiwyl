@@ -86,6 +86,25 @@ pub struct AdjustmentParams {
     pub clarity: f32,
     pub simplify: f32,
     pub auto_levels: bool,
+    /// Floyd-Steinberg dithering: quantizes each channel to `dither_levels`
+    /// steps while diffusing the quantization error to the neighboring
+    /// pixels. An independent finishing step, applied after posterize.
+    #[serde(default)]
+    pub dither: bool,
+    #[serde(default = "default_dither_levels")]
+    pub dither_levels: u8,
+    #[serde(default = "default_dither_strength")]
+    pub dither_strength: f32,
+    #[serde(default)]
+    pub dither_serpentine: bool,
+}
+
+pub(crate) fn default_dither_levels() -> u8 {
+    4
+}
+
+pub(crate) fn default_dither_strength() -> f32 {
+    100.0
 }
 
 pub(crate) fn encode_to_base64_png(img: &DynamicImage) -> Result<String, AppError> {
@@ -536,6 +555,18 @@ pub(crate) fn render_processed(original: &DynamicImage, params: &AdjustmentParam
         }
     }
 
+    // Floyd-Steinberg dithering, an independent finishing step: it
+    // quantizes on its own level count and diffuses the error, so it runs
+    // after (and composes with) the plain posterize above.
+    if params.dither {
+        img = floyd_steinberg_dither(
+            &img,
+            params.dither_levels,
+            params.dither_strength,
+            params.dither_serpentine,
+        );
+    }
+
     img
 }
 
@@ -631,6 +662,84 @@ fn posterize(img: &DynamicImage, levels: u8) -> DynamicImage {
             pixel[channel] = posterized as u8;
         }
     }
+    DynamicImage::ImageRgba8(rgba)
+}
+
+/// Floyd-Steinberg dithering: quantizes each RGB channel to `levels` steps
+/// (the same steps as `posterize`) while diffusing the quantization error
+/// onto the not-yet-processed neighbors with the classic Floyd-Steinberg
+/// weights (7/16 right, 3/16 bottom-left, 5/16 bottom, 1/16 bottom-right),
+/// scaled by `strength` (a percentage in [0, 100]; 0 disables the diffusion,
+/// leaving a plain posterize). `serpentine` alternates the scan direction
+/// every other row, which spreads the residual error more evenly and avoids
+/// the diagonal "worm" artifacts of a single-direction scan. Alpha is copied
+/// through unchanged.
+fn floyd_steinberg_dither(
+    img: &DynamicImage,
+    levels: u8,
+    strength: f32,
+    serpentine: bool,
+) -> DynamicImage {
+    let step = 255.0 / (levels.max(2) as f32 - 1.0);
+    let amount = (strength / 100.0).clamp(0.0, 1.0);
+
+    let mut rgba = img.to_rgba8();
+    let (width, height) = rgba.dimensions();
+    if width == 0 || height == 0 {
+        return DynamicImage::ImageRgba8(rgba);
+    }
+
+    // The diffusion needs fractional, error-carrying values: the source
+    // channels are expanded to f32 and the quantized result is written back
+    // into the RGBA buffer as the scan goes.
+    let mut work: Vec<[f32; 3]> = rgba
+        .pixels()
+        .map(|p| [p[0] as f32, p[1] as f32, p[2] as f32])
+        .collect();
+
+    let w = width as i64;
+    let h = height as i64;
+
+    for y in 0..h {
+        // Serpentine: right-to-left on odd rows, so the error always flows
+        // toward the pixels still to be processed.
+        let left_to_right = !serpentine || y % 2 == 0;
+        let dir = if left_to_right { 1i64 } else { -1i64 };
+
+        for i in 0..w {
+            let x = if left_to_right { i } else { w - 1 - i };
+            let idx = (y * w + x) as usize;
+
+            let mut err = [0.0f32; 3];
+            let mut quant = [0u8; 3];
+            for c in 0..3 {
+                let v = work[idx][c].clamp(0.0, 255.0);
+                let q = ((v / step).round() * step).clamp(0.0, 255.0);
+                quant[c] = q as u8;
+                err[c] = (v - q) * amount;
+            }
+
+            let px = rgba.get_pixel_mut(x as u32, y as u32);
+            px[0] = quant[0];
+            px[1] = quant[1];
+            px[2] = quant[2];
+
+            // Diffuse the error onto the neighbors, in the scan direction
+            let spread = |work: &mut Vec<[f32; 3]>, nx: i64, ny: i64, factor: f32| {
+                if nx >= 0 && nx < w && ny >= 0 && ny < h {
+                    let nidx = (ny * w + nx) as usize;
+                    for c in 0..3 {
+                        work[nidx][c] += err[c] * factor;
+                    }
+                }
+            };
+            spread(&mut work, x + dir, y, 7.0 / 16.0);
+            spread(&mut work, x - dir, y + 1, 3.0 / 16.0);
+            spread(&mut work, x, y + 1, 5.0 / 16.0);
+            spread(&mut work, x + dir, y + 1, 1.0 / 16.0);
+        }
+    }
+
     DynamicImage::ImageRgba8(rgba)
 }
 
@@ -1089,5 +1198,53 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn floyd_steinberg_quantizes_to_the_requested_levels() {
+        // 16x16 gradient, 2 levels: every channel must end up pure black or white
+        let mut buf = image::RgbaImage::new(16, 16);
+        for y in 0..16 {
+            for x in 0..16 {
+                let v = (x * 255 / 15) as u8;
+                buf.put_pixel(x, y, image::Rgba([v, v, v, 255]));
+            }
+        }
+        let out =
+            floyd_steinberg_dither(&DynamicImage::ImageRgba8(buf), 2, 100.0, false).to_rgba8();
+        assert!(out.pixels().all(|p| p[0] == 0 || p[0] == 255));
+    }
+
+    #[test]
+    fn floyd_steinberg_diffuses_the_error() {
+        // Uniform mid-gray, 2 levels: plain posterize would round every
+        // pixel to white; the diffusion must spread the error and produce a
+        // mix of black and white pixels.
+        let buf = image::RgbaImage::from_pixel(8, 8, image::Rgba([128, 128, 128, 255]));
+        let dithered =
+            floyd_steinberg_dither(&DynamicImage::ImageRgba8(buf.clone()), 2, 100.0, false)
+                .to_rgba8();
+        let has_black = dithered.pixels().any(|p| p[0] == 0);
+        let has_white = dithered.pixels().any(|p| p[0] == 255);
+        assert!(has_black && has_white, "the error must be diffused");
+
+        // At strength 0 the diffusion is off: a plain (uniform) quantize
+        assert!(floyd_steinberg_dither(&DynamicImage::ImageRgba8(buf), 2, 0.0, false)
+            .to_rgba8()
+            .pixels()
+            .all(|p| p[0] == 255));
+    }
+
+    #[test]
+    fn floyd_steinberg_preserves_alpha_and_serpentine_quantizes() {
+        let mut buf = image::RgbaImage::new(8, 8);
+        for y in 0..8 {
+            for x in 0..8 {
+                let v = (x * 255 / 7) as u8;
+                buf.put_pixel(x, y, image::Rgba([v, v, v, 90]));
+            }
+        }
+        let out = floyd_steinberg_dither(&DynamicImage::ImageRgba8(buf), 4, 100.0, true).to_rgba8();
+        assert!(out.pixels().all(|p| p[3] == 90), "alpha must be copied through");
     }
 }

@@ -287,6 +287,10 @@ const texture         = document.querySelector('#texture');
 const clarity         = document.querySelector('#clarity');
 const simplify        = document.querySelector('#simplify');
 const autoLevelsBtn   = document.querySelector('#auto-levels-btn');
+const ditherBtn       = document.querySelector('#dither-btn');
+const ditherLevels    = document.querySelector('#dither-levels');
+const ditherStrength  = document.querySelector('#dither-strength');
+const ditherSerpentineBtn = document.querySelector('#dither-serpentine-btn');
 
 // Image controls to lock while a synthesizer is playing
 // (the "Show original" button is intentionally excluded, and the value
@@ -670,6 +674,10 @@ function buildSessionUi() {
         clarity: Number(clarity.value),
         simplify: Number(simplify.value),
         auto_levels: autoLevelsBtn.classList.contains('active'),
+        dither: ditherBtn.classList.contains('active'),
+        dither_levels: Number(ditherLevels.value),
+        dither_strength: Number(ditherStrength.value),
+        dither_serpentine: ditherSerpentineBtn.classList.contains('active'),
         mirror_zones_mode: mirror.getZonesMode(),
         mirror_effect: mirror.getEffect(),
         mirror_effect_options: mirror.getEffectOptions(),
@@ -749,6 +757,10 @@ async function openSession() {
         clarity.value = session.image_settings.clarity ?? 0;
         simplify.value = session.image_settings.simplify ?? 0;
         autoLevelsBtn.classList.toggle('active', session.image_settings.auto_levels ?? false);
+        ditherBtn.classList.toggle('active', session.image_settings.dither ?? false);
+        ditherLevels.value = session.image_settings.dither_levels ?? 4;
+        ditherStrength.value = session.image_settings.dither_strength ?? 100;
+        ditherSerpentineBtn.classList.toggle('active', session.image_settings.dither_serpentine ?? false);
         mirror.setZonesMode(session.image_settings.mirror_zones_mode);
         // Projection effect: an id saved by a newer version falls back to
         // the no-op effect (see setEffect); the options ride along when

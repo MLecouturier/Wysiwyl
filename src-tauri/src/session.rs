@@ -10,7 +10,10 @@ use tauri::{AppHandle, Manager};
 
 use crate::config::ConfigState;
 use crate::error::{err, AppError};
-use crate::image_processing::{decode_image_bounded, encode_to_base64_png, fit_image_size};
+use crate::image_processing::{
+    decode_image_bounded, default_dither_levels, default_dither_strength, encode_to_base64_png,
+    fit_image_size,
+};
 use crate::locks::MutexExt;
 use crate::state::{ImageState, MidiState, ProgramState, Synth, SynthConfig, SynthState, Zone};
 use crate::zone::normalize_zones;
@@ -31,6 +34,14 @@ pub struct SessionUi {
     pub simplify: f32,
     #[serde(default)]
     pub auto_levels: bool,
+    #[serde(default)]
+    pub dither: bool,
+    #[serde(default = "default_dither_levels")]
+    pub dither_levels: u8,
+    #[serde(default = "default_dither_strength")]
+    pub dither_strength: f32,
+    #[serde(default)]
+    pub dither_serpentine: bool,
     /// Zone display mode of the projection mirror (see
     /// `deserialize_mirror_zones_mode`). Absent when the frontend state
     /// predates the three-mode toggle.
@@ -134,6 +145,14 @@ pub struct SessionImageSettings {
     pub simplify: f32,
     #[serde(default)]
     pub auto_levels: bool,
+    #[serde(default)]
+    pub dither: bool,
+    #[serde(default = "default_dither_levels")]
+    pub dither_levels: u8,
+    #[serde(default = "default_dither_strength")]
+    pub dither_strength: f32,
+    #[serde(default)]
+    pub dither_serpentine: bool,
     /// Zone display mode of the projection mirror (see SessionUi).
     #[serde(
         alias = "mirror_show_zones",
@@ -411,6 +430,10 @@ fn save_session_blocking(
             clarity: ui.clarity,
             simplify: ui.simplify,
             auto_levels: ui.auto_levels,
+            dither: ui.dither,
+            dither_levels: ui.dither_levels,
+            dither_strength: ui.dither_strength,
+            dither_serpentine: ui.dither_serpentine,
             mirror_zones_mode: ui.mirror_zones_mode,
             mirror_effect: ui.mirror_effect,
             mirror_effect_options: ui.mirror_effect_options,
@@ -697,6 +720,10 @@ mod tests {
             clarity: 0.0,
             simplify: 0.0,
             auto_levels: true,
+            dither: false,
+            dither_levels: 4,
+            dither_strength: 100.0,
+            dither_serpentine: false,
             mirror_zones_mode: "active".into(),
             mirror_effect: "none".into(),
             mirror_effect_options: HashMap::new(),
@@ -747,6 +774,10 @@ mod tests {
             clarity: 0.0,
             simplify: 0.0,
             auto_levels: true,
+            dither: true,
+            dither_levels: 2,
+            dither_strength: 80.0,
+            dither_serpentine: true,
             mirror_zones_mode: "all".into(),
             mirror_effect: "drag".into(),
             mirror_effect_options: HashMap::from([
@@ -761,6 +792,10 @@ mod tests {
         assert_eq!(restored.mirror_effect, "drag");
         assert_eq!(restored.mirror_effect_options.get("length"), Some(&20.0));
         assert_eq!(restored.mirror_effect_synths, vec![2, 3]);
+        assert!(restored.dither);
+        assert_eq!(restored.dither_levels, 2);
+        assert_eq!(restored.dither_strength, 80.0);
+        assert!(restored.dither_serpentine);
 
         // An id the registry does not know (yet) parses fine
         let unknown = r#"{
