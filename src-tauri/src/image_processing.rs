@@ -1229,10 +1229,12 @@ mod tests {
         assert!(has_black && has_white, "the error must be diffused");
 
         // At strength 0 the diffusion is off: a plain (uniform) quantize
-        assert!(floyd_steinberg_dither(&DynamicImage::ImageRgba8(buf), 2, 0.0, false)
-            .to_rgba8()
-            .pixels()
-            .all(|p| p[0] == 255));
+        assert!(
+            floyd_steinberg_dither(&DynamicImage::ImageRgba8(buf), 2, 0.0, false)
+                .to_rgba8()
+                .pixels()
+                .all(|p| p[0] == 255)
+        );
     }
 
     #[test]
@@ -1245,6 +1247,9 @@ mod tests {
             }
         }
         let out = floyd_steinberg_dither(&DynamicImage::ImageRgba8(buf), 4, 100.0, true).to_rgba8();
-        assert!(out.pixels().all(|p| p[3] == 90), "alpha must be copied through");
+        assert!(
+            out.pixels().all(|p| p[3] == 90),
+            "alpha must be copied through"
+        );
     }
 }
