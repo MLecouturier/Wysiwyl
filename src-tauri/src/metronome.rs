@@ -1091,35 +1091,25 @@ fn ratio_cycle_beats(ratio: f64) -> u64 {
 }
 
 /// Effective master-tempo quantize period, in beats: the user's period
-/// rounded up to the next multiple of the ratio's cycle, so every resync
-/// boundary lands on a natural step of the synth. Without this the boundary
-/// can fall mid-cycle and, since the quantize is delay-only, hold a step —
-/// producing a rhythmic hole instead of a clean realignment.
+/// rounded up to the next multiple of the ratio's cycle, so the period holds
+/// a whole number of the synth's steps and a resync boundary always lands on
+/// a natural step.
 fn effective_quantize_period(ratio: f64, beats: u8) -> u64 {
     let cycle = ratio_cycle_beats(ratio);
     let beats = beats.max(1) as u64;
     beats.div_ceil(cycle) * cycle
 }
 
-/// Smallest resync boundary strictly after `wake`: a multiple of
-/// `beats * WAKES_PER_BEAT` wakes. `beats` is the quantize period in
-/// master beats.
-fn next_resync_boundary(wake: u64, beats: u64) -> u64 {
-    let period = beats.max(1) * WAKES_PER_BEAT;
-    (wake / period + 1) * period
-}
-
-/// Whether a due step must be held until the next resync boundary: true
-/// when the boundary falls before the following step (closer than the
-/// interval of the step that just completed). A step landing exactly on a
-/// boundary is never held. Delay-only: a step is never advanced, so a
-/// sounding note is never cut by the quantize.
-fn should_hold_for_quantize(wake: u64, beats: u64, interval_wakes: u32) -> bool {
-    let period = beats.max(1) * WAKES_PER_BEAT;
-    if wake.is_multiple_of(period) {
-        return false;
-    }
-    next_resync_boundary(wake, beats) - wake < interval_wakes.max(1) as u64
+/// Step rate used while the quantize is on: the stored ratio snapped to the
+/// exact fraction that divides the effective period into a whole number of
+/// steps (`n / period`). Feeding this to the accumulator spreads the whole
+/// period's timing offset evenly over its `n` steps — the last one landing
+/// on the boundary — instead of holding a single step there. For the
+/// approximate UI decimals (0.66, 1.33) this is a sub-wake speed-up
+/// (`2/3`, `4/3`); for exact ratios it is the ratio itself.
+fn quantized_ratio(ratio: f64, beats: u8) -> f64 {
+    let period = effective_quantize_period(ratio, beats) as f64;
+    (ratio * period).round().max(1.0) / period
 }
 
 /// Duration of a note length, in beats of the synth's own tempo. When
@@ -1792,8 +1782,8 @@ fn tick_synth(
     // (wake % WAKES_PER_BEAT == 0) so playback begins in phase with the
     // metronome. With quantize on it waits for the next resync boundary
     // instead, so the very first step already lands on the cycle-aligned
-    // grid (no initial held step). Nothing is accumulated while waiting;
-    // the wake then plays the first pixel.
+    // grid. Nothing is accumulated while waiting; the wake then plays the
+    // first pixel.
     if synth.playback.start_pending {
         let period = if synth.config.quantize {
             effective_quantize_period(synth.config.tempo_ratio, synth.config.quantize_beats)
@@ -1806,23 +1796,25 @@ fn tick_synth(
         }
         synth.playback.start_pending = false;
         synth.playback.tempo_accumulator = 0.0;
-        synth.playback.wakes_since_step = 0;
         if let Some(length_beats) = step_synth_once(app, synth, image, midi, tick, Some(wake)) {
             synth.playback.tempo_accumulator = 1.0 - length_beats;
         }
         return;
     }
 
-    // Interval of the step being completed, in wakes: incremented on
-    // every wake, reset when the synth steps. Used by the quantize
-    // look-ahead below.
-    synth.playback.wakes_since_step = synth.playback.wakes_since_step.saturating_add(1);
-
     // Tempo desynchronization: each wake adds a twelfth of the synth's
-    // tempo ratio to its accumulator (one beat = 12 wakes); the synth
+    // step rate to its accumulator (one beat = 12 wakes); the synth
     // advances when at least one full step has accumulated (e.g. ratio
-    // 0.5 = one pixel every two beats).
-    synth.playback.tempo_accumulator += synth.config.tempo_ratio / WAKES_PER_BEAT as f64;
+    // 0.5 = one pixel every two beats). While the quantize is on the rate
+    // is snapped to the exact fraction dividing the resync period into a
+    // whole number of steps, which spreads the period's timing offset
+    // evenly over its notes (see quantized_ratio).
+    let step_ratio = if synth.config.quantize {
+        quantized_ratio(synth.config.tempo_ratio, synth.config.quantize_beats)
+    } else {
+        synth.config.tempo_ratio
+    };
+    synth.playback.tempo_accumulator += step_ratio / WAKES_PER_BEAT as f64;
     if synth.playback.tempo_accumulator < 1.0 - ACC_EPSILON {
         return;
     }
@@ -1835,21 +1827,6 @@ fn tick_synth(
     } else {
         0
     };
-
-    // Master-tempo quantize: hold a due step until the next resync
-    // boundary when that boundary falls before the following step.
-    // Delay-only — a step is never advanced, so a sounding note is never
-    // cut. With note lengths enabled the note that just elapsed is
-    // released instead of being extended until the boundary — unless the
-    // legato tie is on, where the note is meant to hold.
-    if synth.config.quantize
-        && should_hold_for_quantize(wake, quantize_period, synth.playback.wakes_since_step)
-    {
-        if !synth.config.note_lengths.is_empty() && !synth.config.note_legato {
-            synth.release_notes(midi);
-        }
-        return;
-    }
 
     // On a resync boundary the accumulator is reset cleanly (a fresh
     // phase anchor); otherwise the step is consumed and the fractional
@@ -1871,7 +1848,6 @@ fn tick_synth(
         // 5/4...) does not drift against the master over time.
         synth.playback.tempo_accumulator = 1.0 - length_beats + carry;
     }
-    synth.playback.wakes_since_step = 0;
 }
 
 #[tauri::command]
@@ -2981,55 +2957,6 @@ mod tests {
     // --- Master-tempo quantize ---
 
     #[test]
-    fn next_resync_boundary_is_strictly_after_the_wake() {
-        // N = 4 beats → one boundary every 48 wakes (12 per beat)
-        assert_eq!(next_resync_boundary(0, 4), 48);
-        assert_eq!(next_resync_boundary(47, 4), 48);
-        assert_eq!(next_resync_boundary(48, 4), 96);
-        assert_eq!(next_resync_boundary(49, 4), 96);
-        // N = 1 beat → every 12 wakes
-        assert_eq!(next_resync_boundary(0, 1), 12);
-        assert_eq!(next_resync_boundary(11, 1), 12);
-        // Out-of-range periods are clamped to at least one beat
-        assert_eq!(next_resync_boundary(3, 0), 12);
-    }
-
-    #[test]
-    fn quantize_never_holds_a_step_landing_on_a_boundary() {
-        // wake 48 is a boundary for N = 4: the step must fire, not be held
-        assert!(!should_hold_for_quantize(48, 4, 4));
-        assert!(!should_hold_for_quantize(0, 4, 1));
-    }
-
-    #[test]
-    fn quantize_holds_when_the_boundary_is_closer_than_the_next_step() {
-        // N = 4 → boundary at wake 48. A step due at wake 47 has an interval
-        // of 4 wakes (the following step would be at 51, past the boundary):
-        // hold it to 48.
-        assert!(should_hold_for_quantize(47, 4, 4));
-        // A step due at wake 44 (interval 4) would step again at 48, exactly
-        // on the boundary: no hold.
-        assert!(!should_hold_for_quantize(44, 4, 4));
-        // A slower synth (interval 8) is held as soon as it is within a full
-        // step of the boundary.
-        assert!(should_hold_for_quantize(41, 4, 8));
-        // A zero interval is treated as one wake: a step due one wake before
-        // the boundary would step exactly on it, so it is not held.
-        assert!(!should_hold_for_quantize(47, 4, 0));
-        assert!(should_hold_for_quantize(47, 4, 2));
-    }
-
-    #[test]
-    fn quantize_hold_adapts_to_the_period() {
-        // N = 1 → boundary at wake 12; a step due at 11 (interval 4) is held
-        assert!(should_hold_for_quantize(11, 1, 4));
-        // N = 8 → boundary at wake 96; wake 20 is more than one interval (8)
-        // away: no hold yet
-        assert!(!should_hold_for_quantize(20, 8, 8));
-        assert!(should_hold_for_quantize(89, 8, 8));
-    }
-
-    #[test]
     fn ratio_cycle_matches_the_ui_fractions() {
         // 1/2, 2/3, 3/4, 1, 5/4, 4/3, 3/2 (0.66/1.33 are their decimals)
         let cases = [
@@ -3066,53 +2993,74 @@ mod tests {
     }
 
     #[test]
-    fn quantize_realigns_on_the_ratio_cycle_without_holes() {
-        // Simulates the accumulator loop for ratio 2/3 with the user's
-        // period N = 4. The effective period is rounded up to the ratio's
-        // cycle (3), i.e. 6 beats, so a boundary always lands on a natural
-        // step: the gaps stay uniform (18 wakes) and no step is ever held.
-        let ratio = 2.0 / 3.0;
-        let period = effective_quantize_period(ratio, 4);
-        assert_eq!(period, 6);
-
-        let mut acc = 0.0f64;
-        let mut last_step = 0u64;
-        let mut gaps = Vec::new();
-        let mut wakes_since_step = 0u32;
-        let mut held = false;
-
-        // Playback starts on a boundary: the first step fires immediately at
-        // wake 0 (accumulator reset), so the loop starts one wake later.
-        for wake in 1..(period * WAKES_PER_BEAT * 2) {
-            wakes_since_step += 1;
-            acc += ratio / WAKES_PER_BEAT as f64;
-            if acc < 1.0 - ACC_EPSILON {
-                continue;
-            }
-            if should_hold_for_quantize(wake, period, wakes_since_step) {
-                held = true;
-                continue;
-            }
-            if wake.is_multiple_of(period * WAKES_PER_BEAT) {
-                acc = 0.0;
-            } else {
-                acc -= 1.0;
-            }
-            gaps.push(wake - last_step);
-            last_step = wake;
-            wakes_since_step = 0;
+    fn quantized_ratio_snaps_to_the_period_fraction() {
+        // Approximate UI decimals are snapped to the exact fraction dividing
+        // the effective period (6 beats): 0.66 → 4/6 = 2/3, 1.33 → 8/6 = 4/3.
+        assert!((quantized_ratio(0.66, 4) - 2.0 / 3.0).abs() < 1e-12);
+        assert!((quantized_ratio(1.33, 4) - 4.0 / 3.0).abs() < 1e-12);
+        // Exact ratios are returned unchanged (their period already divides).
+        for ratio in [0.5, 0.75, 1.0, 1.25, 1.5] {
+            assert!(
+                (quantized_ratio(ratio, 4) - ratio).abs() < 1e-12,
+                "ratio {ratio}"
+            );
         }
+        // A hand-edited ratio with no small cycle still snaps to n / period.
+        // 0.7 with N = 4 → period 4, n = round(2.8) = 3 → 3/4.
+        assert!((quantized_ratio(0.7, 4) - 0.75).abs() < 1e-12);
+    }
 
-        assert!(!held, "an exact ratio must never hold a step");
-        assert!(gaps.len() >= 4);
-        assert!(
-            gaps.iter().all(|&g| g == 18),
-            "uniform gaps expected, got {gaps:?}"
-        );
+    #[test]
+    fn quantize_distributes_the_offset_over_the_period_notes() {
+        // Simulates the accumulator loop with the quantize on. The rate is
+        // snapped to n / period so the period's n steps are evenly spaced and
+        // the last one lands on the boundary — no step is ever held, even for
+        // the approximate UI decimals. Checked for 2/3 (0.66) and 4/3 (1.33).
+        for (stored, expected_ratio, expected_gap) in
+            [(0.66, 2.0 / 3.0, 18u64), (1.33, 4.0 / 3.0, 9u64)]
+        {
+            let period = effective_quantize_period(stored, 4);
+            let ratio = quantized_ratio(stored, 4);
+            assert!((ratio - expected_ratio).abs() < 1e-12);
 
-        // The raw user period (4), not cycle-aligned, would hold a step
-        // mid-cycle — the hole this change removes.
-        assert!(should_hold_for_quantize(36, 4, 18));
+            let boundary = period * WAKES_PER_BEAT;
+            let mut acc = 0.0f64;
+            let mut last_step = 0u64;
+            let mut gaps = Vec::new();
+            let mut step_wakes = Vec::new();
+
+            // Playback starts on a boundary: the first step fires immediately
+            // at wake 0 (accumulator reset), so the loop starts one wake later.
+            for wake in 1..=boundary * 2 {
+                acc += ratio / WAKES_PER_BEAT as f64;
+                if acc < 1.0 - ACC_EPSILON {
+                    continue;
+                }
+                if wake.is_multiple_of(boundary) {
+                    acc = 0.0;
+                } else {
+                    acc -= 1.0;
+                }
+                gaps.push(wake - last_step);
+                last_step = wake;
+                step_wakes.push(wake);
+            }
+
+            assert!(gaps.len() >= 4, "ratio {stored}: only {} steps", gaps.len());
+            assert!(
+                gaps.iter().all(|&g| g == expected_gap),
+                "ratio {stored}: uniform gaps of {expected_gap} expected, got {gaps:?}"
+            );
+            // Each period's last step lands exactly on its boundary.
+            assert!(
+                step_wakes.contains(&boundary),
+                "ratio {stored}: no step on the first boundary"
+            );
+            assert!(
+                step_wakes.contains(&(2 * boundary)),
+                "ratio {stored}: no step on the second boundary"
+            );
+        }
     }
 
     #[test]

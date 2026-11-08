@@ -451,7 +451,6 @@ impl Synth {
         self.playback.end_pending = false;
         self.playback.tempo_accumulator = 0.0;
         self.playback.start_pending = false;
-        self.playback.wakes_since_step = 0;
         self.release_notes(midi);
     }
 }
@@ -512,7 +511,7 @@ pub struct SynthConfig {
     pub voice_note_ranges: [[bool; 3]; 3], // same, per R/G/B voice, polyphonic mode
     pub scale: Scale,     // scale the derived notes are snapped to (Chromatic = none)
     pub scale_root: u8,   // scale tonic as a pitch class 0-11 (0 = C)
-    pub quantize: bool,   // realign the step grid on the master beats (delay-only)
+    pub quantize: bool, // realign the step grid on the master beats (offset spread over the period)
     pub quantize_beats: u8, // resync period in master beats (1-8) when quantize is on
     /// Silence pattern: 16 steps applied to a zone by clicking a pixel
     /// while the pattern mode is armed (true = silence/rest, false =
@@ -653,7 +652,6 @@ pub struct Playback {
     pub note_generation: u32, // bumped on each articulation (stale Note Off guard)
     pub cached_sequence: Option<CachedSequence>, // derived pixel sequence cache
     pub start_pending: bool, // first note waits for the next master beat (start sync)
-    pub wakes_since_step: u32, // wakes (1/12 beat) elapsed since the last step
 }
 
 impl Default for Playback {
@@ -676,7 +674,6 @@ impl Default for Playback {
             note_generation: 0,
             cached_sequence: None,
             start_pending: false,
-            wakes_since_step: 0,
         }
     }
 }

@@ -191,7 +191,6 @@ pub fn reset_synth_cursor(id: u32, state: State<SynthState>) -> Result<(), AppEr
             synth.playback.cursor = 0;
             synth.playback.end_pending = false;
             synth.playback.tempo_accumulator = 0.0;
-            synth.playback.wakes_since_step = 0;
             Ok(())
         }
         None => Err(synth_not_found(id)),
@@ -211,7 +210,6 @@ pub fn start_synth(
             // The first note waits for the next master beat so playback
             // starts in phase with the metronome (see the metronome thread)
             synth.playback.start_pending = true;
-            synth.playback.wakes_since_step = 0;
             // A fresh start always replays from the beginning of the sequence
             // (e.g. after manually stepping to the end while paused)
             synth.playback.end_pending = false;
@@ -430,9 +428,11 @@ pub fn set_synth_tempo(id: u32, tempo: f64, state: State<SynthState>) -> Result<
 }
 
 /// Enables the master-tempo quantize: the synth's step grid is realigned on
-/// the master grid, delaying steps only so no note is ever cut. The resync
-/// period (`quantize_beats`) is rounded up to a multiple of the ratio's cycle
-/// so a boundary always lands on a natural step (see `metronome`).
+/// the master grid. The resync period (`quantize_beats`) is rounded up to a
+/// multiple of the ratio's cycle and the step rate is snapped to the exact
+/// fraction dividing that period, so the period's timing offset is spread
+/// evenly over its notes instead of being applied as a single held step (see
+/// `metronome`).
 #[tauri::command]
 pub fn set_synth_quantize(
     id: u32,
