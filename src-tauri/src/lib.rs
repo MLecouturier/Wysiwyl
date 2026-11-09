@@ -112,6 +112,8 @@ pub fn run() {
             synth::set_synth_tempo,
             synth::set_synth_quantize,
             synth::set_synth_quantize_beats,
+            synth::set_synth_chance,
+            synth::set_synth_chance_probability,
             synth::set_synth_velocity_range,
             synth::set_synth_velocity_relative,
             synth::set_synth_volume,

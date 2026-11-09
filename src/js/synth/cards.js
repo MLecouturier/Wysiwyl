@@ -243,6 +243,17 @@ export function applySynthConfig(el, cfg) {
         ? Math.min(8, Math.max(1, Math.round(cfg.quantize_beats)))
         : 4;
     quantizeTempoInput.value = String(quantizeBeats);
+    // Chance: toggle + play probability (1-100 %, default 100 for sessions
+    // saved before the option existed)
+    const chanceBtn = el.querySelector('.synth-chance');
+    const chanceProbInput = el.querySelector('.synth-chance-probability');
+    chanceBtn.classList.toggle('active', !!cfg.chance);
+    chanceBtn.setAttribute('aria-pressed', String(!!cfg.chance));
+    chanceProbInput.classList.toggle('inactive', !cfg.chance);
+    const chanceProb = Number.isFinite(cfg.chance_probability)
+        ? Math.min(100, Math.max(1, Math.round(cfg.chance_probability)))
+        : 100;
+    chanceProbInput.value = String(chanceProb);
     // Note ranges (mono + one per voice)
     const setRange = (group, toggles) => ['bass', 'medium', 'treble'].forEach((kind, i) => {
         group.querySelector(`.synth-${kind}`).classList.toggle('active', !!(toggles && toggles[i]));
@@ -800,6 +811,29 @@ export function createSynthElement(id, cfg = null) {
         quantizeTempoInput.value = String(beats);
         invoke('set_synth_quantize_beats', { id, beats })
             .catch(err => console.error('Error in set_synth_quantize_beats:', err));
+    });
+
+    // ---- Chance: random play probability per step ----
+    // The toggle enables the draw; the number input sets the play
+    // probability in percent (1-100). Both are safe to change while
+    // playing: the metronome thread reads them live and re-rolls on every
+    // step, so a loop differs from one pass to the next.
+    const chanceBtn = el.querySelector('.synth-chance');
+    const chanceProbInput = el.querySelector('.synth-chance-probability');
+    chanceBtn.addEventListener('click', () => {
+        const enabled = !chanceBtn.classList.contains('active');
+        chanceBtn.classList.toggle('active', enabled);
+        chanceBtn.setAttribute('aria-pressed', String(enabled));
+        chanceProbInput.classList.toggle('inactive', !enabled);
+        invoke('set_synth_chance', { id, enabled })
+            .catch(err => console.error('Error in set_synth_chance:', err));
+    });
+    chanceProbInput.addEventListener('change', () => {
+        const raw = Math.round(Number(chanceProbInput.value));
+        const probability = Number.isFinite(raw) ? Math.min(100, Math.max(1, raw)) : 100;
+        chanceProbInput.value = String(probability);
+        invoke('set_synth_chance_probability', { id, probability })
+            .catch(err => console.error('Error in set_synth_chance_probability:', err));
     });
 
     // ---- R/G/B channel toggles (polyphonic mode) ----

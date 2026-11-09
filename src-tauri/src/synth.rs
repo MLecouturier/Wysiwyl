@@ -466,6 +466,39 @@ pub fn set_synth_quantize_beats(
     }
 }
 
+/// Enables the chance: each step has `chance_probability` % of being played
+/// and is otherwise silenced (a rest). The draw is re-rolled on every step,
+/// so a looping sequence differs from one pass to the next (see `metronome`).
+#[tauri::command]
+pub fn set_synth_chance(id: u32, enabled: bool, state: State<SynthState>) -> Result<(), AppError> {
+    let mut synths = state.synths.lock_safe();
+    match synths.get_mut(&id) {
+        Some(synth) => {
+            synth.config.chance = enabled;
+            Ok(())
+        }
+        None => Err(synth_not_found(id)),
+    }
+}
+
+/// Sets the chance's play probability, in percent (1-100; 100 = every step
+/// is played).
+#[tauri::command]
+pub fn set_synth_chance_probability(
+    id: u32,
+    probability: u8,
+    state: State<SynthState>,
+) -> Result<(), AppError> {
+    let mut synths = state.synths.lock_safe();
+    match synths.get_mut(&id) {
+        Some(synth) => {
+            synth.config.chance_probability = probability.clamp(1, 100);
+            Ok(())
+        }
+        None => Err(synth_not_found(id)),
+    }
+}
+
 #[tauri::command]
 pub fn set_synth_loop(
     id: u32,

@@ -1,5 +1,6 @@
 use image::{DynamicImage, GenericImageView};
 use serde::Serialize;
+use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
@@ -14,7 +15,7 @@ use crate::locks::MutexExt;
 use crate::midi;
 use crate::state::{
     AccentLevel, AccentLevels, CachedSequence, ImageState, MidiState, NoteLength, ReadingDirection,
-    RowRun, Scale, Synth, SynthMode, SynthState, TimeSignature, Zone,
+    RowRun, Scale, Synth, SynthConfig, SynthMode, SynthState, TimeSignature, Zone,
 };
 
 // ---------------------------------------------------------------------------
@@ -896,6 +897,10 @@ fn step_synth_once(
     // Manually silenced pixel (rest): the playhead still travels over it,
     // it just sounds nothing
     let manual_mute = pixel_in_zones(&synth.mute_zones, x, y);
+    // Chance: on a fresh draw this step may be silenced for this pass only
+    // (re-rolled on every step, so a loop differs from one pass to the next).
+    // It silences the whole step, exactly like a manual rest.
+    let muted = manual_mute || chance_silences(&synth.config);
     let luma = pixel_luma(r, g, b);
     let brightness_level = luma_to_level(luma);
     let saturation = pixel_saturation(r, g, b);
@@ -987,7 +992,7 @@ fn step_synth_once(
                 velocity,
                 &mut payload,
                 retrigger,
-                manual_mute,
+                muted,
             );
         }
         SynthMode::Polyphonic => {
@@ -1001,7 +1006,7 @@ fn step_synth_once(
                 velocity,
                 &mut payload,
                 retrigger,
-                manual_mute,
+                muted,
             );
         }
     }
@@ -1110,6 +1115,43 @@ fn effective_quantize_period(ratio: f64, beats: u8) -> u64 {
 fn quantized_ratio(ratio: f64, beats: u8) -> f64 {
     let period = effective_quantize_period(ratio, beats) as f64;
     (ratio * period).round().max(1.0) / period
+}
+
+thread_local! {
+    /// xorshift64* state of the chance draw, per thread and seeded lazily
+    /// from the wall clock on first use.
+    static CHANCE_RNG: Cell<u64> = const { Cell::new(0) };
+}
+
+/// Next pseudo-random `u64` (xorshift64*), seeding the thread-local state
+/// from the clock the first time. Only the chance draw uses it; quality
+/// beyond "unpredictable enough to hear as random" is irrelevant.
+fn next_rand() -> u64 {
+    CHANCE_RNG.with(|cell| {
+        let mut x = cell.get();
+        if x == 0 {
+            x = now_ns() | 1; // never zero: a zero state is a fixed point
+        }
+        x ^= x >> 12;
+        x ^= x << 25;
+        x ^= x >> 27;
+        cell.set(x);
+        x.wrapping_mul(0x2545F4914F6CDD1D)
+    })
+}
+
+/// Whether a step is silenced by the chance, given a fresh roll (0-99) and
+/// the play probability (1-100): the step plays when the roll is below the
+/// probability. 100 always plays, 1 plays roughly one step in a hundred.
+fn chance_silences_at(roll: u8, probability: u8) -> bool {
+    roll >= probability.min(100)
+}
+
+/// Whether this step is silenced by the chance: only with `chance` on, and
+/// on a fresh draw each call — so a looping sequence is re-rolled on every
+/// pass over the same pixel (see `step_synth_once`).
+fn chance_silences(config: &SynthConfig) -> bool {
+    config.chance && chance_silences_at((next_rand() % 100) as u8, config.chance_probability)
 }
 
 /// Duration of a note length, in beats of the synth's own tempo. When
@@ -3061,6 +3103,39 @@ mod tests {
                 "ratio {stored}: no step on the second boundary"
             );
         }
+    }
+
+    // --- Chance (random play probability) ---
+
+    #[test]
+    fn chance_silences_at_the_probability_threshold() {
+        // The step plays when the roll is below the probability.
+        assert!(!chance_silences_at(0, 1)); // roll 0 < 1: plays
+        assert!(chance_silences_at(1, 1)); // 1 >= 1: silenced
+        assert!(!chance_silences_at(49, 50)); // 49 < 50: plays
+        assert!(chance_silences_at(50, 50)); // 50 >= 50: silenced
+                                             // 100 plays on every roll (0-99)
+        for roll in 0..100u8 {
+            assert!(!chance_silences_at(roll, 100), "roll {roll}");
+        }
+        // A probability above 100 is clamped, never silencing past that
+        assert!(!chance_silences_at(99, 255));
+    }
+
+    #[test]
+    fn chance_rolls_stay_in_range_and_vary() {
+        let mut seen = HashSet::new();
+        for _ in 0..200 {
+            let roll = (next_rand() % 100) as u8;
+            assert!(roll < 100);
+            seen.insert(roll);
+        }
+        // 200 draws over 100 values: a degenerate PRNG would repeat far less
+        assert!(
+            seen.len() > 50,
+            "draws should vary, got {} values",
+            seen.len()
+        );
     }
 
     #[test]

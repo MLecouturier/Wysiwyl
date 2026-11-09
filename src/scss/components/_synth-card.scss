@@ -487,7 +487,16 @@ $synth-title-width: 16rem;
 // quantize is disabled (the value is kept).
 .synth-quantize-tempo {
     @extend %synth-wheel-input;
-    width: 3rem;
+    width: 2rem;
+
+    &.inactive { opacity: .45; }
+}
+
+// Chance play probability, next to its toggle: greyed out while the chance
+// is disabled (the value is kept).
+.synth-chance-probability {
+    @extend %synth-wheel-input;
+    width: 2.5rem;
 
     &.inactive { opacity: .45; }
 }

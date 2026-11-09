@@ -513,6 +513,13 @@ pub struct SynthConfig {
     pub scale_root: u8,   // scale tonic as a pitch class 0-11 (0 = C)
     pub quantize: bool, // realign the step grid on the master beats (offset spread over the period)
     pub quantize_beats: u8, // resync period in master beats (1-8) when quantize is on
+    /// Chance: each step has `chance_probability` % of being played and is
+    /// otherwise silenced (a rest, rhythm unchanged). Re-rolled on every
+    /// step, so a looping sequence differs from one pass to the next.
+    pub chance: bool,
+    /// Chance of a step being played while `chance` is on, in percent (1-100;
+    /// 100 = every step is played).
+    pub chance_probability: u8,
     /// Silence pattern: 16 steps applied to a zone by clicking a pixel
     /// while the pattern mode is armed (true = silence/rest, false =
     /// play). The steps follow the synth's reading order, so the rhythm
@@ -577,6 +584,8 @@ impl Default for SynthConfig {
             scale_root: 0,
             quantize: false,
             quantize_beats: 4,
+            chance: false,
+            chance_probability: 100,
             silence_pattern: default_silence_pattern(),
             silence_pattern_repeat: false,
             accent_enabled: false,
@@ -609,6 +618,7 @@ impl SynthConfig {
         config.note_lengths = normalize_note_lengths(&self.note_lengths);
         config.scale_root = self.scale_root.min(11);
         config.quantize_beats = self.quantize_beats.clamp(1, 8);
+        config.chance_probability = self.chance_probability.clamp(1, 100);
         config
     }
 

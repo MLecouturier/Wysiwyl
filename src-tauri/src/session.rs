@@ -882,6 +882,7 @@ mod tests {
         entry.settings.channel = 99;
         entry.settings.tempo_ratio = 1.33;
         entry.settings.note_lengths = vec![];
+        entry.settings.chance_probability = 250;
         entry.name = Some("   ".into());
         entry.zones = vec![Zone {
             order: 0,
@@ -895,6 +896,7 @@ mod tests {
         assert_eq!(synth.config.channel, 15);
         assert_eq!(synth.config.tempo_ratio, 4.0 / 3.0);
         assert_eq!(synth.config.note_lengths, vec![NoteLength::Quarter]);
+        assert_eq!(synth.config.chance_probability, 100);
         assert_eq!(synth.name, None);
         assert_eq!(synth.zones[0].runs[0].y, 0);
         assert_eq!(
@@ -936,6 +938,8 @@ mod tests {
         ];
         synth.config.scale = Scale::Blues;
         synth.config.scale_root = 9;
+        synth.config.chance = true;
+        synth.config.chance_probability = 30;
 
         let original = SessionSynth {
             id: 7,
@@ -994,5 +998,7 @@ mod tests {
         assert_eq!(s.config.voice_note_ranges, synth.config.voice_note_ranges);
         assert_eq!(s.config.scale, synth.config.scale);
         assert_eq!(s.config.scale_root, synth.config.scale_root);
+        assert_eq!(s.config.chance, synth.config.chance);
+        assert_eq!(s.config.chance_probability, synth.config.chance_probability);
     }
 }
