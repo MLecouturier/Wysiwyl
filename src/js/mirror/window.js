@@ -48,6 +48,9 @@ const MIRROR_ZONES_MIN_INTERVAL = 33; // ms
 // Effect options ride the same pattern: option sliders drag at
 // mousemove rate, identical consecutive payloads are not re-sent.
 const MIRROR_EFFECT_MIN_INTERVAL = 33; // ms
+// Viewer zoom/pan follows the same pattern: a trackpad zoom fires a burst
+// of wheel events, ~30 fps is plenty to keep the projection in step.
+const MIRROR_ZOOM_MIN_INTERVAL = 33; // ms
 
 // The original <img> may not be decoded yet when the snapshot is taken
 // (its src was just set): the snapshot decodes its own copy and waits.
@@ -83,8 +86,11 @@ export function createMirror({
     let zonesTimer = 0;
     let effectLast = 0;
     let effectTimer = 0;
+    let zoomLast = 0;
+    let zoomTimer = 0;
     let lastZonesJson = null;
     let lastEffectJson = null;
+    let lastZoomJson = null;
     let lastLayersTop = null;
 
     // Full-resolution copy of the processed grid pixels, repainted on
@@ -465,6 +471,35 @@ export function createMirror({
         emit('mirror:effect', payload);
     }
 
+    // Viewer zoom/pan, throttled and deduplicated like the other pushes.
+    // The mirror applies the same magnification factor and center fraction
+    // to its own viewer: the windows have different aspect ratios, so the
+    // visible region is proportionally equivalent rather than pixel-identical.
+    function pushZoom() {
+        if (!isOpen()) return;
+        const now = performance.now();
+        const elapsed = now - zoomLast;
+        if (elapsed < MIRROR_ZOOM_MIN_INTERVAL) {
+            if (zoomTimer) return;
+            zoomTimer = setTimeout(() => {
+                zoomTimer = 0;
+                pushZoom();
+            }, MIRROR_ZOOM_MIN_INTERVAL - elapsed);
+            return;
+        }
+        zoomLast = now;
+        const { zoom, zoomCenterX, zoomCenterY } = getViewerState();
+        const payload = {
+            zoom: zoom ?? 1,
+            centerX: zoomCenterX ?? 0.5,
+            centerY: zoomCenterY ?? 0.5,
+        };
+        const json = JSON.stringify(payload);
+        if (json === lastZoomJson) return;
+        lastZoomJson = json;
+        emit('mirror:zoom', payload);
+    }
+
     // Selects the active effect: an unknown id (session saved by a newer
     // version) loads as the no-op effect. The options reset to the new
     // effect's defaults; pass options right after for a session restore.
@@ -505,6 +540,7 @@ export function createMirror({
         // otherwise skip the push to a window that never got it)
         lastZonesJson = null;
         lastEffectJson = null;
+        lastZoomJson = null;
         lastLayersTop = null;
         // The snapshots stay cached across a close/reopen (the content
         // did not change); only their emission is replayed — a fresh
@@ -515,6 +551,7 @@ export function createMirror({
         pushCursors();
         pushImage(); // original + processed + layers
         pushEffect();
+        pushZoom();
     });
 
     listen('mirror:closed', () => {
@@ -544,6 +581,7 @@ export function createMirror({
         pushZones,
         pushImage,
         pushEffect,
+        pushZoom,
         getZonesMode: () => zonesMode,
         setZonesMode: (mode) => { zonesMode = mode; updateZonesButton(); },
         getEffect: () => effectId,

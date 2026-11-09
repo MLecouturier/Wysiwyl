@@ -14,7 +14,7 @@
 // the cursors. Everything runs in this window: the IPC only carries
 // state changes; an animated effect keeps a requestAnimationFrame loop,
 // a non-animated one is repainted on each cursor tick.
-import { computeLayout, drawZones, drawCursorCell, MUTE_GLYPH } from '../core/geometry.js';
+import { computeZoomedLayout, drawZones, drawCursorCell, MUTE_GLYPH } from '../core/geometry.js';
 import {
     effectOrDefault, defaultOptions, sanitizeOptions, updateTrail, clearTrails,
 } from './effects.js';
@@ -41,6 +41,21 @@ let gridH = 0;
 let zoneData   = null; // last { showZones, synths } snapshot
 let cursorData = null; // last { cursors } snapshot
 
+// Viewer zoom/pan mirrored from the main window: the same magnification
+// factor and center fraction, applied to this window's own viewer size
+// (the windows have different aspect ratios, so the visible region is
+// proportionally equivalent rather than pixel-identical).
+let zoomState = { zoom: 1, centerX: 0.5, centerY: 0.5 };
+
+// Zoom-aware layout of the image inside a viewer of the given dimensions:
+// the mirror equivalent of the main viewer's computeZoomedLayout calls.
+function layoutIn(viewW, viewH, gw, gh) {
+    return computeZoomedLayout(
+        viewW, viewH, gw, gh,
+        zoomState.zoom, zoomState.centerX, zoomState.centerY,
+    );
+}
+
 // The two stacked surfaces: a decoded <img> plus its display flags.
 // Which one feeds the top canvas (the other feeds the bottom <img>)
 // follows the layer order pushed by the main window.
@@ -62,7 +77,7 @@ function drawZonesOverlay() {
     const ctx = overlay.getContext('2d');
     ctx.clearRect(0, 0, overlay.width, overlay.height);
     if (!zoneData || !zoneData.showZones) return;
-    const layout = computeLayout(overlay.width, overlay.height, gridW, gridH);
+    const layout = layoutIn(overlay.width, overlay.height, gridW, gridH);
     if (!layout) return;
     for (const synth of zoneData.synths) {
         drawZones(ctx, layout, synth);
@@ -78,7 +93,7 @@ function drawCursorsOverlay() {
     ctx.clearRect(0, 0, cursorOverlay.width, cursorOverlay.height);
     if (!cursorData) return;
     for (const c of cursorData) {
-        const layout = computeLayout(cursorOverlay.width, cursorOverlay.height, c.w || gridW, c.h || gridH);
+        const layout = layoutIn(cursorOverlay.width, cursorOverlay.height, c.w || gridW, c.h || gridH);
         if (!layout) continue;
         drawCursorCell(ctx, layout, c);
     }
@@ -114,6 +129,9 @@ function paintMask(w, h) {
         viewH: h,
         gridW,
         gridH,
+        zoom: zoomState.zoom,
+        centerX: zoomState.centerX,
+        centerY: zoomState.centerY,
         options: effectOptions,
         time: performance.now(),
         excluded: effectExcluded,
@@ -135,6 +153,9 @@ function paintTrail(active) {
         viewH: trailCanvas.height,
         gridW,
         gridH,
+        zoom: zoomState.zoom,
+        centerX: zoomState.centerX,
+        centerY: zoomState.centerY,
         options: effectOptions,
         excluded: effectExcluded,
     });
@@ -152,7 +173,7 @@ function renderTop() {
     const top = surfaces[topLayer];
     if (!top || !w || !h) return;
 
-    const layout = computeLayout(w, h, top.w, top.h);
+    const layout = layoutIn(w, h, top.w, top.h);
     if (!layout) return;
 
     const mask = paintMask(w, h);
@@ -166,9 +187,11 @@ function renderTop() {
     }
 }
 
-// Bottom layer: the other surface, shown as a plain <img> (object-fit:
-// contain from the shared styles — the aspect ratio matches the top
-// rect up to grid rounding, like the main viewer's overlays).
+// Bottom layer: the other surface, shown as a plain <img>. It is
+// positioned and sized inline to the zoom-aware layout rect (the shared
+// .image-viewer img rule gives it object-fit: contain, like the main
+// viewer's surfaces), so it follows the mirrored zoom exactly like the
+// top canvas and the overlays.
 function renderBottom() {
     const bottom = topLayer === 'original' ? surfaces.processed : surfaces.original;
     if (!bottom) {
@@ -178,6 +201,14 @@ function renderBottom() {
     bottomImage.classList.remove('hidden');
     bottomImage.classList.toggle('pixelated', !bottom.lossy);
     if (bottomImage.src !== bottom.img.src) bottomImage.src = bottom.img.src;
+
+    const layout = layoutIn(overlay.width, overlay.height, gridW, gridH);
+    if (!layout) return;
+    bottomImage.style.position = 'absolute';
+    bottomImage.style.left = `${layout.offsetX}px`;
+    bottomImage.style.top = `${layout.offsetY}px`;
+    bottomImage.style.width = `${layout.renderW}px`;
+    bottomImage.style.height = `${layout.renderH}px`;
 }
 
 // The animation loop runs only while the active effect animates on its
@@ -269,6 +300,20 @@ listen('mirror:cursors', (event) => {
     updateTrail(cursorData);
     drawCursorsOverlay();
     stateChanged(); // the cursor ticks feed every effect, animated or not
+});
+
+// Viewer zoom/pan mirrored from the main window: every layout consumer
+// (both surfaces, the zone and cursor overlays, the effect masks) reads
+// it through layoutIn, so a repaint of the whole stack is enough.
+listen('mirror:zoom', (event) => {
+    zoomState = {
+        zoom: event.payload.zoom,
+        centerX: event.payload.centerX,
+        centerY: event.payload.centerY,
+    };
+    drawZonesOverlay();
+    drawCursorsOverlay();
+    stateChanged();
 });
 
 // The mirror's DOM contains no musical characters, so the Noto Music

@@ -901,6 +901,9 @@ const mirror = createMirror({
         originalPng: viewer.originalPng,
         origWidth: viewer.origWidth,
         origHeight: viewer.origHeight,
+        zoom: viewer.zoom,
+        zoomCenterX: viewer.zoomCenterX,
+        zoomCenterY: viewer.zoomCenterY,
     }),
     computeMuteCells,
     onReady: updatePreviewSrc,
@@ -958,6 +961,7 @@ appEvents.on('viewer-zoom-changed', () => {
         redrawAllCursors();
         if (cropState.mode) drawCropOverlay();
         else if (isTransformActive()) redrawTransformOverlay();
+        mirror.pushZoom();
     });
 });
 

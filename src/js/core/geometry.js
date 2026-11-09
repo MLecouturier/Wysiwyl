@@ -209,10 +209,11 @@ export function computeLayout(viewW, viewH, gridW, gridH) {
 }
 
 // ---------- Zoomed viewer layout ----------
-// The main viewer can be magnified for precise zone selection on busy
-// images. computeLayout stays the plain contain-fit used by the
-// projection mirror; the helpers below wrap it for the interactive main
-// viewer only. All pure, unit-tested.
+// The viewer can be magnified for precise zone selection on busy images.
+// computeLayout stays the plain contain-fit; the helpers below wrap it.
+// Both the interactive main viewer and the projection mirror (which
+// mirrors the main viewer's zoom/pan) render through these helpers. All
+// pure, unit-tested.
 
 export const MIN_ZOOM = 1;
 export const MAX_ZOOM = 40;

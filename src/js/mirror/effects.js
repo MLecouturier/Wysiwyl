@@ -26,7 +26,7 @@
 // by the node test runner; the painters need a canvas 2D context and
 // only ever run in the mirror window.
 
-import { computeLayout } from '../core/geometry.js';
+import { computeZoomedLayout } from '../core/geometry.js';
 
 // Identifier of the no-op effect: the top layer covers the bottom one
 // (no mask), the mirror looks exactly like the single-surface era.
@@ -229,9 +229,11 @@ export function lineReveal(distance, extent, fade) {
 
 // Decodes one visited cell into its viewport rectangle, using the grid
 // dimensions recorded with the visit (falling back to the viewer's
-// current grid).
-function cellRect(viewW, viewH, gridW, gridH, visit) {
-    const layout = computeLayout(viewW, viewH, visit.w || gridW, visit.h || gridH);
+// current grid). The viewer zoom/pan is applied so the mask holes stay
+// aligned with the magnified surfaces.
+function cellRect(viewW, viewH, gridW, gridH, visit, zoom, centerX, centerY) {
+    const layout = computeZoomedLayout(
+        viewW, viewH, visit.w || gridW, visit.h || gridH, zoom, centerX, centerY);
     if (!layout) return null;
     const col = visit.cell % layout.gridW;
     const row = Math.floor(visit.cell / layout.gridW);
@@ -286,7 +288,7 @@ function frontlineCells(layout, visit, length, fade) {
 // in the options panel are excluded. Overlapping cells (a synth crossing
 // its own path, two synths sharing cells) accumulate their alpha, which
 // only deepens the reveal.
-function paintTrailMask(ctx, { viewW, viewH, gridW, gridH, options, excluded }) {
+function paintTrailMask(ctx, { viewW, viewH, gridW, gridH, zoom, centerX, centerY, options, excluded }) {
     // Base of the mask: keep the top layer everywhere.
     ctx.fillStyle = '#fff';
     ctx.fillRect(0, 0, viewW, viewH);
@@ -301,7 +303,7 @@ function paintTrailMask(ctx, { viewW, viewH, gridW, gridH, options, excluded }) 
         for (let i = 0; i < trail.length; i++) {
             const alpha = trailReveal(i, trail.length, fade);
             if (alpha <= 0) continue;
-            const rect = cellRect(viewW, viewH, gridW, gridH, trail[i]);
+            const rect = cellRect(viewW, viewH, gridW, gridH, trail[i], zoom, centerX, centerY);
             if (!rect) continue;
             ctx.globalAlpha = alpha;
             ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
@@ -316,7 +318,7 @@ function paintTrailMask(ctx, { viewW, viewH, gridW, gridH, options, excluded }) 
 // for a horizontal sweep, a whole row for a vertical one, trimmed to the
 // length option and fading out at both ends. The synths unchecked in the
 // options panel are excluded.
-function paintFrontlineMask(ctx, { viewW, viewH, gridW, gridH, options, excluded }) {
+function paintFrontlineMask(ctx, { viewW, viewH, gridW, gridH, zoom, centerX, centerY, options, excluded }) {
     ctx.fillStyle = '#fff';
     ctx.fillRect(0, 0, viewW, viewH);
 
@@ -329,7 +331,8 @@ function paintFrontlineMask(ctx, { viewW, viewH, gridW, gridH, options, excluded
         if (skip.has(id)) continue;
         const visit = buf[buf.length - 1];
         if (!visit) continue;
-        const layout = computeLayout(viewW, viewH, visit.w || gridW, visit.h || gridH);
+        const layout = computeZoomedLayout(
+            viewW, viewH, visit.w || gridW, visit.h || gridH, zoom, centerX, centerY);
         if (!layout) continue;
         for (const cell of frontlineCells(layout, visit, length, fade)) {
             ctx.globalAlpha = cell.alpha;
@@ -346,7 +349,7 @@ function paintFrontlineMask(ctx, { viewW, viewH, gridW, gridH, options, excluded
 // The mask holes stay in place, so the bottom layer keeps showing
 // through. Does nothing while the option is off (the mirror clears the
 // overlay beforehand either way).
-function paintTrailOverlay(ctx, { viewW, viewH, gridW, gridH, options, excluded }) {
+function paintTrailOverlay(ctx, { viewW, viewH, gridW, gridH, zoom, centerX, centerY, options, excluded }) {
     if (!options.colored) return;
 
     const skip = excluded instanceof Set ? excluded : new Set(excluded);
@@ -358,7 +361,7 @@ function paintTrailOverlay(ctx, { viewW, viewH, gridW, gridH, options, excluded 
         for (let i = 0; i < trail.length; i++) {
             const alpha = trailReveal(i, trail.length, fade);
             if (alpha <= 0) continue;
-            const rect = cellRect(viewW, viewH, gridW, gridH, trail[i]);
+            const rect = cellRect(viewW, viewH, gridW, gridH, trail[i], zoom, centerX, centerY);
             if (!rect) continue;
             ctx.globalAlpha = alpha * TINT_ALPHA;
             ctx.fillStyle = trail[i].color || '#808080';
@@ -369,7 +372,7 @@ function paintTrailOverlay(ctx, { viewW, viewH, gridW, gridH, options, excluded 
 }
 
 // Colored variant of the frontline effect, on the same overlay canvas.
-function paintFrontlineOverlay(ctx, { viewW, viewH, gridW, gridH, options, excluded }) {
+function paintFrontlineOverlay(ctx, { viewW, viewH, gridW, gridH, zoom, centerX, centerY, options, excluded }) {
     if (!options.colored) return;
 
     const skip = excluded instanceof Set ? excluded : new Set(excluded);
@@ -380,7 +383,8 @@ function paintFrontlineOverlay(ctx, { viewW, viewH, gridW, gridH, options, exclu
         if (skip.has(id)) continue;
         const visit = buf[buf.length - 1];
         if (!visit) continue;
-        const layout = computeLayout(viewW, viewH, visit.w || gridW, visit.h || gridH);
+        const layout = computeZoomedLayout(
+            viewW, viewH, visit.w || gridW, visit.h || gridH, zoom, centerX, centerY);
         if (!layout) continue;
         ctx.fillStyle = visit.color || '#808080';
         for (const cell of frontlineCells(layout, visit, length, fade)) {
