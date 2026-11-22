@@ -68,7 +68,49 @@ pub struct SessionUi {
     /// predates the feature: the effect applies to every synth.
     #[serde(default)]
     pub mirror_effect_synths: Vec<u32>,
+    /// Image modulation LFOs and their slider assignments (see
+    /// `image/lfo.js`). Frontend-owned; absent when the frontend state
+    /// predates the feature.
+    #[serde(default)]
+    pub lfos: Vec<LfoState>,
+    #[serde(default)]
+    pub lfo_assignments: Vec<LfoAssignment>,
     pub synth_colors: Vec<SynthUiEntry>,
+}
+
+/// One image-modulation LFO as saved in a session: on/off state, waveform
+/// id and frequency in Hz. The waveform id is not validated here — the
+/// frontend registry owns the ids and falls back on restore, like the
+/// mirror effect ids.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct LfoState {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_lfo_waveform")]
+    pub waveform: String,
+    #[serde(default = "default_lfo_freq")]
+    pub freq: f64,
+}
+
+/// One LFO → slider assignment: the slider id (`target`), the driving LFO
+/// index, the modulation amplitude as a percentage of the slider's
+/// half-range, and the phase offset as a percentage (100 % = anti-phase).
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct LfoAssignment {
+    pub target: String,
+    pub lfo: u8,
+    #[serde(default)]
+    pub amount: f64,
+    #[serde(default)]
+    pub phase: f64,
+}
+
+fn default_lfo_waveform() -> String {
+    "sin".into()
+}
+
+fn default_lfo_freq() -> f64 {
+    0.5
 }
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -127,7 +169,7 @@ where
 
 /// Image processing settings, saved as raw slider values so the restore
 /// is exact (the column count itself is derived from the original image).
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct SessionImageSettings {
     pub grid_slider: u32,
     pub contrast: f32,
@@ -169,6 +211,11 @@ pub struct SessionImageSettings {
     /// Synth ids the effect does not apply to (see SessionUi).
     #[serde(default)]
     pub mirror_effect_synths: Vec<u32>,
+    /// Image modulation LFOs and their slider assignments (see SessionUi).
+    #[serde(default)]
+    pub lfos: Vec<LfoState>,
+    #[serde(default)]
+    pub lfo_assignments: Vec<LfoAssignment>,
 }
 
 /// A synthesizer as stored in a session file: its identity, display color,
@@ -438,6 +485,8 @@ fn save_session_blocking(
             mirror_effect: ui.mirror_effect,
             mirror_effect_options: ui.mirror_effect_options,
             mirror_effect_synths: ui.mirror_effect_synths,
+            lfos: ui.lfos,
+            lfo_assignments: ui.lfo_assignments,
         },
         synths,
     };
@@ -728,6 +777,7 @@ mod tests {
             mirror_effect: "none".into(),
             mirror_effect_options: HashMap::new(),
             mirror_effect_synths: Vec::new(),
+            ..Default::default()
         })
         .unwrap();
         let restored: SessionImageSettings = serde_json::from_str(&json).unwrap();
@@ -786,6 +836,17 @@ mod tests {
                 ("fade".into(), 6.0),
             ]),
             mirror_effect_synths: vec![2, 3],
+            lfos: vec![LfoState {
+                enabled: true,
+                waveform: "saw".into(),
+                freq: 1.5,
+            }],
+            lfo_assignments: vec![LfoAssignment {
+                target: "brightness".into(),
+                lfo: 0,
+                amount: 40.0,
+                phase: 90.0,
+            }],
         })
         .unwrap();
         let restored: SessionImageSettings = serde_json::from_str(&json).unwrap();
@@ -796,6 +857,14 @@ mod tests {
         assert_eq!(restored.dither_levels, 2);
         assert_eq!(restored.dither_strength, 80.0);
         assert!(restored.dither_serpentine);
+        assert_eq!(restored.lfos.len(), 1);
+        assert!(restored.lfos[0].enabled);
+        assert_eq!(restored.lfos[0].waveform, "saw");
+        assert_eq!(restored.lfos[0].freq, 1.5);
+        assert_eq!(restored.lfo_assignments[0].target, "brightness");
+        assert_eq!(restored.lfo_assignments[0].lfo, 0);
+        assert_eq!(restored.lfo_assignments[0].amount, 40.0);
+        assert_eq!(restored.lfo_assignments[0].phase, 90.0);
 
         // An id the registry does not know (yet) parses fine
         let unknown = r#"{

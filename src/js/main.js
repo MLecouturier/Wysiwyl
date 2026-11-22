@@ -62,6 +62,7 @@ import {
 import {
     canPan, isSpacePanModifier, isPanning, syncViewerSurfaces, configureZoom,
 } from './image/zoom.js';
+import { initLfos, getLfoSession, applyLfoSession, retranslateLfos, unregisterLfoTargetsByPrefix } from './image/lfo.js';
 
 const { invoke } = window.__TAURI__.core;
 
@@ -183,6 +184,7 @@ window.addEventListener('locale-changed', () => {
     renderLanguageSwitcher();
     document.querySelectorAll('.synth-block').forEach(el => retranslateSynthElement(el));
     if (typeof syncLabels === 'function') syncLabels();
+    retranslateLfos();
     refreshDimensionsInfo();
     if (typeof syncPlayAllButton === 'function') syncPlayAllButton();
     // The clock badge's label is locale-dependent too
@@ -682,6 +684,7 @@ function buildSessionUi() {
         mirror_effect: mirror.getEffect(),
         mirror_effect_options: mirror.getEffectOptions(),
         mirror_effect_synths: Array.from(synthEffectExcluded),
+        ...getLfoSession(),
         synth_colors: Array.from(synthListBody.querySelectorAll('.synth-block')).map(el => ({
             id: Number(el.dataset.synthId),
             color: synthColors.get(Number(el.dataset.synthId)),
@@ -733,6 +736,7 @@ async function openSession() {
         exitCropMode();
         closeTransformPanel();
         metronome.markStopped();
+        unregisterLfoTargetsByPrefix('synth:'); // drop the old cards' LFO targets
         synthListBody.querySelectorAll('.synth-block').forEach(el => el.remove());
         synthTabs.querySelectorAll('.synth-tab').forEach(el => el.remove());
         clearSynthRegistry();
@@ -777,6 +781,7 @@ async function openSession() {
         }
         effectControls.sync();
         mirror.pushEffect();
+        applyLfoSession(session.image_settings);
         showOriginalBtn.classList.remove('active');
         viewerEmpty.classList.add('hidden');
         syncLabels();
@@ -974,6 +979,7 @@ configureImageEditor({
 // ---------- Init ----------
 syncLabels();
 resetHistory(); // undo baseline for the initial (empty) zone state
+initLfos();     // image modulation widgets under the adjustment sliders
 
 // The mute rest glyph is only ever drawn on a canvas; canvas fillText
 // does NOT trigger a lazy @font-face download (the Noto Music font is

@@ -37,6 +37,7 @@ $spacers: (
 
 .flex-col  { flex-direction: column; }
 .flex-auto { flex: 1 1 auto; }
+.flex-1    { flex: 1 1 0; }
 .flex-none { flex: none; }
 
 // Signature filler of this app: grows to fill leftover space AND centers

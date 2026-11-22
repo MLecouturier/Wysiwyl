@@ -24,6 +24,7 @@
 .controls-set {
     padding: 0 .5rem 0 .25rem;
     max-width: $sidebar-width;
+    min-width: 0;
 }
 
 // Slider field: its title and value on one line, the range below. The
@@ -38,10 +39,19 @@
     color: $color-text-secondary;
 }
 
-// Title + value line of a slider field
+// Title + value line of a slider field. Also hosts the LFO assignment
+// button (added by lfo.js) on the sliders that can be modulated.
 .control-head {
     display: flex;
+    align-items: center;
+    gap: .375rem;
     justify-content: space-between;
+}
+
+// The value sits against the right edge, so an optional assignment button
+// appended after it stays flush with it.
+.control-head .control-value {
+    margin-left: auto;
 }
 
 .control-value {
@@ -177,4 +187,214 @@
     gap: .25rem;
 
     button { min-width: 2.4rem; }
+}
+
+// ==========================================================================
+// Image modulation LFOs
+// ==========================================================================
+// Three side-by-side widgets under the adjustment sliders. Each shows the
+// waveform with a moving playhead, a power toggle and a waveform cycler
+// stacked on the right, and the frequency (drag over the graph to set it)
+// in the bottom-left corner. The assignment buttons (added by lfo.js in
+// each slider's .control-head) open the shared .lfo-menu popover.
+
+.lfos-set {
+    display: flex;
+    gap: .375rem;
+    margin-top: .5rem;
+}
+
+.lfo {
+    display: flex;
+    flex: 1 1 0;
+    min-width: 0;
+    height: 3.25rem;
+    border: 1px solid $color-border;
+    border-radius: $border-radius-base;
+    background-color: $color-bg-dark;
+    overflow: hidden;
+    // Overridden per LFO by lfo.js; the fallback keeps the base look valid
+    --lfo-color: #{$color-text-muted};
+}
+
+// The graph area stops before the button column: the waveform never runs
+// behind the on/off and waveform buttons.
+.lfo-graph {
+    position: relative;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.lfo-canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    cursor: ew-resize;
+    touch-action: none;
+}
+
+.lfo-actions {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: .15rem;
+    padding: 0 .15rem;
+}
+
+.lfo-power,
+.lfo-wave {
+    width: 1.35rem;
+    height: 1.35rem;
+    padding: 0;
+
+    .material-symbols-outlined { font-size: .95rem; }
+}
+
+// The power button always wears the LFO's color — dimmed while the LFO is off,
+// full while it runs — so the two oscillators stay identifiable at a glance.
+.lfo-power,
+.lfo-power:hover,
+.lfo-power.active {
+    border-color: var(--lfo-color);
+    color: var(--lfo-color);
+}
+
+.lfo-power {
+    opacity: .5;
+    transition: opacity $transition-fast, color $transition-fast, border-color $transition-fast;
+}
+
+.lfo-power:hover { opacity: .8; }
+.lfo-power.active { opacity: 1; }
+
+.lfo-wave-glyph {
+    display: block;
+    width: 1.05rem;
+    height: .62rem;
+}
+
+.lfo-freq {
+    position: absolute;
+    left: .25rem;
+    bottom: .1rem;
+    font-size: .6rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--lfo-color);
+    opacity: .8;
+    pointer-events: none;
+}
+
+// Off state: the whole widget (frequency included) reads in its dimmed color
+// rather than gray (the graph and glyph are dimmed in JS).
+.lfo:not(.enabled) .lfo-freq { opacity: .45; }
+
+// Wrapper of an assignable slider's track: hosts the ghost thumb. Its width
+// matches the input's, so a percentage `left` maps to the same travel as the
+// native thumb. The input is made block so no inline baseline gap inflates
+// the box and offsets the marker.
+.slider-track {
+    position: relative;
+    display: block;
+    width: 100%;
+
+    > input[type="range"] { display: block; }
+}
+
+// Second (ghost) thumb: a ring in the driving LFO's color, positioned at the
+// modulated value while the LFO runs. The native thumb stays at the base —
+// the center of the oscillation — so both the setting and the live value are
+// visible at once. Hidden when the target is not modulated.
+.lfo-ghost {
+    position: absolute;
+    top: 50%;
+    left: 0;
+    z-index: 2;
+    width: .875rem;
+    height: .875rem;
+    border: .125rem solid var(--lfo-color, #{$color-accent});
+    border-radius: 50%;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, .55);
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+}
+
+// Assignment slot appended next to an adjustment slider's value: a hollow
+// dot when unassigned, filled with the LFO's color when assigned.
+.lfo-assign-btn {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1rem;
+    height: 1rem;
+    padding: 0;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+
+    .lfo-assign-dot {
+        width: .6rem;
+        height: .6rem;
+        border: 1px solid $color-text-muted;
+        border-radius: 50%;
+        transition: background-color $transition-fast, border-color $transition-fast;
+    }
+
+    &:hover .lfo-assign-dot { border-color: $color-text-primary; }
+
+    &.assigned .lfo-assign-dot {
+        border-color: var(--lfo-color);
+        background-color: var(--lfo-color);
+    }
+}
+
+// Shared assignment popover, anchored under the clicked slider's button.
+.lfo-menu {
+    position: fixed;
+    z-index: 900;
+    width: 15rem;
+    padding: .5rem .625rem;
+    border: 1px solid $color-border;
+    border-radius: $border-radius-base;
+    background-color: $color-bg-panel;
+    box-shadow: $shadow-popover;
+}
+
+.lfo-menu-title {
+    margin-bottom: .125rem;
+    font-size: .8rem;
+    font-weight: 600;
+    color: $color-text-primary;
+}
+
+.lfo-menu-field {
+    display: flex;
+    flex-direction: column;
+    gap: .25rem;
+    margin-top: .5rem;
+    font-size: .8rem;
+    color: $color-text-secondary;
+}
+
+.lfo-menu-lfos {
+    display: flex;
+    gap: .25rem;
+
+    button {
+        flex: 1 1 0;
+        padding: .2rem .25rem;
+        border: 1px solid $color-border;
+        border-radius: $border-radius-base;
+        background-color: transparent;
+        color: $color-text-secondary;
+        font-size: .75rem;
+        cursor: pointer;
+        transition: color $transition-fast, border-color $transition-fast;
+
+        &:hover { border-color: $color-text-muted; }
+        &.active { border-color: $color-accent; color: $color-accent; }
+        &[data-lfo="0"].active { border-color: $color-lfo-1; color: $color-lfo-1; }
+        &[data-lfo="1"].active { border-color: $color-lfo-2; color: $color-lfo-2; }
+    }
 }

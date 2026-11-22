@@ -194,9 +194,14 @@
             <div class="synth-section-header">
                 <span class="synth-section-title" data-i18n="synth.hueShift" data-i18n-title="synth.hueShift"></span>
                 <span class="synth-section-value hue-shift-val">0°</span>
+                <div class="flex-fill"></div>
+                <button type="button" class="lfo-assign-btn synth-lfo-assign"></button>
             </div>
             <div class="synth-section-body">
-                <input type="range" class="synth-hue-shift gradient-hue" min="0" max="360" value="0" step="1" />
+                <span class="slider-track">
+                    <input type="range" class="synth-hue-shift gradient-hue" min="0" max="360" value="0" step="1" />
+                    <span class="lfo-ghost hidden"></span>
+                </span>
             </div>
             <div class="synth-section-header">
                 <span class="synth-section-title" data-i18n="synth.noteRangeTitle"></span>

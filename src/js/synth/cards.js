@@ -32,6 +32,10 @@ import {
 import { startZonePicking, cancelZonePicking, setWandAdjacent, isZoneMode, isZonePickingId, remapZonePickIds } from './selection.js';
 import { toggleGridNoteInfo, cancelGridNoteInfo, gridNoteState } from './selection.js';
 import { resetHistory } from './history.js';
+import {
+    registerLfoTarget, unregisterLfoTarget, renameLfoTarget,
+    attachLfoAssignButton, lfoSynthHueKey,
+} from '../image/lfo.js';
 
 // Deferred so importing this module does not touch the Tauri globals.
 const invoke = (...args) => window.__TAURI__.core.invoke(...args);
@@ -675,6 +679,28 @@ export function createSynthElement(id, cfg = null) {
         invoke('set_synth_hue_shift', { id, hueShift })
             .catch(err => console.error('Error in set_synth_hue_shift:', err));
     });
+
+    // LFO modulation target: the hue shift can be driven by an image LFO
+    // (monophonic mode). The effective value is pushed to the backend by the
+    // LFO loop; the target key follows the synth id renumbering (see
+    // renumberSynthIds).
+    registerLfoTarget(lfoSynthHueKey(id), {
+        element: hueShiftInput,
+        ghost: el.querySelector('.synth-hue-section .lfo-ghost'),
+        // The hue is a circle: the modulation wraps around 0°/360°.
+        wrap: true,
+        apply: (value) => invoke('set_synth_hue_shift', {
+            id: Number(el.dataset.synthId),
+            hueShift: Math.round(value),
+        }).catch(err => console.error('Error in set_synth_hue_shift:', err)),
+        label: () => {
+            const name = el.querySelector('.synth-title-label')?.textContent?.trim() || '';
+            const title = t('synth.hueShift');
+            return name ? `${name} · ${title}` : title;
+        },
+        display: (value) => { hueShiftVal.textContent = `${Math.round(value)}°`; },
+    });
+    attachLfoAssignButton(el.querySelector('.synth-hue-section .lfo-assign-btn'), lfoSynthHueKey(id));
 
     // ---- Note range filters (bass / medium / treble) ----
     // Mono panel has one filter for the single note; each polyphonic voice
@@ -1517,6 +1543,8 @@ export async function renumberSynthIds() {
         }
         // Re-target an armed zone-picking mode, if any
         remapZonePickIds(oldId, newId);
+        // The LFO hue-shift target follows the id
+        renameLfoTarget(lfoSynthHueKey(oldId), lfoSynthHueKey(newId));
     });
 
     // Ids changed: any stored history would target stale ids, so start over
@@ -1589,6 +1617,7 @@ export async function onSynthRemoveClick(id, el) {
     // The dropped display number only cleans the map: the number itself
     // stays retired (the backend counter never reuses it)
     removeSynthFromRegistry(id);
+    unregisterLfoTarget(lfoSynthHueKey(id)); // drops the target, assignment and button
 
     // Neighbours captured before detaching the card: the synth just above
     // is preferred, the one just below is the fallback (removed card was

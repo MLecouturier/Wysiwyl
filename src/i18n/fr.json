@@ -47,6 +47,18 @@
     "ditherStrength": "Diffusion",
     "ditherSerpentine": "Serpentine",
     "autoLevels": "Auto-niveaux",
+    "lfoPower": "Allumer ou éteindre ce LFO",
+    "lfoAssign": "Associer un LFO à ce réglage",
+    "lfoAssigned": "Piloté par le LFO {n} — cliquer pour modifier, double-clic pour dissocier",
+    "lfoMenuLfo": "LFO",
+    "lfoMenuNone": "Aucun",
+    "lfoMenuAmount": "Amplitude",
+    "lfoMenuPhase": "Phase",
+    "lfoWave_sin": "Sinusoïdale",
+    "lfoWave_triangle": "Triangle",
+    "lfoWave_saw": "Dent de scie",
+    "lfoWave_square": "Carrée",
+    "lfoWave_sample_hold": "Échantillon & maintien",
     "dimensionsInfo": "Original : {origWidth} × {origHeight}  —  Grille : {width} × {height}  ({cellCount} px)"
   },
   "mirrorEffect": {

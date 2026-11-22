@@ -135,36 +135,87 @@
                                     </div>
                                 </div>
 
-                                <div class="controls-set flex flex-col gap-2 flex-auto h-full">
+                                <div class="controls-set flex flex-col gap-2 flex-1 h-full">
                                     <label data-i18n-title="controls.brightness">
                                         <span class="control-head"><span data-i18n="controls.brightness"></span> <span id="brightness-value" class="control-value">0</span></span>
-                                        <input type="range" id="brightness" min="-100" max="100" value="0" step="1" />
+                                        <span class="slider-track">
+                                            <input type="range" id="brightness" min="-100" max="100" value="0" step="1" />
+                                            <span class="lfo-ghost hidden"></span>
+                                        </span>
                                     </label>
                                     <label data-i18n-title="controls.contrast">
                                         <span class="control-head"><span data-i18n="controls.contrast"></span> <span id="contrast-value" class="control-value">0</span></span>
-                                        <input type="range" id="contrast" min="-100" max="100" value="0" step="1" />
+                                        <span class="slider-track">
+                                            <input type="range" id="contrast" min="-100" max="100" value="0" step="1" />
+                                            <span class="lfo-ghost hidden"></span>
+                                        </span>
                                     </label>
                                     <label data-i18n-title="controls.vibrance">
                                         <span class="control-head"><span data-i18n="controls.vibrance"></span> <span id="vibrance-value" class="control-value">0</span></span>
-                                        <input type="range" id="vibrance" min="-100" max="100" value="0" step="1" />
+                                        <span class="slider-track">
+                                            <input type="range" id="vibrance" min="-100" max="100" value="0" step="1" />
+                                            <span class="lfo-ghost hidden"></span>
+                                        </span>
                                     </label>
+                                    <div class="lfos-set">
+                                        <div class="lfo">
+                                            <div class="lfo-graph">
+                                                <canvas class="lfo-canvas"></canvas>
+                                                <span class="lfo-freq"></span>
+                                            </div>
+                                            <div class="lfo-actions">
+                                                <button type="button" class="lfo-power icon-btn" aria-pressed="false">
+                                                    <span class="material-symbols-outlined" aria-hidden="true">power_settings_new</span>
+                                                </button>
+                                                <button type="button" class="lfo-wave icon-btn">
+                                                    <canvas class="lfo-wave-glyph"></canvas>
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <div class="lfo">
+                                            <div class="lfo-graph">
+                                                <canvas class="lfo-canvas"></canvas>
+                                                <span class="lfo-freq"></span>
+                                            </div>
+                                            <div class="lfo-actions">
+                                                <button type="button" class="lfo-power icon-btn" aria-pressed="false">
+                                                    <span class="material-symbols-outlined" aria-hidden="true">power_settings_new</span>
+                                                </button>
+                                                <button type="button" class="lfo-wave icon-btn">
+                                                    <canvas class="lfo-wave-glyph"></canvas>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
-                                <div class="controls-set flex flex-col gap-2 flex-auto h-full">
+                                <div class="controls-set flex flex-col gap-2 flex-1 h-full">
                                     <label data-i18n-title="controls.clarity">
                                         <span class="control-head"><span data-i18n="controls.clarity"></span> <span id="clarity-value" class="control-value">0</span></span>
-                                        <input type="range" id="clarity" min="-100" max="100" value="0" step="1" />
+                                        <span class="slider-track">
+                                            <input type="range" id="clarity" min="-100" max="100" value="0" step="1" />
+                                            <span class="lfo-ghost hidden"></span>
+                                        </span>
                                     </label>
                                     <label data-i18n-title="controls.texture">
                                         <span class="control-head"><span data-i18n="controls.texture"></span> <span id="texture-value" class="control-value">0</span></span>
-                                        <input type="range" id="texture" min="-100" max="100" value="0" step="1" />
+                                        <span class="slider-track">
+                                            <input type="range" id="texture" min="-100" max="100" value="0" step="1" />
+                                            <span class="lfo-ghost hidden"></span>
+                                        </span>
                                     </label>
                                     <label data-i18n-title="controls.simplify">
                                         <span class="control-head"><span data-i18n="controls.simplify"></span> <span id="simplify-value" class="control-value">0</span></span>
-                                        <input type="range" id="simplify" min="0" max="100" value="0" step="1" />
+                                        <span class="slider-track">
+                                            <input type="range" id="simplify" min="0" max="100" value="0" step="1" />
+                                            <span class="lfo-ghost hidden"></span>
+                                        </span>
                                     </label>
                                     <label data-i18n-title="controls.posterize">
                                         <span class="control-head"><span data-i18n="controls.posterize"></span> <span id="posterize-value" class="control-value">off</span></span>
-                                        <input type="range" id="posterize" min="0" max="1000" value="0" step="1" />
+                                        <span class="slider-track">
+                                            <input type="range" id="posterize" min="0" max="1000" value="0" step="1" />
+                                            <span class="lfo-ghost hidden"></span>
+                                        </span>
                                     </label>
                                 </div>
                             </div>
@@ -430,6 +481,29 @@
                 <button id="update-install" class="primary" data-i18n="update.install"></button>
             </div>
         </div>
+    </div>
+
+    <!-- LFO assignment popover: shared by every modulation target (image
+         sliders and per-synth hue shift). Positioned and filled by
+         js/image/lfo.js. -->
+    <div id="lfo-menu" class="lfo-menu hidden">
+        <div class="lfo-menu-title"></div>
+        <div class="lfo-menu-field">
+            <span class="lfo-menu-label" data-i18n="controls.lfoMenuLfo"></span>
+            <div class="lfo-menu-lfos">
+                <button type="button" class="lfo-menu-lfo" data-lfo="-1" data-i18n="controls.lfoMenuNone"></button>
+                <button type="button" class="lfo-menu-lfo" data-lfo="0">1</button>
+                <button type="button" class="lfo-menu-lfo" data-lfo="1">2</button>
+            </div>
+        </div>
+        <label class="lfo-menu-field lfo-menu-slider-field">
+            <span class="control-head"><span data-i18n="controls.lfoMenuAmount"></span> <span class="lfo-menu-amount-val control-value">0%</span></span>
+            <input type="range" class="lfo-menu-amount" min="0" max="100" value="0" step="1" />
+        </label>
+        <label class="lfo-menu-field lfo-menu-slider-field">
+            <span class="control-head"><span data-i18n="controls.lfoMenuPhase"></span> <span class="lfo-menu-phase-val control-value">0%</span></span>
+            <input type="range" class="lfo-menu-phase" min="0" max="100" value="0" step="1" />
+        </label>
     </div>
 
     <script type="module" src="js/main.js"></script>

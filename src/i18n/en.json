@@ -47,6 +47,18 @@
     "ditherStrength": "Diffusion",
     "ditherSerpentine": "Serpentine",
     "autoLevels": "Auto levels",
+    "lfoPower": "Turn this LFO on or off",
+    "lfoAssign": "Assign an LFO to this setting",
+    "lfoAssigned": "Driven by LFO {n} — click to edit, double-click to clear",
+    "lfoMenuLfo": "LFO",
+    "lfoMenuNone": "None",
+    "lfoMenuAmount": "Amount",
+    "lfoMenuPhase": "Phase",
+    "lfoWave_sin": "Sine",
+    "lfoWave_triangle": "Triangle",
+    "lfoWave_saw": "Saw",
+    "lfoWave_square": "Square",
+    "lfoWave_sample_hold": "Sample & hold",
     "dimensionsInfo": "Original: {origWidth} × {origHeight}  —  Grid: {width} × {height}  ({cellCount} px)"
   },
   "mirrorEffect": {

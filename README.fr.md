@@ -17,6 +17,9 @@ Wysiwyl est une application desktop Tauri qui transforme une image en musique. C
 - Ajustements de saturation, contraste, luminosité et postérisation (réduction du nombre de niveaux de couleur/luminosité).
 - Réinitialisation de tous les paramètres de traitement.
 - Pendant qu'un synthétiseur joue, les contrôles structurels d'image (chargement, rotation, recadrage, transformation, taille de grille) sont automatiquement verrouillés afin de garder la grille de pixels stable. Les ajustements de valeurs (saturation, contraste, luminosité, postérisation) restent modifiables : leur effet est appliqué en direct à la lecture, au pas de métronome suivant (le bouton « Voir l'original » reste également disponible).
+- **Oscillateurs basse fréquence (LFO)** — deux LFO indépendants, sous les curseurs de réglage, modulent les réglages d'image en temps réel. Chacun dispose d'un bouton on/off, d'un sélecteur de forme d'onde (sinus, triangle, dent de scie, carré, échantillon & maintien) et d'une fréquence réglée en glissant horizontalement sur son graphe (double-clic pour la réinitialiser). La forme d'onde défile sous un curseur central fixe, et le widget porte sa propre couleur — cyan pour le premier, magenta pour le second — atténuée lorsqu'il est éteint.
+- **Association d'un LFO à un réglage** — une petite pastille à côté de chaque curseur ajustable (les sept réglages d'image et le décalage de teinte de chaque synthétiseur) ouvre un menu : choisir le LFO (ou aucun), l'amplitude (0–100 % de la plage du curseur) et le décalage de phase (0–100 %, où 100 % correspond à l'opposition de phase). Un même LFO peut piloter plusieurs réglages à la fois, chacun avec son amplitude et sa phase. Un double-clic sur la pastille annule l'association, et le menu se ferme seul après quelques secondes d'inactivité. Un curseur associé affiche un second pouce « fantôme » à la couleur du LFO qui suit la valeur modulée en direct, et sa valeur numérique oscille avec elle, tandis que le pouce natif reste sur la valeur de base — le centre de l'oscillation.
+- La grille traitée — et donc ce que jouent les synthétiseurs — suit la modulation en direct (~15 fps). Le décalage de teinte s'enroule sur le cercle chromatique au-delà de 0°/360° au lieu de se bloquer aux extrémités.
 
 ### Synthétiseurs
 
@@ -63,7 +66,7 @@ Wysiwyl expose tout ce dont un DAW a besoin, sans matériel requis (macOS et Lin
 
 ### Sessions de travail
 
-- **Sauvegarde de l'état complet** dans un unique fichier `.wysiwyl` autoportant (boîte de dialogue d'enregistrement native) : l'image originale (embarquée en base64 PNG), les réglages de traitement d'image, le tempo du métronome, et chaque synthétiseur avec sa configuration complète (nom, couleur, zones, tempo, mode, longueurs de note, plages MIDI, seuils, vélocité, canal et port MIDI, sens de lecture, lecture triée, boucle/aller-retour).
+- **Sauvegarde de l'état complet** dans un unique fichier `.wysiwyl` autoportant (boîte de dialogue d'enregistrement native) : l'image originale (embarquée en base64 PNG), les réglages de traitement d'image, les LFO et leurs associations, le tempo du métronome, et chaque synthétiseur avec sa configuration complète (nom, couleur, zones, tempo, mode, longueurs de note, plages MIDI, seuils, vélocité, canal et port MIDI, sens de lecture, lecture triée, boucle/aller-retour).
 - **Réouverture d'une session** via une boîte de dialogue native : l'image est re-dérivée de l'originale avec les réglages stockés, et tous les synthétiseurs sont recréés exactement tels qu'ils ont été laissés. L'état de lecture (positions des têtes de lecture, notes en cours) n'est volontairement pas restauré : tout repart du début.
 
 ### Configuration globale

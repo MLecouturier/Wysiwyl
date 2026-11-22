@@ -24,6 +24,7 @@ import { resetHistory } from '../synth/history.js';
 import { registerShortcut, registerEscape, SCOPE } from '../core/shortcuts.js';
 import { enterConsumed } from '../core/focus.js';
 import { resetZoom, syncViewerSurfaces } from './zoom.js';
+import { getLfoOffset, configureLfo, resetLfos } from './lfo.js';
 
 // Deferred so importing this module does not touch the Tauri globals.
 const invoke = (...args) => window.__TAURI__.core.invoke(...args);
@@ -80,17 +81,29 @@ export function currentGridWidth() {
 }
 
 // ---------- Settings ----------
+// Applies the live LFO offset to a slider value, clamped to its range. The
+// slider itself stays the center of the oscillation (its displayed value is
+// unchanged); only the value handed to the backend is modulated.
+function modulatedValue(el, targetId) {
+  const offset = getLfoOffset(targetId);
+  const base = Number(el.value);
+  if (!offset) return base;
+  const min = Number(el.min);
+  const max = Number(el.max);
+  return Math.min(max, Math.max(min, base + offset));
+}
+
 export function buildParams() {
   return {
     grid_width:       currentGridWidth(),
     grid_height:      null,              // always deduced from the ratio
-    contrast:         Number(contrast.value),
-    brightness:       Number(brightness.value),
-    vibrance:         Number(vibrance.value),
-    posterize_levels: sliderToPosterizeLevels(Number(posterize.value)),
-    texture:          Number(texture.value),
-    clarity:          Number(clarity.value),
-    simplify:         Number(simplify.value),
+    contrast:         modulatedValue(contrast, 'contrast'),
+    brightness:       modulatedValue(brightness, 'brightness'),
+    vibrance:         modulatedValue(vibrance, 'vibrance'),
+    posterize_levels: sliderToPosterizeLevels(modulatedValue(posterize, 'posterize')),
+    texture:          modulatedValue(texture, 'texture'),
+    clarity:          modulatedValue(clarity, 'clarity'),
+    simplify:         modulatedValue(simplify, 'simplify'),
     auto_levels:      autoLevelsBtn.classList.contains('active'),
     dither:            ditherBtn.classList.contains('active'),
     dither_levels:     Number(ditherLevels.value),
@@ -160,6 +173,7 @@ export function syncLabels() {
 // ---------- Refresh ----------
 let pending = false;
 let rerun = false; // a refresh was requested while one was in flight
+let rerunLight = false; // the replay keeps the lightest mode requested
 let lastDimensionsInfo = null; // remembers the last result, to retranslate on locale change
 
 // Renders the processed grid. The backend runs the render off the main
@@ -167,14 +181,23 @@ let lastDimensionsInfo = null; // remembers the last result, to retranslate on l
 // flight is not dropped but replayed once the first completes (with the
 // then-current settings) — a reshape's refresh must never be lost behind
 // a slider's.
-export async function refresh() {
+//
+// `light` skips everything that only matters when the grid itself changed
+// (overlay clearing, zone re-push, history baseline, dimensions line): the
+// LFO animation calls it at ~15 fps and must not disturb the selection
+// tools or repaint the highlights every frame.
+export async function refresh(light = false) {
   if (!viewer.hasImage) return;
   if (pending) {
     rerun = true;
+    // The replay keeps the lightest mode only if *every* concurrent
+    // request was light: a full refresh must never be downgraded.
+    rerunLight = rerunLight && light;
     return;
   }
   pending = true;
   rerun = false;
+  rerunLight = true;
 
   try {
     const prevW = viewer.gridW;
@@ -190,20 +213,23 @@ export async function refresh() {
     viewer.totalPixels = decoded.width * decoded.height;
     viewer.gridW = decoded.width;
     viewer.gridH = decoded.height;
-    clearOverlay();
-    cancelZonePicking();
-    updateAllSynthZones();
 
-    // A grid change clips the zones: that is out of the undo scope, so it
-    // starts a fresh history baseline (and drops the pending captures).
-    if (decoded.width !== prevW || decoded.height !== prevH) resetHistory();
+    if (!light) {
+      clearOverlay();
+      cancelZonePicking();
+      updateAllSynthZones();
 
-    lastDimensionsInfo = {
-      origWidth: viewer.origWidth, origHeight: viewer.origHeight,
-      width: decoded.width, height: decoded.height,
-      cellCount: viewer.totalPixels,
-    };
-    dimensionsInfo.textContent = t('controls.dimensionsInfo', lastDimensionsInfo);
+      // A grid change clips the zones: that is out of the undo scope, so it
+      // starts a fresh history baseline (and drops the pending captures).
+      if (decoded.width !== prevW || decoded.height !== prevH) resetHistory();
+
+      lastDimensionsInfo = {
+        origWidth: viewer.origWidth, origHeight: viewer.origHeight,
+        width: decoded.width, height: decoded.height,
+        cellCount: viewer.totalPixels,
+      };
+      dimensionsInfo.textContent = t('controls.dimensionsInfo', lastDimensionsInfo);
+    }
   } catch (err) {
     // The original changed under this render (a reshape raced it): the
     // replayed refresh below renders the new one
@@ -216,7 +242,7 @@ export async function refresh() {
   } finally {
     pending = false;
   }
-  if (rerun) await refresh();
+  if (rerun) await refresh(rerunLight);
 }
 
 let debounceId = null;
@@ -925,6 +951,7 @@ resetBtn.addEventListener('click', () => {
   ditherLevels.value = 4;
   ditherStrength.value = 100;
   ditherSerpentineBtn.classList.remove('active');
+  resetLfos(); // LFOs off, every assignment dropped
 
   appEvents.emit('session-dirty');
   syncLabels();
@@ -1037,6 +1064,15 @@ showOriginalBtn.addEventListener('click', () => {
 export const isCropActive = () => cropState.mode;
 // Whether the transform panel is open (ResizeObserver, global shortcuts).
 export const isTransformActive = () => transformActive;
+
+// The LFO animation drives a light re-render through this hook (the loop
+// lives in lfo.js, the renderer here). While the transform panel is open the
+// viewer shows its own live preview, so the LFOs stop repainting the grid.
+configureLfo({
+    requestRefresh: () => refresh(true),
+    isPaused: () => transformActive,
+});
+
 // Re-renders the dimensions line on locale change (main.js's handler).
 export function refreshDimensionsInfo() {
     if (lastDimensionsInfo) {

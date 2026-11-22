@@ -37,6 +37,11 @@ $color-selective-hover: #d35400;
 // channel, so synths on the same pair override each other's volume.
 $color-warning: #e0a016;
 
+// Identification colors of the two image-modulation LFOs (the graph, the
+// power button and the assignment dots on the sliders).
+$color-lfo-1: #00e0ff; // cyan
+$color-lfo-2: #ff00e0; // magenta
+
 // Neutral filled background for small transport controls (bpm steps)
 $color-bg-neutral: #444;
 $color-bg-neutral-hover: #555;
