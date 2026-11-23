@@ -487,13 +487,18 @@
          sliders and per-synth hue shift). Positioned and filled by
          js/image/lfo.js. -->
     <div id="lfo-menu" class="lfo-menu hidden">
-        <div class="lfo-menu-title"></div>
-        <div class="lfo-menu-field">
+        <div class="lfo-menu-head">
+            <div class="lfo-menu-title"></div>
+            <button type="button" class="lfo-menu-close">
+                <span class="material-symbols-outlined" aria-hidden="true">close</span>
+            </button>
+        </div>
+        <div class="lfo-menu-field lfo-menu-lfo-field">
             <span class="lfo-menu-label" data-i18n="controls.lfoMenuLfo"></span>
             <div class="lfo-menu-lfos">
-                <button type="button" class="lfo-menu-lfo" data-lfo="-1" data-i18n="controls.lfoMenuNone"></button>
-                <button type="button" class="lfo-menu-lfo" data-lfo="0">1</button>
-                <button type="button" class="lfo-menu-lfo" data-lfo="1">2</button>
+                <button type="button" class="lfo-menu-lfo" data-lfo="-1"></button>
+                <button type="button" class="lfo-menu-lfo" data-lfo="0"></button>
+                <button type="button" class="lfo-menu-lfo" data-lfo="1"></button>
             </div>
         </div>
         <label class="lfo-menu-field lfo-menu-slider-field">

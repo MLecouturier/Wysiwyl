@@ -617,10 +617,13 @@ button.toggle-btn.active:hover {
   position: absolute;
   left: 0.25rem;
   bottom: 0.1rem;
+  padding: 0.05rem 0.2rem;
+  border-radius: 2px;
+  background-color: rgba(30, 30, 30, 0.9);
   font-size: 0.6rem;
   font-variant-numeric: tabular-nums;
   color: var(--lfo-color);
-  opacity: 0.8;
+  opacity: 1;
   pointer-events: none;
 }
 
@@ -689,11 +692,40 @@ button.toggle-btn.active:hover {
   box-shadow: 0 0.25rem 1rem rgba(0, 0, 0, 0.5);
 }
 
+.lfo-menu-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
 .lfo-menu-title {
-  margin-bottom: 0.125rem;
   font-size: 0.8rem;
   font-weight: 600;
   color: #e0e0e0;
+}
+
+.lfo-menu-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  border: none;
+  border-radius: 0.25rem;
+  background-color: transparent;
+  color: #ccc;
+  cursor: pointer;
+  transition: color 0.2s ease, background-color 0.2s ease;
+}
+.lfo-menu-close:hover {
+  color: #e0e0e0;
+  background-color: #262626;
+}
+.lfo-menu-close .material-symbols-outlined {
+  font-size: 1.1rem;
 }
 
 .lfo-menu-field {
@@ -705,35 +737,49 @@ button.toggle-btn.active:hover {
   color: #ccc;
 }
 
+.lfo-menu-lfo-field {
+  flex-direction: row;
+  align-items: center;
+  gap: 1rem;
+}
+
 .lfo-menu-lfos {
   display: flex;
-  gap: 0.25rem;
+  gap: 0.4rem;
 }
 .lfo-menu-lfos button {
-  flex: 1 1 0;
-  padding: 0.2rem 0.25rem;
+  width: 0.8rem;
+  height: 0.8rem;
+  padding: 0;
   border: 1px solid #333;
-  border-radius: 0.25rem;
+  border-radius: 50%;
   background-color: transparent;
-  color: #ccc;
-  font-size: 0.75rem;
   cursor: pointer;
-  transition: color 0.2s ease, border-color 0.2s ease;
+  transition: opacity 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
 }
 .lfo-menu-lfos button:hover {
   border-color: #888;
 }
-.lfo-menu-lfos button.active {
-  border-color: #3a7bd5;
-  color: #3a7bd5;
-}
-.lfo-menu-lfos button[data-lfo="0"].active {
+.lfo-menu-lfos button[data-lfo="0"] {
   border-color: #00e0ff;
-  color: #00e0ff;
+  background-color: #00e0ff;
 }
-.lfo-menu-lfos button[data-lfo="1"].active {
+.lfo-menu-lfos button[data-lfo="1"] {
   border-color: #ff00e0;
-  color: #ff00e0;
+  background-color: #ff00e0;
+}
+.lfo-menu-lfos button:not(.active) {
+  opacity: 0.35;
+}
+.lfo-menu-lfos button.active[data-lfo="-1"] {
+  background-color: #ccc;
+  box-shadow: 0 0 0 2px rgba(136, 136, 136, 0.35);
+}
+.lfo-menu-lfos button.active[data-lfo="0"] {
+  box-shadow: 0 0 0 2px rgba(0, 224, 255, 0.35);
+}
+.lfo-menu-lfos button.active[data-lfo="1"] {
+  box-shadow: 0 0 0 2px rgba(255, 0, 224, 0.35);
 }
 
 .metronome-area {

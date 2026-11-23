@@ -278,10 +278,14 @@
     position: absolute;
     left: .25rem;
     bottom: .1rem;
+    padding: .05rem .2rem;
+    border-radius: 2px;
+    // Nearly opaque plate so the readout stays legible over the curve.
+    background-color: rgba($color-bg-dark, .9);
     font-size: .6rem;
     font-variant-numeric: tabular-nums;
     color: var(--lfo-color);
-    opacity: .8;
+    opacity: 1;
     pointer-events: none;
 }
 
@@ -361,11 +365,38 @@
     box-shadow: $shadow-popover;
 }
 
+.lfo-menu-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: .5rem;
+}
+
 .lfo-menu-title {
-    margin-bottom: .125rem;
     font-size: .8rem;
     font-weight: 600;
     color: $color-text-primary;
+}
+
+// Borderless icon button closing the popover, in the top-right corner.
+.lfo-menu-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: 1.5rem;
+    height: 1.5rem;
+    padding: 0;
+    border: none;
+    border-radius: $border-radius-base;
+    background-color: transparent;
+    color: $color-text-secondary;
+    cursor: pointer;
+    transition: color $transition-fast, background-color $transition-fast;
+
+    &:hover { color: $color-text-primary; background-color: $color-bg-light; }
+
+    .material-symbols-outlined { font-size: 1.1rem; }
 }
 
 .lfo-menu-field {
@@ -377,24 +408,37 @@
     color: $color-text-secondary;
 }
 
+// The LFO picker sits on one line: the label followed by the colored dots.
+.lfo-menu-lfo-field {
+    flex-direction: row;
+    align-items: center;
+    gap: 1rem; // wider gap between the label and the first dot
+}
+
 .lfo-menu-lfos {
     display: flex;
-    gap: .25rem;
+    gap: .4rem;
 
     button {
-        flex: 1 1 0;
-        padding: .2rem .25rem;
+        width: .8rem;
+        height: .8rem;
+        padding: 0;
         border: 1px solid $color-border;
-        border-radius: $border-radius-base;
+        border-radius: 50%;
         background-color: transparent;
-        color: $color-text-secondary;
-        font-size: .75rem;
         cursor: pointer;
-        transition: color $transition-fast, border-color $transition-fast;
+        transition: opacity $transition-fast, box-shadow $transition-fast, border-color $transition-fast;
 
         &:hover { border-color: $color-text-muted; }
-        &.active { border-color: $color-accent; color: $color-accent; }
-        &[data-lfo="0"].active { border-color: $color-lfo-1; color: $color-lfo-1; }
-        &[data-lfo="1"].active { border-color: $color-lfo-2; color: $color-lfo-2; }
+
+        // The two LFOs are colored discs; "None" stays an empty ring.
+        &[data-lfo="0"] { border-color: $color-lfo-1; background-color: $color-lfo-1; }
+        &[data-lfo="1"] { border-color: $color-lfo-2; background-color: $color-lfo-2; }
+
+        // The unselected dots fade back; the selected one wears a colored halo.
+        &:not(.active) { opacity: .35; }
+        &.active[data-lfo="-1"] { background-color: $color-text-secondary; box-shadow: 0 0 0 2px rgba($color-text-muted, .35); }
+        &.active[data-lfo="0"] { box-shadow: 0 0 0 2px rgba($color-lfo-1, .35); }
+        &.active[data-lfo="1"] { box-shadow: 0 0 0 2px rgba($color-lfo-2, .35); }
     }
 }

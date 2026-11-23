@@ -16,6 +16,7 @@ import { t } from '../core/i18n.js';
 import { sliderToPosterizeLevels } from '../core/utils.js';
 import { registerEscape } from '../core/shortcuts.js';
 import { appEvents, viewer } from '../core/state.js';
+import { isWheelNotch, getTrackpadThreshold, WHEEL_ACCUM_RESET_MS } from '../audio/stepper.js';
 
 const LFO_COUNT = 2;
 
@@ -24,9 +25,13 @@ const LFO_COUNT = 2;
 const WAVEFORMS = ['sin', 'triangle', 'saw', 'square', 'sample_hold'];
 
 // Frequency range of the drag control, on a logarithmic scale.
-const FREQ_MIN = 0.02;
+const FREQ_MIN = 0.05;
 const FREQ_MAX = 5;
 const DEFAULT_FREQ = 0.5;
+
+// Multiplicative frequency step per mouse-wheel notch. The scale is
+// logarithmic, so a notch scales the value instead of adding to it.
+const FREQ_WHEEL_STEP = 1.1;
 
 // Identification colors of the LFOs (see _variables.scss): cyan, magenta.
 const LFO_COLORS = ['#00e0ff', '#ff00e0'];
@@ -40,11 +45,15 @@ const IMAGE_TARGET_SET = new Set(IMAGE_TARGETS);
 const SYNTH_TARGET_PREFIX = 'synth:';
 const synthTargetKey = id => `${SYNTH_TARGET_PREFIX}${id}`;
 
-// One frame every ~66 ms: a smooth-enough graph, a light backend load.
-const RENDER_INTERVAL = 1000 / 15;
+// One render every ~33 ms (30 fps): smooth enough for the fastest LFO (5 Hz,
+// ~6 samples per cycle) while keeping the backend load light.
+const RENDER_INTERVAL = 1000 / 30;
 
-// Number of cycles drawn across the graph width.
-const GRAPH_CYCLES = 2;
+// Duration represented by the graph width, in seconds. The cursor sits at the
+// center; each lateral marker (at 1/8 and 7/8 of the width) marks 1 s of the
+// signal from the cursor — one cycle at 1 Hz. The number of cycles drawn is
+// therefore proportional to the frequency.
+const WINDOW_SECONDS = 8 / 3;
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
@@ -80,6 +89,10 @@ const lfoState = Array.from({ length: LFO_COUNT }, () => ({
     enabled: false,
     waveform: 'sin',
     freq: DEFAULT_FREQ,
+    // Phase (in cycles) of the last frame drawn while enabled. A stopped LFO
+    // is redrawn at this phase, so switching it off freezes the curve instead
+    // of snapping it back to the start.
+    frozenPhase: 0,
 }));
 
 // targetId -> { lfo, amount (0..100 %), phase (0..100 %) }
@@ -347,17 +360,37 @@ function drawWidget(w, i, cycles) {
     ctx.lineTo(W, midY + 0.5);
     ctx.stroke();
 
-    // Waveform scrolling under a fixed center cursor: the phase at x is
-    // offset so the cursor (x = W/2) always shows the current value. Off, the
-    // curve keeps the LFO's color but dimmed — no gray.
+    // Fixed time-scale markers: one second of signal from the cursor, i.e. one
+    // cycle at 1 Hz, at 1/8 and 7/8 of the width. Drawn under the curve, in the
+    // LFO's color but dimmed — no gray.
+    const markerX = W / 8;
     ctx.strokeStyle = LFO_COLORS[i];
+    ctx.lineWidth = 1;
+    ctx.globalAlpha = st.enabled ? 0.35 : 0.15;
+    ctx.beginPath();
+    ctx.moveTo(markerX + 0.5, 0);
+    ctx.lineTo(markerX + 0.5, H);
+    ctx.moveTo(W - markerX + 0.5, 0);
+    ctx.lineTo(W - markerX + 0.5, H);
+    ctx.stroke();
+
+    // Waveform scrolling under a fixed center cursor: the phase at x is
+    // offset so the cursor (x = W/2) always shows the current value. The time
+    // scale is fixed (WINDOW_SECONDS across the width), so the number of cycles
+    // grows with the frequency. Off, the curve keeps the LFO's color but
+    // dimmed — no gray.
+    const cyclesSpan = st.freq * WINDOW_SECONDS;
+    // Thinner trace as the frequency rises, so a dense curve stays readable.
+    const logMin = Math.log(FREQ_MIN);
+    const logMax = Math.log(FREQ_MAX);
+    const freqT = clamp((Math.log(st.freq) - logMin) / (logMax - logMin), 0, 1);
     ctx.globalAlpha = st.enabled ? 1 : 0.35;
-    ctx.lineWidth = 1.5;
+    ctx.lineWidth = 1.5 - 0.5 * freqT;
     ctx.beginPath();
     const steps = Math.max(2, Math.round(W));
     for (let s = 0; s <= steps; s++) {
         const frac = s / steps;
-        const u = (frac - 0.5) * GRAPH_CYCLES + cycles;
+        const u = (frac - 0.5) * cyclesSpan + cycles;
         const x = frac * W;
         const y = midY - waveValue(st.waveform, u) * amp;
         if (s === 0) ctx.moveTo(x, y);
@@ -377,8 +410,18 @@ function drawWidget(w, i, cycles) {
 function drawAll(time) {
     widgets.forEach((w, i) => {
         const st = lfoState[i];
-        drawWidget(w, i, st.enabled ? time * st.freq : 0);
+        // An enabled LFO advances to the current phase and remembers it; a
+        // stopped one keeps its frozen phase (see redrawGraphs).
+        if (st.enabled) st.frozenPhase = time * st.freq;
+        drawWidget(w, i, st.frozenPhase);
     });
+}
+
+// Redraws the graphs at the phase they already hold, without advancing time.
+// Used while no loop is running (every LFO stopped) so a change that affects
+// the drawing — waveform, frequency — shows up right away.
+function redrawGraphs() {
+    widgets.forEach((w, i) => drawWidget(w, i, lfoState[i].frozenPhase));
 }
 
 function drawGlyph(w, i) {
@@ -409,7 +452,7 @@ function loop(ts) {
     rafId = 0;
     if (!anyEnabled()) {
         loopStart = 0;
-        drawAll(0);
+        redrawGraphs(); // freeze the graphs where they stand
         return;
     }
     const time = (ts - loopStart) / 1000;
@@ -429,7 +472,7 @@ function loop(ts) {
 function ensureLoop() {
     if (rafId) return;
     if (!anyEnabled()) {
-        drawAll(0);
+        redrawGraphs();
         return;
     }
     loopStart = performance.now();
@@ -472,6 +515,17 @@ function setFreqFromX(i, clientX) {
     const logMax = Math.log(FREQ_MAX);
     lfoState[i].freq = Math.exp(logMin + (logMax - logMin) * frac);
     updateFreqLabel(i);
+    redrawGraphs();
+    appEvents.emit('session-dirty');
+}
+
+// Applies one wheel step to an LFO's frequency (dir > 0 up, < 0 down),
+// scaling the value on the logarithmic scale and clamping to the range.
+function stepFreq(i, dir) {
+    const factor = dir > 0 ? FREQ_WHEEL_STEP : 1 / FREQ_WHEEL_STEP;
+    lfoState[i].freq = clampFreq(lfoState[i].freq * factor);
+    updateFreqLabel(i);
+    redrawGraphs();
     appEvents.emit('session-dirty');
 }
 
@@ -512,6 +566,7 @@ function initWidget(root, i) {
         lfoState[i].waveform = WAVEFORMS[next];
         updateWaveTooltip(i);
         drawGlyph(w, i);
+        redrawGraphs();
         appEvents.emit('session-dirty');
         syncModulation();
     });
@@ -535,9 +590,34 @@ function initWidget(root, i) {
     canvas.addEventListener('dblclick', () => {
         lfoState[i].freq = DEFAULT_FREQ;
         updateFreqLabel(i);
+        redrawGraphs();
         appEvents.emit('session-dirty');
         syncModulation();
     });
+
+    // Wheel over the graph steps the frequency, with the same notch/trackpad
+    // handling as the sliders (see audio/stepper.js): a mouse-wheel notch is
+    // one step, a trackpad gesture accumulates up to the shared threshold.
+    let wheelAccum = 0;
+    let wheelTime = 0;
+    canvas.addEventListener('wheel', (e) => {
+        if (e.ctrlKey) return; // pinch zoom / ctrl+wheel: leave the value alone
+        e.preventDefault();
+        // macOS turns Shift+scroll into horizontal deltas (deltaY = 0).
+        const delta = e.deltaY !== 0 ? e.deltaY : (e.shiftKey ? e.deltaX : 0);
+        if (delta === 0) return;
+        if (e.timeStamp - wheelTime > WHEEL_ACCUM_RESET_MS) wheelAccum = 0;
+        wheelTime = e.timeStamp;
+        if (isWheelNotch(e, delta)) {
+            wheelAccum = 0; // discrete mouse-wheel notch: one step
+        } else {
+            if (Math.sign(delta) !== Math.sign(wheelAccum)) wheelAccum = 0;
+            wheelAccum += delta;
+            if (Math.abs(wheelAccum) < getTrackpadThreshold()) return; // keep scrolling
+            wheelAccum -= Math.sign(wheelAccum) * getTrackpadThreshold();
+        }
+        stepFreq(i, delta < 0 ? 1 : -1);
+    }, { passive: false });
 
     return w;
 }
@@ -640,9 +720,21 @@ function initMenu() {
     menu = document.getElementById('lfo-menu');
     if (!menu) return;
 
+    // The LFO picker is a row of dots (None / 1 / 2): label each one for
+    // accessibility and wire the selection.
     menu.querySelectorAll('.lfo-menu-lfo').forEach(btn => {
-        btn.addEventListener('click', () => selectLfo(Number(btn.dataset.lfo)));
+        const idx = Number(btn.dataset.lfo);
+        const label = idx < 0 ? t('controls.lfoMenuNone') : t('controls.lfoMenuLfoN', { n: idx + 1 });
+        btn.title = label;
+        btn.setAttribute('aria-label', label);
+        btn.addEventListener('click', () => selectLfo(idx));
     });
+
+    const closeBtn = menu.querySelector('.lfo-menu-close');
+    closeBtn.title = t('controls.lfoMenuClose');
+    closeBtn.setAttribute('aria-label', closeBtn.title);
+    closeBtn.addEventListener('click', () => closeMenu());
+
     menu.querySelector('.lfo-menu-amount').addEventListener('input', (e) => setAmount(Number(e.target.value)));
     menu.querySelector('.lfo-menu-phase').addEventListener('input', (e) => setPhase(Number(e.target.value)));
 
@@ -784,6 +876,7 @@ export function applyLfoSession(data) {
             enabled: !!s?.enabled,
             waveform: WAVEFORMS.includes(s?.waveform) ? s.waveform : 'sin',
             freq: clampFreq(s?.freq),
+            frozenPhase: 0,
         };
     }
 
@@ -814,7 +907,7 @@ function isValidTargetKey(key) {
 /// Resets every LFO to its default (used by the image Reset button).
 export function resetLfos() {
     for (let i = 0; i < LFO_COUNT; i++) {
-        lfoState[i] = { enabled: false, waveform: 'sin', freq: DEFAULT_FREQ };
+        lfoState[i] = { enabled: false, waveform: 'sin', freq: DEFAULT_FREQ, frozenPhase: 0 };
     }
     assignments.clear();
     if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
@@ -888,7 +981,7 @@ export function initLfos() {
 
     const layoutAll = () => {
         widgets.forEach(layoutWidget);
-        drawAll(lastTime);
+        redrawGraphs();
     };
     layoutAll();
     window.addEventListener('resize', layoutAll);

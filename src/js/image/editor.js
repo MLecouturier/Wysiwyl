@@ -184,7 +184,7 @@ let lastDimensionsInfo = null; // remembers the last result, to retranslate on l
 //
 // `light` skips everything that only matters when the grid itself changed
 // (overlay clearing, zone re-push, history baseline, dimensions line): the
-// LFO animation calls it at ~15 fps and must not disturb the selection
+// LFO animation calls it at ~30 fps and must not disturb the selection
 // tools or repaint the highlights every frame.
 export async function refresh(light = false) {
   if (!viewer.hasImage) return;
