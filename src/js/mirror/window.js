@@ -74,7 +74,7 @@ export function createMirror({
     const mirrorZonesBtn = document.querySelector('#mirror-zones-btn');
     const showOriginalBtn = document.querySelector('#show-original-btn');
 
-    let zonesMode = 'all';
+    let zonesMode = 'none'; // zones masquées par défaut ; le bouton démarre inactif
     let effectId = NO_EFFECT;
     let effectOptions = {}; // sanitized options of the active effect
     let creating = false; // window creation in flight (guards double clicks)
