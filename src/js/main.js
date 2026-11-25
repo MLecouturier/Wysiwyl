@@ -762,7 +762,7 @@ async function openSession() {
         simplify.value = session.image_settings.simplify ?? 0;
         autoLevelsBtn.classList.toggle('active', session.image_settings.auto_levels ?? false);
         ditherBtn.classList.toggle('active', session.image_settings.dither ?? false);
-        ditherLevels.value = session.image_settings.dither_levels ?? 4;
+        ditherLevels.value = session.image_settings.dither_levels ?? 8;
         ditherStrength.value = session.image_settings.dither_strength ?? 100;
         ditherSerpentineBtn.classList.toggle('active', session.image_settings.dither_serpentine ?? false);
         mirror.setZonesMode(session.image_settings.mirror_zones_mode);

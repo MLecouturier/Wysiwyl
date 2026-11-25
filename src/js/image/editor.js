@@ -948,7 +948,7 @@ resetBtn.addEventListener('click', () => {
   simplify.value   = 0;
   autoLevelsBtn.classList.remove('active');
   ditherBtn.classList.remove('active');
-  ditherLevels.value = 4;
+  ditherLevels.value = 8;
   ditherStrength.value = 100;
   ditherSerpentineBtn.classList.remove('active');
   resetLfos(); // LFOs off, every assignment dropped
@@ -981,7 +981,7 @@ const sliderDefaults = new Map([
   [texture, 0],
   [clarity, 0],
   [simplify, 0],
-  [ditherLevels, 4],
+  [ditherLevels, 8],
   [ditherStrength, 100],
 ]);
 sliderDefaults.forEach((def, el) => {

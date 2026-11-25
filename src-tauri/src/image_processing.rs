@@ -100,7 +100,7 @@ pub struct AdjustmentParams {
 }
 
 pub(crate) fn default_dither_levels() -> u8 {
-    4
+    8
 }
 
 pub(crate) fn default_dither_strength() -> f32 {
