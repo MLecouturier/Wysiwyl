@@ -34,7 +34,7 @@ import { toggleGridNoteInfo, cancelGridNoteInfo, gridNoteState } from './selecti
 import { resetHistory } from './history.js';
 import {
     registerLfoTarget, unregisterLfoTarget, renameLfoTarget,
-    attachLfoAssignButton, lfoSynthHueKey,
+    attachLfoAssignButton, lfoSynthHueKey, lfoSynthVolumeKey, isLfoDriving,
 } from '../image/lfo.js';
 
 // Deferred so importing this module does not touch the Tauri globals.
@@ -503,6 +503,28 @@ export function createSynthElement(id, cfg = null) {
     tab.addEventListener('wheel', onVolumeWheel, { passive: false });
     // Mute button (the speaker icon): same toggle as the Alt+1-8 shortcut
     el.querySelector('.synth-mute').addEventListener('click', () => toggleSynthMute(id));
+
+    // LFO modulation target: the channel volume can be driven by an image LFO.
+    // The effective value is pushed to the backend by the LFO loop; the target
+    // key follows the synth id renumbering (see renumberSynthIds). The amplitude
+    // is `relative`: it is a percentage of the synth's own volume (not of the
+    // 0–127 half-range), so 50 % of a volume of 100 swings ±50 and a muted
+    // synth (volume 0) stays silent.
+    registerLfoTarget(lfoSynthVolumeKey(id), {
+        element: volumeInput,
+        relative: true,
+        apply: (value) => invoke('set_synth_volume', {
+            id: Number(el.dataset.synthId),
+            volume: Math.round(value),
+        }).catch(err => console.error('Error in set_synth_volume:', err)),
+        label: () => {
+            const name = el.querySelector('.synth-title-label')?.textContent?.trim() || '';
+            const title = t('synth.volumeLabel');
+            return name ? `${name} · ${title}` : title;
+        },
+        display: (value) => setTabVolumeBar(el._tab, Math.round(value)),
+    });
+    attachLfoAssignButton(el.querySelector('.synth-playback .lfo-assign-btn'), lfoSynthVolumeKey(id));
 
     // ---- Program: bank (A–P) + program (1–128) sent to the instrument ----
     // Both inputs are always visible; each change sends the current
@@ -1283,7 +1305,11 @@ window.__TAURI__.event.listen('midi-volume', (event) => {
         const blockChannel = Number(block.querySelector('.synth-channel')?.value);
         if (blockPort !== port || blockChannel !== channel) return;
         const input = block.querySelector('.synth-volume');
-        if (input && document.activeElement !== input) {
+        // While an LFO drives this synth's volume the backend pushes modulated
+        // values, each mirrored back by this event: never let them overwrite
+        // the base (the LFO reads it back every tick).
+        const driven = isLfoDriving(lfoSynthVolumeKey(Number(block.dataset.synthId)));
+        if (input && !driven && document.activeElement !== input) {
             input.value = String(volume);
         }
         syncSynthMuteButton(block);
@@ -1545,6 +1571,8 @@ export async function renumberSynthIds() {
         remapZonePickIds(oldId, newId);
         // The LFO hue-shift target follows the id
         renameLfoTarget(lfoSynthHueKey(oldId), lfoSynthHueKey(newId));
+        // The LFO channel-volume target follows the id too
+        renameLfoTarget(lfoSynthVolumeKey(oldId), lfoSynthVolumeKey(newId));
     });
 
     // Ids changed: any stored history would target stale ids, so start over
@@ -1618,6 +1646,7 @@ export async function onSynthRemoveClick(id, el) {
     // stays retired (the backend counter never reuses it)
     removeSynthFromRegistry(id);
     unregisterLfoTarget(lfoSynthHueKey(id)); // drops the target, assignment and button
+    unregisterLfoTarget(lfoSynthVolumeKey(id)); // same for the volume target
 
     // Neighbours captured before detaching the card: the synth just above
     // is preferred, the one just below is the fallback (removed card was

@@ -208,6 +208,7 @@
     "rewind": "Remettre le pointeur de lecture à zéro",
     "stepForward": "Avancer la lecture d'un pixel",
     "volume": "Volume du canal (MIDI 0–127) — molette pour ajuster",
+    "volumeLabel": "Volume",
     "mute": "Muter ce synthé (met son volume de canal à 0)",
     "unmute": "Rétablir ce synthé (restaure son volume précédent)",
     "volumeSharedChannel": "Volume (MIDI 0–127) — canal MIDI partagé : la dernière valeur envoyée l'emporte",

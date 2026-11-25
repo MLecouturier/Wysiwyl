@@ -127,6 +127,11 @@
                 <button class="synth-step-forward icon-btn" data-i18n-title="synth.stepForward" data-i18n-aria-label="synth.stepForward">
                     <span class="material-symbols-outlined" aria-hidden="true">step</span>
                 </button>
+                <div class="flex-fill"></div>
+                <select class="synth-reading-direction" data-i18n-title="synth.readingDirectionTitle" data-i18n-aria-label="synth.readingDirectionTitle"></select>
+                <button class="synth-sort-btn icon-btn" data-i18n-title="synth.toggleSort" data-i18n-aria-label="synth.toggleSort">
+                    <span class="material-symbols-outlined" aria-hidden="true">sort</span>
+                </button>
                 <select class="synth-tempo" data-i18n-title="synth.tempoRatio" data-i18n-aria-label="synth.tempoRatio">
                     <option value="3/2">3/2</option>
                     <option value="4/3">4/3</option>
@@ -135,20 +140,16 @@
                     <option value="3/4">3/4</option>
                     <option value="2/3">2/3</option>
                     <option value="1/2">1/2</option>
-                </select>
-                <div class="flex-fill"></div>
+                </select>                
+            </div>
+
+            <div class="synth-section-body">
                 <button class="synth-mute icon-btn" type="button" data-i18n-title="synth.mute" aria-pressed="false">
                     <span class="material-symbols-outlined" aria-hidden="true">volume_up</span>
                 </button>
                 <input type="number" class="synth-volume" min="0" max="127" step="1" value="127" data-i18n-title="synth.volume" data-i18n-aria-label="synth.volume" />
-            </div>
-
-            <div class="synth-section-body">
-                <div class="flex-none w-20"></div>
-                <select class="synth-reading-direction" data-i18n-title="synth.readingDirectionTitle" data-i18n-aria-label="synth.readingDirectionTitle"></select>
-                <button class="synth-sort-btn icon-btn" data-i18n-title="synth.toggleSort" data-i18n-aria-label="synth.toggleSort">
-                    <span class="material-symbols-outlined" aria-hidden="true">sort</span>
-                </button>
+                <button type="button" class="lfo-assign-btn"></button>
+                
                 <div class="flex-fill"></div>
                 <button class="synth-loop-btn icon-btn active" data-i18n-title="synth.toggleLoop" data-i18n-aria-label="synth.toggleLoop">
                     <span class="material-symbols-outlined" aria-hidden="true">laps</span>
@@ -161,7 +162,6 @@
                     <span class="material-symbols-outlined" aria-hidden="true">move_selection_right</span>
                 </button>
                 <input type="number" class="synth-quantize-tempo" min="1" max="8" step="1" value="4" data-i18n-title="synth.quantizeTempo" data-i18n-aria-label="synth.quantizeTempo" />
-                <div class="flex-fill"></div>
                 <button class="synth-chance icon-btn" type="button" data-i18n-title="synth.chance" aria-pressed="false">
                     <span class="material-symbols-outlined" aria-hidden="true">casino</span>
                 </button>

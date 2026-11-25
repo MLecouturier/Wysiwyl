@@ -208,6 +208,7 @@
     "rewind": "Reset the playhead to zero",
     "stepForward": "Advance the playhead by one pixel",
     "volume": "Channel volume (MIDI 0–127) — scroll to adjust",
+    "volumeLabel": "Volume",
     "mute": "Mute this synth (sets its channel volume to 0)",
     "unmute": "Unmute this synth (restores its previous volume)",
     "volumeSharedChannel": "Volume (MIDI 0–127) — shared MIDI channel: the last value sent wins",

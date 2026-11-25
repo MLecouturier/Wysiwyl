@@ -74,10 +74,12 @@ const LFO_COLORS = ['#00e0ff', '#ff00e0'];
 const IMAGE_TARGETS = ['brightness', 'contrast', 'vibrance', 'clarity', 'texture', 'simplify', 'posterize'];
 const IMAGE_TARGET_SET = new Set(IMAGE_TARGETS);
 
-// Per-synth hue-shift targets are keyed "synth:<id>"; the id follows the
-// stack renumbering (see renameLfoTarget).
+// Per-synth modulation targets are keyed "synth:<id>" (hue shift) and
+// "synth:<id>:volume" (channel volume); the id follows the stack renumbering
+// (see renameLfoTarget).
 const SYNTH_TARGET_PREFIX = 'synth:';
 const synthTargetKey = id => `${SYNTH_TARGET_PREFIX}${id}`;
+const synthVolumeTargetKey = id => `${SYNTH_TARGET_PREFIX}${id}:volume`;
 
 // One render every ~33 ms (30 fps): smooth enough for the fastest LFO (5 Hz,
 // ~6 samples per cycle) while keeping the backend load light.
@@ -153,10 +155,12 @@ export function configureLfo(injected) {
 /// effective value to push; `label` (optional) titles the assignment popover;
 /// `ghost` (optional) is the second-thumb marker; `display` (optional) renders
 /// the live numeric readout; `wrap` makes the modulation circle around the
-/// range (the hue shift) instead of clamping to its ends.
-export function registerLfoTarget(key, { element, apply = null, label = null, ghost = null, display = null, wrap = false }) {
+/// range (the hue shift) instead of clamping to its ends; `relative` scales
+/// the amplitude to a percentage of the base value instead of the control's
+/// half-range (the channel volume).
+export function registerLfoTarget(key, { element, apply = null, label = null, ghost = null, display = null, wrap = false, relative = false }) {
     targets.set(key, {
-        element, apply, label, ghost, display, wrap,
+        element, apply, label, ghost, display, wrap, relative,
         lastApplied: undefined, lastDisplay: undefined,
     });
 }
@@ -206,6 +210,9 @@ export function renameLfoTarget(oldKey, newKey) {
 /// Key of the synth hue-shift target of a synth id.
 export const lfoSynthHueKey = synthTargetKey;
 
+/// Key of the synth channel-volume target of a synth id.
+export const lfoSynthVolumeKey = synthVolumeTargetKey;
+
 // ---------- DOM ----------
 let widgets = [];                 // per LFO: { root, canvas, ctx, powerBtn, waveBtn, glyph, ... }
 const assignButtons = new Map();  // targetId -> <button>
@@ -254,6 +261,16 @@ function targetElement(targetId) {
     return document.getElementById(targetId);
 }
 
+// Peak modulation applied on top of a target's base value. By default it is
+// `amount` % of the control's half-range; a target registered with `relative`
+// scales it to `amount` % of the base value instead — the channel volume then
+// swings by ±`amount` % of its own setting, so a volume of 0 never modulates.
+function modulationAmplitude(target, a, base) {
+    if (target.relative) return (a.amount / 100) * Math.abs(base);
+    const el = target.element;
+    return (a.amount / 100) * ((Number(el.max) - Number(el.min)) / 2);
+}
+
 // Rebuilds the image-target offset map for the given phase time. Backend
 // targets are pushed separately (see applyBackendTargets).
 function computeOffsets(time) {
@@ -263,11 +280,10 @@ function computeOffsets(time) {
         if (!target || target.apply) continue; // backend target: not an offset
         const st = lfoState[a.lfo];
         if (!st || !st.enabled) continue;
-        const el = target.element;
-        const halfSpan = (Number(el.max) - Number(el.min)) / 2;
+        const base = Number(target.element.value);
         // Phase is a percentage: 100 % = half a cycle (anti-phase).
         const phase = time * st.freq + a.phase / 200;
-        offsets.set(key, (a.amount / 100) * halfSpan * waveValue(st.waveform, phase));
+        offsets.set(key, modulationAmplitude(target, a, base) * waveValue(st.waveform, phase));
     }
 }
 
@@ -285,10 +301,9 @@ function effectiveValue(target, a, time) {
     const st = a ? lfoState[a.lfo] : null;
     if (!a || !st?.enabled) return { active: false, value: base, min, max };
 
-    const halfSpan = span / 2;
     // Phase is a percentage: 100 % = half a cycle (anti-phase).
     const phase = time * st.freq + a.phase / 200;
-    const raw = base + (a.amount / 100) * halfSpan * waveValue(st.waveform, phase);
+    const raw = base + modulationAmplitude(target, a, base) * waveValue(st.waveform, phase);
     const quantized = Math.round(raw / step) * step;
     const value = (target.wrap && span > 0)
         ? min + ((((quantized - min) % span) + span) % span)
@@ -355,6 +370,14 @@ function updateTargetDisplays(time) {
 /// buildParams().
 export function getLfoOffset(targetId) {
     return offsets.get(targetId) || 0;
+}
+
+/// True when a target is currently driven by an enabled LFO (its value is
+/// being pushed to the backend). Used by the MIDI-volume mirror to avoid
+/// overwriting the base value while the LFO is in control.
+export function isLfoDriving(targetId) {
+    const a = assignments.get(targetId);
+    return !!a && !!lfoState[a.lfo]?.enabled;
 }
 
 // ---------- Drawing ----------
@@ -980,12 +1003,13 @@ export function applyLfoSession(data) {
     syncAll();
 }
 
-// A persisted target key: an image slider id, or a per-synth hue shift. The
-// synth may not exist yet (a session restore registers its targets after the
-// LFO state is restored), so only the shape is checked here.
+// A persisted target key: an image slider id, a per-synth hue shift or a
+// per-synth channel volume. The synth may not exist yet (a session restore
+// registers its targets after the LFO state is restored), so only the shape
+// is checked here.
 function isValidTargetKey(key) {
     if (IMAGE_TARGET_SET.has(key)) return true;
-    return new RegExp(`^${SYNTH_TARGET_PREFIX}\\d+$`).test(key);
+    return new RegExp(`^${SYNTH_TARGET_PREFIX}\\d+(:volume)?$`).test(key);
 }
 
 /// Resets every LFO to its default (used by the image Reset button).
