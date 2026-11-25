@@ -61,6 +61,8 @@
     "lfoWave_saw": "Saw",
     "lfoWave_square": "Square",
     "lfoWave_sample_hold": "Sample & hold",
+    "lfoTickUnit": "B.",
+    "lfoFreqToggle": "Click to toggle between Hz and metronome beats",
     "dimensionsInfo": "Original: {origWidth} × {origHeight}  —  Grid: {width} × {height}  ({cellCount} px)"
   },
   "mirrorEffect": {

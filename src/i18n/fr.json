@@ -61,6 +61,8 @@
     "lfoWave_saw": "Dent de scie",
     "lfoWave_square": "Carrée",
     "lfoWave_sample_hold": "Échantillon & maintien",
+    "lfoTickUnit": "T.",
+    "lfoFreqToggle": "Cliquer pour basculer entre Hz et temps du métronome",
     "dimensionsInfo": "Original : {origWidth} × {origHeight}  —  Grille : {width} × {height}  ({cellCount} px)"
   },
   "mirrorEffect": {

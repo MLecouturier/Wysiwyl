@@ -286,12 +286,18 @@
     font-variant-numeric: tabular-nums;
     color: var(--lfo-color);
     opacity: 1;
-    pointer-events: none;
+    // Clickable: flips the readout between Hz and whole ticks.
+    pointer-events: auto;
+    cursor: pointer;
+    transition: opacity $transition-fast;
 }
 
 // Off state: the whole widget (frequency included) reads in its dimmed color
 // rather than gray (the graph and glyph are dimmed in JS).
 .lfo:not(.enabled) .lfo-freq { opacity: .45; }
+
+// Hover hint that the readout is clickable (wins over the dimmed off state).
+.lfo:not(.enabled) .lfo-freq:hover { opacity: .7; }
 
 // Wrapper of an assignable slider's track: hosts the ghost thumb. Its width
 // matches the input's, so a percentage `left` maps to the same travel as the

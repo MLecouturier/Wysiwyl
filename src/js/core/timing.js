@@ -64,6 +64,16 @@ export function zonesTotalBeats(zones, processedPixels, lengthsBeats, ratio) {
     return total / (ratio || 1);
 }
 
+// LFO wavelength ↔ metronome time. One tick is one metronome beat, so a
+// cycle of `freq` Hz lasts `freqToTicks` beats at `bpm`. Pure, no DOM.
+export function freqToTicks(freq, bpm) {
+    return bpm / (60 * freq);
+}
+
+export function ticksToFreq(ticks, bpm) {
+    return bpm / (60 * ticks);
+}
+
 // Elapsed-play timer displayed next to the metronome: starts counting
 // with the first synthesizer that plays and freezes when none plays
 // anymore. Pause/resume semantics — later play sessions keep accumulating

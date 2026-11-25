@@ -9,6 +9,8 @@ import {
     noteLengthBeats,
     formatDurationClock,
     zonesTotalBeats,
+    freqToTicks,
+    ticksToFreq,
 } from '../src/js/core/timing.js';
 
 test('NOTE_LENGTH_BEATS mirrors the backend values', () => {
@@ -81,4 +83,20 @@ test('zonesTotalBeats ignores out-of-bounds runs (torn edges)', () => {
     const zone = [{ order: 0, runs: [{ y: 0, x0: 0, x1: 5 }] }]; // runs past the 2px width
     // Only the two real pixels count
     assert.equal(zonesTotalBeats(zone, twoPixels(), [1], 1), 2);
+});
+
+test('freqToTicks converts an LFO frequency to metronome beats', () => {
+    // 0.5 Hz → 2 s per cycle → 4 beats at 120 BPM
+    assert.equal(freqToTicks(0.5, 120), 4);
+    // 1 Hz → 1 s → 1 beat at 60 BPM
+    assert.equal(freqToTicks(1, 60), 1);
+    // 2 Hz → 0.5 s → 0.5 beat at 60 BPM
+    assert.equal(freqToTicks(2, 60), 0.5);
+});
+
+test('ticksToFreq is the inverse of freqToTicks', () => {
+    for (const [freq, bpm] of [[0.5, 120], [2.5, 90], [0.05, 300]]) {
+        assert.ok(Math.abs(ticksToFreq(freqToTicks(freq, bpm), bpm) - freq) < 1e-9);
+    }
+    assert.equal(ticksToFreq(4, 120), 0.5);
 });

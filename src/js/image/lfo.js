@@ -14,8 +14,10 @@
 
 import { t } from '../core/i18n.js';
 import { sliderToPosterizeLevels } from '../core/utils.js';
+import { freqToTicks, ticksToFreq } from '../core/timing.js';
 import { registerEscape } from '../core/shortcuts.js';
 import { appEvents, viewer } from '../core/state.js';
+import { currentBpm } from '../audio/metronome.js';
 import { isWheelNotch, getTrackpadThreshold, WHEEL_ACCUM_RESET_MS } from '../audio/stepper.js';
 
 const LFO_COUNT = 2;
@@ -32,6 +34,38 @@ const DEFAULT_FREQ = 0.5;
 // Multiplicative frequency step per mouse-wheel notch. The scale is
 // logarithmic, so a notch scales the value instead of adding to it.
 const FREQ_WHEEL_STEP = 1.1;
+
+// Display unit of a frequency readout: 'hz' (the stored value) or 'tick'
+// (one tick = one metronome beat, at the current BPM). Clicking the readout
+// toggles it. A display preference only — the stored frequency stays in Hz —
+// so it lives in localStorage rather than the session. In tick mode the drag
+// and the wheel snap the frequency to a whole number of ticks.
+const UNITS = ['hz', 'tick'];
+const UNITS_STORAGE_KEY = 'wysiwyl.lfoUnits';
+
+function loadLfoUnits() {
+    let stored = null;
+    if (typeof localStorage !== 'undefined') {
+        try { stored = JSON.parse(localStorage.getItem(UNITS_STORAGE_KEY)); } catch { /* corrupt: keep Hz */ }
+    }
+    return Array.from({ length: LFO_COUNT }, (_, i) =>
+        UNITS.includes(stored?.[i]) ? stored[i] : 'hz');
+}
+
+const lfoUnits = loadLfoUnits();
+
+function saveLfoUnits() {
+    if (typeof localStorage === 'undefined') return;
+    try { localStorage.setItem(UNITS_STORAGE_KEY, JSON.stringify(lfoUnits)); } catch { /* private mode: keep in memory */ }
+}
+
+// Whole-tick bounds of the drag control at a tempo: at least one tick per
+// cycle (the fastest reachable frequency, BPM/60) up to the slowest one
+// (FREQ_MIN). The high end of the Hz range has no whole tick and is only
+// reachable in Hz mode.
+function tickRange(bpm) {
+    return { min: 1, max: Math.max(1, Math.floor(freqToTicks(FREQ_MIN, bpm))) };
+}
 
 // Identification colors of the LFOs (see _variables.scss): cyan, magenta.
 const LFO_COLORS = ['#00e0ff', '#ff00e0'];
@@ -497,7 +531,15 @@ function syncModulation() {
 function updateFreqLabel(i) {
     const w = widgets[i];
     if (!w) return;
-    w.freqLabel.textContent = `${lfoState[i].freq.toFixed(2)} Hz`;
+    if (lfoUnits[i] === 'tick') {
+        const ticks = freqToTicks(lfoState[i].freq, currentBpm());
+        w.freqLabel.textContent = `${ticks.toFixed(2)} ${t('controls.lfoTickUnit')}`;
+    } else {
+        w.freqLabel.textContent = `${lfoState[i].freq.toFixed(2)} Hz`;
+    }
+    const tip = t('controls.lfoFreqToggle');
+    w.freqLabel.title = tip;
+    w.freqLabel.setAttribute('aria-label', tip);
 }
 
 function updateWaveTooltip(i) {
@@ -511,19 +553,39 @@ function setFreqFromX(i, clientX) {
     const w = widgets[i];
     const rect = w.canvas.getBoundingClientRect();
     const frac = clamp((clientX - rect.left) / Math.max(1, rect.width), 0, 1);
-    const logMin = Math.log(FREQ_MIN);
-    const logMax = Math.log(FREQ_MAX);
-    lfoState[i].freq = Math.exp(logMin + (logMax - logMin) * frac);
+    if (lfoUnits[i] === 'tick') {
+        // Log scale over whole ticks: dragging right raises the displayed
+        // number (more ticks = slower), snapping to an integer.
+        const bpm = currentBpm();
+        const { min, max } = tickRange(bpm);
+        const logMin = Math.log(min);
+        const logMax = Math.log(max);
+        const ticks = Math.round(Math.exp(logMin + (logMax - logMin) * frac));
+        lfoState[i].freq = clampFreq(ticksToFreq(ticks, bpm));
+    } else {
+        const logMin = Math.log(FREQ_MIN);
+        const logMax = Math.log(FREQ_MAX);
+        lfoState[i].freq = Math.exp(logMin + (logMax - logMin) * frac);
+    }
     updateFreqLabel(i);
     redrawGraphs();
     appEvents.emit('session-dirty');
 }
 
-// Applies one wheel step to an LFO's frequency (dir > 0 up, < 0 down),
-// scaling the value on the logarithmic scale and clamping to the range.
+// Applies one wheel step to an LFO's frequency (dir > 0 up, < 0 down). In Hz
+// mode the value is scaled on the logarithmic scale; in tick mode it moves by
+// one whole tick, so the step never stalls on small values.
 function stepFreq(i, dir) {
-    const factor = dir > 0 ? FREQ_WHEEL_STEP : 1 / FREQ_WHEEL_STEP;
-    lfoState[i].freq = clampFreq(lfoState[i].freq * factor);
+    if (lfoUnits[i] === 'tick') {
+        const bpm = currentBpm();
+        const { min, max } = tickRange(bpm);
+        const current = clamp(Math.round(freqToTicks(lfoState[i].freq, bpm)), min, max);
+        const next = clamp(current + (dir > 0 ? 1 : -1), min, max);
+        lfoState[i].freq = clampFreq(ticksToFreq(next, bpm));
+    } else {
+        const factor = dir > 0 ? FREQ_WHEEL_STEP : 1 / FREQ_WHEEL_STEP;
+        lfoState[i].freq = clampFreq(lfoState[i].freq * factor);
+    }
     updateFreqLabel(i);
     redrawGraphs();
     appEvents.emit('session-dirty');
@@ -552,6 +614,28 @@ function initWidget(root, i) {
         root, canvas, ctx: canvas.getContext('2d'), powerBtn, waveBtn, freqLabel,
         glyph, glyphCtx, glyphW, glyphH, cssW: 0, cssH: 0, dragging: false,
     };
+
+    // The frequency readout is a button: clicking it flips this LFO between Hz
+    // and whole ticks. The change is a display preference — it does not touch
+    // the session.
+    freqLabel.setAttribute('role', 'button');
+    freqLabel.setAttribute('tabindex', '0');
+    const toggleUnit = () => {
+        lfoUnits[i] = lfoUnits[i] === 'hz' ? 'tick' : 'hz';
+        saveLfoUnits();
+        updateFreqLabel(i);
+    };
+    freqLabel.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleUnit();
+    });
+    freqLabel.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            toggleUnit();
+        }
+    });
 
     powerBtn.addEventListener('click', () => {
         lfoState[i].enabled = !lfoState[i].enabled;
@@ -934,6 +1018,12 @@ export function retranslateLfos() {
     widgets.forEach((_, i) => syncWidgetState(i));
     for (const targetId of assignButtons.keys()) syncAssignButton(targetId);
     if (menuTarget) refreshMenuValues();
+}
+
+/// Re-reads every frequency readout. In tick mode the value follows the
+/// metronome BPM, so the caller refreshes them when the tempo changes.
+export function refreshLfoFreqLabels() {
+    widgets.forEach((_, i) => updateFreqLabel(i));
 }
 
 // ---------- Init ----------

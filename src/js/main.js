@@ -62,7 +62,7 @@ import {
 import {
     canPan, isSpacePanModifier, isPanning, syncViewerSurfaces, configureZoom,
 } from './image/zoom.js';
-import { initLfos, getLfoSession, applyLfoSession, retranslateLfos, unregisterLfoTargetsByPrefix } from './image/lfo.js';
+import { initLfos, getLfoSession, applyLfoSession, retranslateLfos, refreshLfoFreqLabels, unregisterLfoTargetsByPrefix } from './image/lfo.js';
 
 const { invoke } = window.__TAURI__.core;
 
@@ -997,7 +997,7 @@ document.fonts.ready.then(() => redrawAllHighlights());
 // ---------- Metronome ----------
 const metronome = createMetronome({
     isPlaying: anySynthPlaying,
-    updateZonesLabels: updateAllSynthZonesLabels,
+    updateZonesLabels: () => { updateAllSynthZonesLabels(); refreshLfoFreqLabels(); },
     // Cleanup run once the metronome goes idle: restore the highlights
     // hidden during playback and erase the leftover cursors.
     onIdle: () => {
