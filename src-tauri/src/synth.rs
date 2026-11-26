@@ -238,19 +238,22 @@ pub fn stop_synth(
     Ok(())
 }
 
-/// Kill switch: stops every synthesizer and immediately turns off all
-/// sounding notes (mono + polyphonic voices), then sends All Sound Off
-/// (CC 120) and All Notes Off (CC 123) on every channel of every output
+/// Body of the kill switch: stops every synthesizer and immediately turns
+/// off all sounding notes (mono + polyphonic voices), then sends All Sound
+/// Off (CC 120) and All Notes Off (CC 123) on every channel of every output
 /// port in use — so even a note the app lost track of (a device
 /// reconnected, an earlier failed send) is silenced. The note generation
 /// is bumped so pending delayed Note Offs cancel themselves.
-#[tauri::command]
-pub fn panic_all(state: State<SynthState>, midi_state: State<MidiState>) {
+///
+/// Shared by the `panic_all` command and the app-exit hook: quitting the
+/// app (or restarting it for an update) must never leave a note ringing on
+/// a device that does not reset on port close.
+pub fn panic_all_state(state: &SynthState, midi_state: &MidiState) {
     let mut ports: Vec<usize> = Vec::new();
     {
         let mut synths = state.synths.lock_safe();
         for synth in synths.values_mut() {
-            synth.stop_playback(&midi_state);
+            synth.stop_playback(midi_state);
             if !ports.contains(&synth.config.midi_port) {
                 ports.push(synth.config.midi_port);
             }
@@ -260,6 +263,13 @@ pub fn panic_all(state: State<SynthState>, midi_state: State<MidiState>) {
     for port in ports {
         midi_state.all_notes_off(port);
     }
+}
+
+/// Kill switch: stops every synthesizer and silences every note (see
+/// [`panic_all_state`]).
+#[tauri::command]
+pub fn panic_all(state: State<SynthState>, midi_state: State<MidiState>) {
+    panic_all_state(&state, &midi_state);
 }
 
 #[tauri::command]

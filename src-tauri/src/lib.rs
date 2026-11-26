@@ -140,6 +140,15 @@ pub fn run() {
             updater::check_update,
             updater::install_update,
         ])
-        .run(tauri::generate_context!())
-        .expect("Error while launching the Tauri application");
+        .build(tauri::generate_context!())
+        .expect("Error while launching the Tauri application")
+        .run(|app, event| {
+            // Last-resort kill switch: on any exit path (window close, app
+            // quit, process restart) silence every note before the MIDI
+            // connections are torn down — a device that does not reset on
+            // port close would otherwise keep the last Note Ons ringing.
+            if let tauri::RunEvent::Exit = event {
+                synth::panic_all_state(&app.state::<SynthState>(), &app.state::<MidiState>());
+            }
+        });
 }

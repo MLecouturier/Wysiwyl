@@ -15,7 +15,7 @@ use std::sync::Mutex;
 
 use serde::Serialize;
 use tauri::ipc::Channel;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
 use crate::error::{err, AppError};
@@ -114,6 +114,13 @@ pub async fn install_update(
         .await
         .map_err(|_| err("update_install_failed"))?;
 
+    // Silence every note before the process is replaced: the new instance
+    // starts clean, and the OS port teardown is not relied upon to release
+    // the sounding notes.
+    crate::synth::panic_all_state(
+        &app.state::<crate::state::SynthState>(),
+        &app.state::<crate::state::MidiState>(),
+    );
     app.restart();
 }
 
