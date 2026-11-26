@@ -83,6 +83,11 @@ pub async fn check_update(
 /// Downloads and installs the pending update, then relaunches the app. On
 /// Windows the app is exited by the installer before this returns; on the
 /// other platforms `restart` replaces the running process.
+///
+/// A failed attempt consumes the pending update (the plugin's
+/// `download_and_install` takes the `Update` by value): rather than failing
+/// the retry with `no_pending_update`, a fresh check is run when nothing is
+/// pending, so the user can simply try again once the network is back.
 #[tauri::command]
 pub async fn install_update(
     app: AppHandle,
@@ -91,11 +96,17 @@ pub async fn install_update(
 ) -> Result<(), AppError> {
     // The guard is a temporary of this statement: released before the
     // first await, so nothing is held across the download.
-    let update = pending
-        .0
-        .lock_safe()
-        .take()
-        .ok_or_else(|| err("no_pending_update"))?;
+    let taken = pending.0.lock_safe().take();
+    let update = match taken {
+        Some(update) => update,
+        None => app
+            .updater()
+            .map_err(|_| err("update_check_failed"))?
+            .check()
+            .await
+            .map_err(|_| err("update_check_failed"))?
+            .ok_or_else(|| err("no_pending_update"))?,
+    };
 
     let mut started = false;
     update
