@@ -47,7 +47,7 @@ import {
     setSynthControlsLocked, startSynthPlayback, stopSynthPlayback,
     renumberSynthIds, configureSynthCards,
     toggleSynthMute, cancelTransientTools, setActiveSynth, clearActiveSynth,
-    refreshAccentGrids,
+    refreshAccentGrids, refreshMidiPortSelects,
 } from './synth/cards.js';
 import { initSynthMenu } from './synth/menu.js';
 import './core/shortcuts-dialog.js';
@@ -1042,6 +1042,13 @@ window.__TAURI__.event.listen('midi-program', (event) => {
     const { port, channel, program } = event.payload;
     programMap.set(programKey(port, channel), program);
     refreshProgramDisplays(port, channel);
+});
+
+// A MIDI device was plugged in or unplugged while the app runs: re-list the
+// output ports in every synth card and the metronome's clock-source inputs.
+window.__TAURI__.event.listen('midi-ports-changed', () => {
+    refreshMidiPortSelects();
+    clockSource.refreshPorts();
 });
 
 // Hydrate the programs already learned before this page was ready

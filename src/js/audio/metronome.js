@@ -208,6 +208,15 @@ export function createClockSource() {
         updateVisibility();
     }
 
+    // Reverts to Auto on both sides (the change persists, like any mode
+    // change): used when the selected/saved input port no longer exists.
+    function revertToAuto() {
+        clockModeSelect.value = 'auto';
+        updateVisibility();
+        invoke('set_clock_mode', { mode: 'auto', source: null })
+            .catch(err => console.error('Error in set_clock_mode:', err));
+    }
+
     function applyPending() {
         if (pendingClockSource === null || !clockPortsLoaded) return;
         const name = pendingClockSource;
@@ -217,12 +226,8 @@ export function createClockSource() {
             clockSourceSelect.value = name;
         } else {
             // The saved input port no longer exists (device unplugged, or no
-            // input port at all): revert to Auto on both sides, the backend
-            // included (the change persists, like any mode change)
-            clockModeSelect.value = 'auto';
-            updateVisibility();
-            invoke('set_clock_mode', { mode: 'auto', source: null })
-                .catch(err => console.error('Error in set_clock_mode:', err));
+            // input port at all)
+            revertToAuto();
         }
     }
 
@@ -241,25 +246,38 @@ export function createClockSource() {
         }).catch(err => console.error('Error in set_clock_mode:', err));
     }
 
-    // Input ports offered as the sync source, populated once at startup
-    // (the backend opens every input port for the app's lifetime). The
-    // app's own virtual port is the route a DAW's MIDI clock takes.
-    invoke('list_midi_input_ports').then(ports => {
-        // Port names come from the OS: built as text nodes, never parsed
-        // as HTML (an arbitrary virtual port name must not inject markup)
-        clockSourceSelect.replaceChildren(...ports.map(p =>
-            new Option(p.isVirtual ? t('metronome.virtualSource') : p.name, p.name)
-        ));
-        // Without any input port the "Source…" mode is meaningless
-        clockModeSelect.querySelector('option[value="input"]').disabled = ports.length === 0;
-        clockPortsLoaded = true;
-        applyPending();
-    }).catch(err => console.error('Error in list_midi_input_ports:', err));
+    // Input ports offered as the sync source (the backend opens every input
+    // port for the app's lifetime). The app's own virtual port is the route
+    // a DAW's MIDI clock takes. Loaded at startup and again on a hot-plug
+    // (see the backend's `midi-ports-changed` event), preserving the current
+    // selection while it still exists.
+    function loadClockPorts() {
+        const previous = clockSourceSelect.value;
+        invoke('list_midi_input_ports').then(ports => {
+            // Port names come from the OS: built as text nodes, never parsed
+            // as HTML (an arbitrary virtual port name must not inject markup)
+            clockSourceSelect.replaceChildren(...ports.map(p =>
+                new Option(p.isVirtual ? t('metronome.virtualSource') : p.name, p.name)
+            ));
+            if (previous && ports.some(p => p.name === previous)) {
+                clockSourceSelect.value = previous;
+            } else if (previous && clockModeSelect.value === 'input') {
+                // The followed source vanished (device unplugged): fall back
+                // to Auto, as the startup path does.
+                revertToAuto();
+            }
+            // Without any input port the "Source…" mode is meaningless
+            clockModeSelect.querySelector('option[value="input"]').disabled = ports.length === 0;
+            clockPortsLoaded = true;
+            applyPending();
+        }).catch(err => console.error('Error in list_midi_input_ports:', err));
+    }
+    loadClockPorts();
 
     clockModeSelect.addEventListener('change', apply);
     clockSourceSelect.addEventListener('change', apply);
 
-    return { hydrate };
+    return { hydrate, refreshPorts: loadClockPorts };
 }
 
 // Global time signature: the frame the per-synth accent patterns are read

@@ -585,6 +585,11 @@ pub fn start_port_watcher(app: AppHandle) {
                     if last_outputs.is_some() {
                         state.reconcile_outputs(&outputs);
                         *state.broadcast_ports.lock_safe() = None;
+                        // Tell the UI to re-list the ports: a device plugged
+                        // in (or unplugged) must appear in the synth cards'
+                        // output selects without a restart. Skipped on the
+                        // first pass, which only seeds the reference set.
+                        let _ = app.emit("midi-ports-changed", ());
                     }
                     last_outputs = Some(outputs);
                 }
@@ -594,6 +599,9 @@ pub fn start_port_watcher(app: AppHandle) {
                 if last_inputs.as_ref() != Some(&inputs) {
                     if last_inputs.is_some() {
                         connect_new_inputs(&app, &state);
+                        // Same for the metronome's clock-source list, fed by
+                        // the input ports.
+                        let _ = app.emit("midi-ports-changed", ());
                     }
                     last_inputs = Some(inputs);
                 }

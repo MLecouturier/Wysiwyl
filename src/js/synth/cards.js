@@ -310,6 +310,56 @@ export function noteRangeGroup() {
     return getTemplate('synth-note-range');
 }
 
+// Fills a synth card's MIDI output `<select>` from the backend port list.
+// `desired` is the port to select (the card's config at creation, or the
+// current value on a hot-plug refresh). When it is missing the select falls
+// back to the virtual port, otherwise to the first physical one, and the
+// backend is told — on both sides of the UI/backend boundary. A missing
+// `desired` (a fresh card with no explicit choice) keeps the first port
+// without pushing anything.
+export function populateMidiPortSelect(el, desired) {
+    const select = el.querySelector('.synth-midi-port');
+    if (!select) return;
+    invoke('list_midi_ports').then(ports => {
+        // Port names come from the OS (any local process can create a
+        // virtual port with an arbitrary name): built as text nodes, never
+        // parsed as HTML
+        if (ports.length === 0) {
+            select.replaceChildren(new Option(t('synth.noMidiPort'), '0'));
+        } else {
+            select.replaceChildren(...ports.map(p =>
+                new Option(p.isVirtual ? t('synth.virtualPort') : p.name, String(p.index))
+            ));
+            const target = Number(desired);
+            if (Number.isFinite(target) && ports.some(p => p.index === target)) {
+                select.value = String(target);
+            } else {
+                const fallback = ports.find(p => p.isVirtual) || ports[0];
+                select.value = String(fallback.index);
+                if (Number.isFinite(target)) {
+                    invoke('set_synth_midi_port', { id: Number(el.dataset.synthId), port: fallback.index })
+                        .catch(err => console.error('Error in set_synth_midi_port:', err));
+                }
+            }
+        }
+        // The program display depends on the port: refresh it now that
+        // the select has its final value.
+        updateProgramDisplay(el);
+        updateVolumeSharedChannelWarnings();
+    }).catch(err => console.error('Error in list_midi_ports:', err));
+}
+
+// Re-lists the MIDI output ports of every synth card, preserving each
+// card's current selection: a device hot-plugged (or unplugged) while the
+// app runs must appear without a restart (see the backend's
+// `midi-ports-changed` event).
+export function refreshMidiPortSelects() {
+    document.querySelectorAll('.synth-block').forEach(el => {
+        const select = el.querySelector('.synth-midi-port');
+        if (select) populateMidiPortSelect(el, Number(select.value));
+    });
+}
+
 export function createSynthElement(id, cfg = null) {
     const el = getTemplate('synth-card');
     el.dataset.synthId = id;
@@ -594,36 +644,11 @@ export function createSynthElement(id, cfg = null) {
     // MIDI output port: one connection per port is opened lazily by the
     // backend, so several synths can drive different MIDI interfaces. The
     // app's own virtual port (shown first, for routing into a DAW) is
-    // labeled through i18n; physical ports keep their system name.
+    // labeled through i18n; physical ports keep their system name. The
+    // select is filled here and re-filled on a hot-plug (see
+    // refreshMidiPortSelects).
+    populateMidiPortSelect(el, cfg?.midi_port);
     const midiPortSelect = el.querySelector('.synth-midi-port');
-    invoke('list_midi_ports').then(ports => {
-        // Port names come from the OS (any local process can create a
-        // virtual port with an arbitrary name): built as text nodes, never
-        // parsed as HTML
-        if (ports.length === 0) {
-            midiPortSelect.replaceChildren(new Option(t('synth.noMidiPort'), '0'));
-        } else {
-            midiPortSelect.replaceChildren(...ports.map(p =>
-                new Option(p.isVirtual ? t('synth.virtualPort') : p.name, String(p.index))
-            ));
-            // Reflect the template's port; if it no longer exists
-            // (interface unplugged), fall back to the virtual port when
-            // available, otherwise to the first physical port — on both
-            // sides of the UI/backend boundary.
-            if (cfg && !ports.some(p => p.index === cfg.midi_port)) {
-                const fallback = ports.find(p => p.isVirtual) || ports[0];
-                midiPortSelect.value = String(fallback.index);
-                invoke('set_synth_midi_port', { id, port: fallback.index })
-                    .catch(err => console.error('Error in set_synth_midi_port:', err));
-            } else if (cfg) {
-                midiPortSelect.value = String(cfg.midi_port);
-            }
-        }
-        // The program display depends on the port: refresh it now that
-        // the select has its final value.
-        updateProgramDisplay(el);
-        updateVolumeSharedChannelWarnings();
-    }).catch(err => console.error('Error in list_midi_ports:', err));
     midiPortSelect.addEventListener('change', (e) => {
         invoke('set_synth_midi_port', { id, port: Number(e.target.value) })
             .catch(err => console.error('Error in set_synth_midi_port:', err));
