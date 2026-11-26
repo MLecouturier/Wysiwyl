@@ -56,7 +56,7 @@ Create any number of independent synthesizers, each reading the grid on its own 
 ### Global Configuration
 A JSON file (opened with the gear button) holds app-wide options, applied at startup; once opened it is watched and reloads live. Keys:
 
-- `max_image_size` — longest side of imported images (0 = unlimited).
+- `max_image_size` — longest side of imported images (0 = capped to 8192).
 - `default_bpm` — startup tempo.
 - `clock_mode` / `clock_source` — clock source and its input port.
 - `time_signature` — accent-grid frame ("4/4", "7/8"… or any "n/d": n 1–16, d 1/2/4/8/16).

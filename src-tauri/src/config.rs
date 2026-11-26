@@ -13,8 +13,7 @@ use crate::state::{default_silence_pattern, AccentLevels, Scale, SynthConfig, Ti
 
 /// Hard cap on the longest side of any image held by the app (import,
 /// session load, transform results): beyond it the grid rendering and the
-/// IPC payloads exhaust memory. `max_image_size = 0` (unlimited) is capped
-/// to it too.
+/// IPC payloads exhaust memory. `max_image_size = 0` is capped to it too.
 pub const MAX_IMAGE_SIDE: u32 = 8192;
 
 /// Schema version of the persisted configuration. Bumped when a one-time
@@ -67,7 +66,7 @@ pub(crate) fn is_valid_hex_color(s: &str) -> bool {
 #[serde(default)]
 pub struct AppConfig {
     /// Longest side allowed for imported images; larger originals are
-    /// downscaled on import. 0 = unlimited.
+    /// downscaled on import. 0 = capped to `MAX_IMAGE_SIDE`.
     pub max_image_size: u32,
     /// Metronome tempo used at startup.
     pub default_bpm: u32,
@@ -207,8 +206,8 @@ impl AppConfig {
         // Startup tempo: the metronome's range (a 0 or a huge value would
         // stall or spin the metronome thread)
         self.default_bpm = self.default_bpm.clamp(20, 300);
-        // Imported image size: 0 = unlimited, else at least a usable size
-        // and at most MAX_IMAGE_SIDE (memory)
+        // Imported image size: 0 is kept (capped to MAX_IMAGE_SIDE at use),
+        // otherwise clamped to a usable range up to MAX_IMAGE_SIDE (memory)
         if self.max_image_size != 0 {
             self.max_image_size = self.max_image_size.clamp(16, MAX_IMAGE_SIDE);
         }
@@ -794,7 +793,7 @@ mod tests {
 
         let mut config = AppConfig {
             default_bpm: 0,
-            max_image_size: 0, // unlimited stays unlimited (capped at use)
+            max_image_size: 0, // 0 is kept (capped to MAX_IMAGE_SIDE at use)
             ..AppConfig::default()
         };
         config.sanitize();

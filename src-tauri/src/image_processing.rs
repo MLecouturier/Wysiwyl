@@ -40,8 +40,9 @@ fn open_image_bounded(path: &std::path::Path) -> image::ImageResult<DynamicImage
     reader.decode()
 }
 
-/// Downscales an image whose longest side exceeds `max_size` (0 =
-/// unlimited), and in any case `MAX_IMAGE_SIDE`, keeping its ratio.
+/// Downscales an image whose longest side exceeds `max_size` (0 = the
+/// `MAX_IMAGE_SIDE` cap), and in any case `MAX_IMAGE_SIDE`, keeping its
+/// ratio.
 pub(crate) fn fit_image_size(img: DynamicImage, max_size: u32) -> DynamicImage {
     let limit = if max_size == 0 {
         MAX_IMAGE_SIDE

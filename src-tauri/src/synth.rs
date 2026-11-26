@@ -210,8 +210,10 @@ pub fn start_synth(
             // The first note waits for the next master beat so playback
             // starts in phase with the metronome (see the metronome thread)
             synth.playback.start_pending = true;
-            // A fresh start always replays from the beginning of the sequence
-            // (e.g. after manually stepping to the end while paused)
+            // Clear a deferred end-of-sequence stop (a one-shot synth that
+            // finished, or a manual step to the end) so the restart plays.
+            // The cursor is preserved: playback resumes where it stopped —
+            // use the rewind button to restart from the beginning.
             synth.playback.end_pending = false;
             // Reassert the channel volume so the instrument matches the
             // synth's setting even if it was reconnected or reset meanwhile

@@ -56,7 +56,7 @@ Créez autant de synthétiseurs indépendants que vous le souhaitez, chacun lisa
 ### Configuration globale
 Un fichier JSON (ouvert via le bouton engrenage) regroupe les options globales, appliquées au démarrage ; une fois ouvert il est surveillé et se recharge à chaud. Clés :
 
-- `max_image_size` — plus grand côté des images importées (0 = illimité).
+- `max_image_size` — plus grand côté des images importées (0 = plafonné à 8192).
 - `default_bpm` — tempo de démarrage.
 - `clock_mode` / `clock_source` — source d'horloge et son port d'entrée.
 - `time_signature` — cadre de la grille d'accent (« 4/4 », « 7/8 »… ou tout « n/d » : n 1–16, d 1/2/4/8/16).
