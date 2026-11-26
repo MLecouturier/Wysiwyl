@@ -160,7 +160,14 @@ export function createMirror({
         // the pragmatic answer (the floating mirror can always be dragged).
         const target = monitors.find(m => !current || m.name !== current.name)
             ?? (monitors.length > 1 ? monitors[1] : null);
-        if (!target) return;
+        if (!target) {
+            // No second screen (unplugged between the button-state check and
+            // the click): release the creation guard so the button works
+            // again instead of being stuck disabled.
+            creating = false;
+            updateButtonStates();
+            return;
+        }
 
         const { PhysicalPosition, PhysicalSize } = window.__TAURI__.dpi;
         const win = new WebviewWindow(MIRROR_LABEL, {
@@ -219,6 +226,11 @@ export function createMirror({
     }
 
     async function toggle() {
+        // A creation is already in flight: ignore the click. `openWindow`
+        // sets `windowRef` before the window is actually created, so without
+        // this guard a second click would `close()` a window that is still
+        // being built and leave the button state desynced.
+        if (creating) return;
         if (windowRef) {
             const win = windowRef;
             try {
@@ -229,9 +241,10 @@ export function createMirror({
                 windowRef = null;
                 updateButtonStates();
             }
-        } else if (!creating) {
-            // The window is created asynchronously: the guard prevents a
-            // double click from spawning two windows with the same label
+        } else {
+            // The window is created asynchronously: the `creating` guard at
+            // the top prevents a double click from spawning two windows with
+            // the same label.
             creating = true;
             await openWindow();
         }
