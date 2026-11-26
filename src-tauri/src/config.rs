@@ -503,38 +503,6 @@ pub fn get_config(state: State<'_, ConfigState>) -> AppConfig {
     state.config.lock_safe().clone()
 }
 
-/// Sets the longest side allowed for imported images (0 = unlimited,
-/// capped to `MAX_IMAGE_SIDE` anyway) and persists it.
-#[tauri::command]
-pub fn set_max_image_size(app: AppHandle, max_image_size: u32, state: State<'_, ConfigState>) {
-    let snapshot = {
-        let mut config = state.config.lock_safe();
-        config.max_image_size = max_image_size;
-        config.sanitize();
-        config.clone()
-    };
-    save_config(&app, &snapshot);
-}
-
-#[tauri::command]
-pub fn set_default_bpm(
-    app: AppHandle,
-    bpm: u32,
-    state: State<'_, ConfigState>,
-    metronome: State<'_, MetronomeState>,
-) {
-    let clamped = bpm.clamp(20, 300);
-    let snapshot = {
-        let mut config = state.config.lock_safe();
-        config.default_bpm = clamped;
-        config.clone()
-    };
-    save_config(&app, &snapshot);
-    metronome
-        .bpm
-        .store(clamped, std::sync::atomic::Ordering::Relaxed);
-}
-
 /// Sets the metronome's time signature (the accent grid's frame) and
 /// persists it in the config file so it is restored on the next launch.
 /// The metronome thread reads it live through its per-wake config snapshot.

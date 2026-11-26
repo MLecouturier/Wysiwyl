@@ -70,8 +70,6 @@ pub fn run() {
             // --- Configuration (config.rs) ---
             config::get_config,
             config::open_config_file,
-            config::set_max_image_size,
-            config::set_default_bpm,
             config::set_time_signature,
             config::set_default_synth_from,
             // --- Image (image_processing.rs) ---
