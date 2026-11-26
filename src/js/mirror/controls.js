@@ -76,7 +76,7 @@ export function createMirrorEffectControls({ getState, onEffectChange, onOptionC
                 btn.type = 'button';
                 btn.id = `mirror-effect-${opt.id}`;
                 btn.className = 'icon-btn toggle-btn';
-                btn.title = t(opt.helpKey);
+                btn.title = t(`help.${opt.helpKey}`);
                 btn.classList.toggle('active', value >= 0.5);
                 btn.setAttribute('aria-pressed', String(value >= 0.5));
                 const icon = document.createElement('span');
@@ -99,7 +99,7 @@ export function createMirrorEffectControls({ getState, onEffectChange, onOptionC
             }
 
             const label = document.createElement('label');
-            label.title = t(opt.helpKey);
+            label.title = t(`help.${opt.helpKey}`);
 
             const head = document.createElement('span');
             head.className = 'control-head';
