@@ -35,6 +35,12 @@ const DEFAULT_FREQ = 0.5;
 // logarithmic, so a notch scales the value instead of adding to it.
 const FREQ_WHEEL_STEP = 1.1;
 
+// Horizontal travel (px) the pointer must cover over the graph before a press
+// turns into a frequency drag. Below it the gesture stays a plain click and
+// leaves the frequency untouched; once crossed, the frequency follows the
+// pointer's *displacement* (relative drag), so it never jumps to the click.
+const DRAG_THRESHOLD = 3;
+
 // Display unit of a frequency readout: 'hz' (the stored value) or 'tick'
 // (one tick = one metronome beat, at the current BPM). Clicking the readout
 // toggles it. A display preference only — the stored frequency stays in Hz —
@@ -68,7 +74,7 @@ function tickRange(bpm) {
 }
 
 // Identification colors of the LFOs (see _variables.scss): cyan, magenta.
-const LFO_COLORS = ['#00e0ff', '#ff00e0'];
+const LFO_COLORS = ['#00c2e0', '#e000c2'];
 
 // Image adjustment sliders the LFOs can be assigned to.
 const IMAGE_TARGETS = ['brightness', 'contrast', 'vibrance', 'clarity', 'texture', 'simplify', 'posterize'];
@@ -572,10 +578,23 @@ function updateWaveTooltip(i) {
     w.waveBtn.setAttribute('aria-label', w.waveBtn.title);
 }
 
-function setFreqFromX(i, clientX) {
-    const w = widgets[i];
-    const rect = w.canvas.getBoundingClientRect();
-    const frac = clamp((clientX - rect.left) / Math.max(1, rect.width), 0, 1);
+// Position (0..1) of a frequency on the graph's logarithmic scale. In tick
+// mode the scale spans whole ticks, so the value is snapped to an integer
+// first; otherwise it spans the raw Hz range.
+function freqToFrac(i, freq) {
+    if (lfoUnits[i] === 'tick') {
+        const bpm = currentBpm();
+        const { min, max } = tickRange(bpm);
+        const ticks = clamp(Math.round(freqToTicks(freq, bpm)), min, max);
+        return (Math.log(ticks) - Math.log(min)) / (Math.log(max) - Math.log(min));
+    }
+    return (Math.log(freq) - Math.log(FREQ_MIN)) / (Math.log(FREQ_MAX) - Math.log(FREQ_MIN));
+}
+
+// Sets the frequency from a position (0..1) along the graph's logarithmic
+// scale. In tick mode the value snaps to a whole number of ticks.
+function applyFreqFrac(i, frac) {
+    frac = clamp(frac, 0, 1);
     if (lfoUnits[i] === 'tick') {
         // Log scale over whole ticks: dragging right raises the displayed
         // number (more ticks = slower), snapping to an integer.
@@ -635,7 +654,11 @@ function initWidget(root, i) {
 
     const w = {
         root, canvas, ctx: canvas.getContext('2d'), powerBtn, waveBtn, freqLabel,
-        glyph, glyphCtx, glyphW, glyphH, cssW: 0, cssH: 0, dragging: false,
+        glyph, glyphCtx, glyphW, glyphH, cssW: 0, cssH: 0,
+        // Drag state: `dragging` while the pointer is down, `dragMoved` once
+        // the threshold is crossed, `dragStartX`/`dragStartFrac` the gesture's
+        // origin (relative drag).
+        dragging: false, dragMoved: false, dragStartX: 0, dragStartFrac: 0,
     };
 
     // The frequency readout is a button: clicking it flips this LFO between Hz
@@ -678,18 +701,32 @@ function initWidget(root, i) {
         syncModulation();
     });
 
+    // A press over the graph arms a drag but does not touch the frequency: the
+    // value only moves once the pointer has travelled past DRAG_THRESHOLD, and
+    // then by its *displacement* from the press point (relative drag), so a
+    // plain click leaves the frequency untouched and a drag never jumps.
     canvas.addEventListener('pointerdown', (e) => {
         e.preventDefault();
         w.dragging = true;
+        w.dragMoved = false;
+        w.dragStartX = e.clientX;
+        w.dragStartFrac = freqToFrac(i, lfoState[i].freq);
         canvas.setPointerCapture(e.pointerId);
-        setFreqFromX(i, e.clientX);
     });
     canvas.addEventListener('pointermove', (e) => {
-        if (w.dragging) setFreqFromX(i, e.clientX);
+        if (!w.dragging) return;
+        const dx = e.clientX - w.dragStartX;
+        if (!w.dragMoved) {
+            if (Math.abs(dx) < DRAG_THRESHOLD) return;
+            w.dragMoved = true;
+        }
+        const rect = w.canvas.getBoundingClientRect();
+        applyFreqFrac(i, w.dragStartFrac + dx / Math.max(1, rect.width));
     });
     const endDrag = (e) => {
         if (!w.dragging) return;
         w.dragging = false;
+        w.dragMoved = false;
         try { canvas.releasePointerCapture(e.pointerId); } catch { /* not captured */ }
     };
     canvas.addEventListener('pointerup', endDrag);

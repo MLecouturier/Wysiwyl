@@ -209,12 +209,20 @@
     flex: 1 1 0;
     min-width: 0;
     height: 3.25rem;
-    border: 1px solid $color-border;
+    // Frame in the LFO's own color, so the two oscillators stay identifiable.
+    border: 1px solid var(--lfo-color);
     border-radius: $border-radius-base;
     background-color: $color-bg-dark;
     overflow: hidden;
     // Overridden per LFO by lfo.js; the fallback keeps the base look valid
     --lfo-color: #{$color-text-muted};
+}
+
+// Off state: the frame drops to a dimmed tint of the LFO's color, like the
+// power button. The base rule's plain color is the fallback for engines
+// without color-mix().
+.lfo:not(.enabled) {
+    border-color: color-mix(in srgb, var(--lfo-color) 45%, transparent);
 }
 
 // The graph area stops before the button column: the waveform never runs
@@ -284,20 +292,14 @@
     background-color: rgba($color-bg-dark, .9);
     font-size: .6rem;
     font-variant-numeric: tabular-nums;
+    // Always in full color, whatever the LFO's state: the readout stays
+    // legible and the LFO identifiable (the graph and glyph dim in JS).
     color: var(--lfo-color);
     opacity: 1;
     // Clickable: flips the readout between Hz and whole ticks.
     pointer-events: auto;
     cursor: pointer;
-    transition: opacity $transition-fast;
 }
-
-// Off state: the whole widget (frequency included) reads in its dimmed color
-// rather than gray (the graph and glyph are dimmed in JS).
-.lfo:not(.enabled) .lfo-freq { opacity: .45; }
-
-// Hover hint that the readout is clickable (wins over the dimmed off state).
-.lfo:not(.enabled) .lfo-freq:hover { opacity: .7; }
 
 // Wrapper of an assignable slider's track: hosts the ghost thumb. Its width
 // matches the input's, so a percentage `left` maps to the same travel as the
@@ -437,7 +439,12 @@
 
         &:hover { border-color: $color-text-muted; }
 
-        // The two LFOs are colored discs; "None" stays an empty ring.
+        // The two LFOs are colored discs; "None" stays an empty ring. Its
+        // outline is kept light so it clearly reads as the control that clears
+        // an assignment (a specific :hover is needed to stay lighter than the
+        // generic hover above).
+        &[data-lfo="-1"] { border-color: $color-text-secondary; }
+        &[data-lfo="-1"]:hover { border-color: $color-text-primary; }
         &[data-lfo="0"] { border-color: $color-lfo-1; background-color: $color-lfo-1; }
         &[data-lfo="1"] { border-color: $color-lfo-2; background-color: $color-lfo-2; }
 

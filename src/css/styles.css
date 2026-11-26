@@ -546,11 +546,15 @@ button.toggle-btn.active:hover {
   flex: 1 1 0;
   min-width: 0;
   height: 3.25rem;
-  border: 1px solid #333;
+  border: 1px solid var(--lfo-color);
   border-radius: 0.25rem;
   background-color: #1e1e1e;
   overflow: hidden;
   --lfo-color: #888;
+}
+
+.lfo:not(.enabled) {
+  border-color: color-mix(in srgb, var(--lfo-color) 45%, transparent);
 }
 
 .lfo-graph {
@@ -626,15 +630,6 @@ button.toggle-btn.active:hover {
   opacity: 1;
   pointer-events: auto;
   cursor: pointer;
-  transition: opacity 0.2s ease;
-}
-
-.lfo:not(.enabled) .lfo-freq {
-  opacity: 0.45;
-}
-
-.lfo:not(.enabled) .lfo-freq:hover {
-  opacity: 0.7;
 }
 
 .slider-track {
@@ -766,13 +761,19 @@ button.toggle-btn.active:hover {
 .lfo-menu-lfos button:hover {
   border-color: #888;
 }
+.lfo-menu-lfos button[data-lfo="-1"] {
+  border-color: #ccc;
+}
+.lfo-menu-lfos button[data-lfo="-1"]:hover {
+  border-color: #e0e0e0;
+}
 .lfo-menu-lfos button[data-lfo="0"] {
-  border-color: #00e0ff;
-  background-color: #00e0ff;
+  border-color: #00c2e0;
+  background-color: #00c2e0;
 }
 .lfo-menu-lfos button[data-lfo="1"] {
-  border-color: #ff00e0;
-  background-color: #ff00e0;
+  border-color: #e000c2;
+  background-color: #e000c2;
 }
 .lfo-menu-lfos button:not(.active) {
   opacity: 0.35;
@@ -782,10 +783,10 @@ button.toggle-btn.active:hover {
   box-shadow: 0 0 0 2px rgba(136, 136, 136, 0.35);
 }
 .lfo-menu-lfos button.active[data-lfo="0"] {
-  box-shadow: 0 0 0 2px rgba(0, 224, 255, 0.35);
+  box-shadow: 0 0 0 2px rgba(0, 194, 224, 0.35);
 }
 .lfo-menu-lfos button.active[data-lfo="1"] {
-  box-shadow: 0 0 0 2px rgba(255, 0, 224, 0.35);
+  box-shadow: 0 0 0 2px rgba(224, 0, 194, 0.35);
 }
 
 .metronome-area {
