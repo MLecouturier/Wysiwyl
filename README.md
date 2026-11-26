@@ -4,244 +4,128 @@
 
 *[Version française](README.fr.md)*
 
-Wysiwyl is a Tauri desktop application that turns an image into music. Load an image, turn it into a pixel grid, and let one or more synthesizers read that grid to generate real-time MIDI notes — turning colors and brightness into sound.
+Wysiwyl is a Tauri desktop app that turns an image into music: load a picture, turn it into a pixel grid, and let one or more synthesizers read that grid to produce real-time MIDI notes — color becomes pitch, brightness becomes rhythm.
 
-## Main Features
+## Features
 
-### Image Processing
+### Image
+- Native load dialog; preview with an original/processed toggle.
+- Pixel grid: number of columns (log slider, height deduced from the aspect ratio); shrinking the grid re-clips the zones.
+- Adjustments: brightness, contrast, vibrance, posterize, texture, clarity, simplify and auto levels, plus Floyd–Steinberg dithering (levels, diffusion, serpentine). Double-click a slider to reset it.
+- Rotation (90° steps), crop (free or 1:1 / 4:3 / 3:2 / 16:9), fine rotation and perspective; zoom/pan the preview with the wheel and drag.
+- While a synth plays, the structural controls (load, rotate, crop, transform, grid) lock; value adjustments stay live and apply at the next step.
+- **Projection window** (second screen, fullscreen): stacks the original and the processed grid. A masking effect pierces the top layer — *Drag* (a fading trail behind each playhead) or *Frontline* (the perpendicular line) — with adjustable length, fade and tint. The "Show original" toggle swaps the two stacked layers. Zones are hidden by default and cycled with a button (all synths / visible only / none).
 
-- Loading an image via a native file dialog.
-- Preview of the original image and the processed image, with a toggle to switch between the two.
-- Resizing into a pixel grid, where each cell becomes one step in the sequence.
-- Adjusting the number of columns with a logarithmic-scale slider (the height is deduced automatically to preserve the aspect ratio). The zones stay where they are: those that no longer fit in the smaller grid are trimmed, and a zone that ends up entirely outside is erased (its synth then has nothing selected).
-- Saturation, contrast, brightness, and posterization (color/brightness level reduction) adjustments.
-- Resetting all processing parameters to their default values.
-- While any synthesizer is playing, the structural image controls (loading, rotation, crop, transform, grid size) are automatically locked to keep the pixel grid stable — the zones and playheads would move mid-flight otherwise. The value adjustments (saturation, contrast, brightness, posterization) stay editable: their effect is applied live to the playback, at the next metronome step ("Show original" also stays available).
-- The "Show original" toggle routes the original image by the projection mirror's state: while the mirror is closed, the original replaces the grid render in the main viewer. While the mirror is open, the projection permanently stacks the two surfaces (the processed grid over the original) and the toggle swaps their order instead — the main viewer falls back to the grid render and stays interactive (zones and playheads stay overlaid on both surfaces). Closing the mirror resets the toggle.
-- The projection's top layer can be unmasked through an effect, selected by the dropdown next to the mirror buttons: "Drag" pierces it behind every playing synthesizer's playhead as a trail of the cells it just visited, revealing the other image underneath and fading out at its oldest end; "Frontline" pierces the line perpendicular to the playhead's movement (a full line, or a segment centered on the cursor). Both fade out at their ends and can be tinted with the synth's color; length, tint and fade spread are adjustable in the options panel. The selected effect and its options are saved with the session.
-- **Low-frequency oscillators (LFOs)** — two independent LFOs sit under the adjustment sliders and modulate the image settings in real time. Each has a power toggle, a waveform cycler (sine, triangle, saw, square, sample & hold) and a frequency set by dragging horizontally over its graph (double-click resets it). The waveform scrolls under a fixed center cursor, and the widget wears its own color — cyan for the first, magenta for the second — dimmed while it is off.
-- **Assigning an LFO to a setting** — a small dot next to each adjustable slider (the seven image adjustments and every synthesizer's hue shift) opens a popover: choose the LFO (or none), the amount (0–100 % of the slider's range) and the phase offset (0–100 %, where 100 % is anti-phase). One LFO can drive several settings at once, each with its own amount and phase. A double-click on the dot clears the assignment, and the popover closes by itself after a few idle seconds. An assigned slider shows a second "ghost" thumb in the LFO's color that follows the live modulated value, and its readout oscillates with it, while the native thumb stays at the base value — the center of the oscillation.
-- The processed grid — and therefore what the synthesizers play — follows the modulation live (~15 fps). The hue shift wraps around the color circle past 0°/360° instead of clamping at its ends.
+### LFOs
+- Two LFOs (cyan, magenta) with 5 waveforms (sine, triangle, saw, square, sample & hold) and a frequency set by dragging the graph (in Hz or metronome beats; double-click resets).
+- Each LFO can drive any adjustable setting — the seven image sliders, plus each synth's hue shift and channel volume — with its own amount and phase (100 % = anti-phase). One LFO can drive several settings. A dot next to a slider assigns it; a ghost thumb and the readout follow the modulated value.
 
 ### Synthesizers
+Create any number of independent synthesizers, each reading the grid on its own and sending MIDI in real time, driven by a shared metronome.
 
-You can create any number of independent synthesizers, each reading the pixel grid on its own and sending MIDI notes in real time, driven by a shared metronome (tempo in BPM). Each synthesizer can run at its own fraction of the main tempo, so several synths can drift apart and create polyrhythms.
-
-- **Two pixel-to-note translation modes, switchable per synthesizer:**
-  - **Monophonic** — the pixel's hue (HSL color wheel) determines a single note. A hue shift slider (0–360°) lets you rotate the color wheel to change the dominant tonality of the piece.
-  - **Polyphonic** — each color channel (Red, Green, Blue) is read independently and mapped to its own note, forming a 1-to-3-note chord. Each channel can be enabled or disabled individually. Hovering over the R/G/B toggle buttons displays that channel's intensity map directly over the image, to help you decide which channels to use.
-- **Exact zones** — select the pixels each synthesizer plays by drawing rectangles, free-hand lassos or magic-wand clicks directly on the image. The magic wand floods every pixel connected to the clicked one whose color stays within the chosen tolerance, with the same positional semantics as the rectangle: a click on a free pixel adds the flooded region — fusing with any zone it touches — while a click on a selected pixel removes the flooded pixels instead. A selection is stored as exact connected components of cells (run-length encoded): a rectangle or lasso shape touching an existing zone fuses with it — contiguous pixels are one zone — and an erase in the middle of a zone splits it into fragments that keep their creation order (the "zone by zone" reading order). A rectangle dragged from a free pixel adds cells, while one dragged from an already selected pixel removes them instead — a simple click selects or deselects a single pixel. The zone row displays the exact number of selected pixels. Zones can be edited while the synth is playing: the playhead stays on the pixel it is playing (it is remapped into the new selection), and the zone under the playhead is locked against erasure — an erasing drag touching it is cancelled. Emptying the zones stops the synth cleanly.
-- **Manual silences** — hold Alt (Option) while using the square, lasso or magic-wand selection tools to add or remove rests among the selected pixels: a silent pixel is still travelled by the playhead, it just sounds nothing. A rectangle dragged over existing silences removes them, otherwise it silences the selected pixels it covers; the lasso toggles every enclosed selected pixel, and the magic wand follows the same positional rule — a click on a played pixel silences the flooded selected pixels, a click on a silent one unsilences them. Silenced pixels get a veil and a rest glyph, and always live within the selection: deselecting a pixel removes its silence.
-- **Per-synth tempo** — each synthesizer can play at a fraction of the main metronome tempo (3/2, 4/3, 5/4, 1/1, 3/4, 2/3 or 1/2 of the global BPM), letting synths desynchronize from one another for more dynamic music.
-- **Custom name** — double-click a synthesizer's title to rename it; the name is saved in sessions.
-- **MIDI output port per synthesizer** — each synth can send its notes to a different MIDI interface. Connections are opened lazily on first use, and the first available port is connected automatically at startup.
-- **Reading direction** — a cycling button selects the order in which the pixel sequence is read: left to right, right to left, top to bottom, or bottom to top. A "sort" toggle changes how zones relate to that order: off, each zone is read in full one after the other, in creation order; on, the pixels of every zone are merged and read following their absolute position in the image — one continuous sweep. The playhead stays on its pixel when toggling.
-- **Loop, back-and-forth, or one-shot playback** — a synthesizer can loop over its zones indefinitely, bounce back and forth between the sequence bounds (ping-pong), or play the sequence once and stop. Loop and back-and-forth are mutually exclusive and can both be off.
-- **Note lengths** — toggle buttons for sixteenth, eighth, quarter, half and whole notes let the pixel's brightness choose the note's duration among the enabled lengths (the 0–127 brightness range is split into as many equal bands). Each pixel is played for exactly its note's duration, so the image's brightness contrast translates directly into rhythm. A reverse button flips the brightness→length direction (dark = long instead of bright = long); a "3" button switches the whole palette to a ternary division (triplets: 3 in the time of 2, each length multiplied by 2/3); the quarter-note button always stays active.
-- **Measure accent** — an accent grid with one step per beat of the shared time signature scales each pixel's velocity by the level of the beat it starts on, on top of its saturation: the downbeat can be pushed, the off-beats softened. Four discrete levels (off / strong / normal / weak) are cycled on click; the velocity multiplier of each level is global and hand-editable in the config file. The accent is off by default and the bar is shared by every synth, counted from the start of playback (it follows the DAW's Start in sync mode).
-- **MIDI note range filters** — bass (21–47), medium (48–71) and treble (72–108) toggles restrict the notes a synthesizer can play. Toggles are cumulative to extend the allowed range; with none active, the full 0–127 range is available. The raw note derived from the pixel is rescaled proportionally across the allowed range: the pitch rises gradually and continuously from the low to the high bound as the hue (or the channel value) increases. Monophonic mode has a single filter; each polyphonic R/G/B voice has its own.
-- **Playback controls** — play/stop, rewind (resets the playhead to the beginning of the sequence) and step forward (manually advances by one pixel while paused, playing it with its own note length).
-- **Minimum velocity** — sets the floor of the velocity range; pixel saturation is mapped between this floor and the maximum velocity (127). Vivid colors are played with a stronger attack, achromatic areas more delicately.
-- **MIDI channel selection** per synthesizer (16 channels available), locked while the synthesizer is playing. A new synthesizer is given the first free channel (1–16) not already used by the stack, or channel 1 when they are all taken.
-- **Color tagging** — each synthesizer is assigned a color (with a picker of predefined swatches), used to highlight its zones and its current playback position directly on the image.
-- **Visibility toggle** for the zone highlight, automatically hidden during playback to only show the current playback cursor.
-- **Compact view** — a toggle on each synthesizer collapses it to the strict minimum: only the playback controls (tempo, reading direction, loop, ping-pong, rewind, play/pause, step forward) remain visible, alongside the MIDI port, channel and title. Click again to get every setting back.
-- **Safe removal** — deleting a synthesizer requires a confirmation: the first click arms the button (red) for 3 seconds, and only a second click within that window actually removes the synth; otherwise the button reverts to its normal state.
-- **Contextual help** — a live-help button in the footer enables an on-hover help mode: hovering any control of the interface opens a detailed explanation window instead of the native tooltip, so first-time users can discover every setting without digging into this README. Click again or press Escape to leave the mode.
-- Per-synthesizer play/stop, plus a "play all / stop all" button for the whole synthesizer list.
-- The shared metronome starts automatically as soon as any synthesizer starts playing, and stops automatically once all synthesizers are idle.
+- **Modes** — Monophonic (hue → one note, with a 0–360° hue-shift slider) or Polyphonic (R/G/B read independently → a 1-to-3-note chord; channels can be toggled, hovering them shows their intensity map).
+- **Zones** — select the played pixels with rectangles, lassos or a magic wand (adjacent/non-adjacent, adjustable tolerance). Stored as exact connected components; a click/drag from a free pixel adds, from a selected one removes; editable during playback. Hover a pixel to preview its note.
+- **Silences** — Shift toggles a manual silence on the selected pixels (still travelled by the playhead, silent), Alt+Shift removes it. A 16-step **silence pattern** can be stamped by clicking a zone (optionally repeated).
+- **Reading** — direction (left→right, right→left, top→bottom, bottom→top, two spirals); a "sort" toggle merges the zones into one sweep by absolute position.
+- **Transport** — play/stop, rewind, step forward; loop, back-and-forth or one-shot; per-synth tempo ratio (1/2 … 3/2 of the metronome).
+- **Note lengths** — sixteenth, eighth, quarter, half, whole: the pixel's brightness picks its length; reverse, ternary (triplets), sustained/pizzicato articulation and legato are available.
+- **Timing** — quantize to the master tempo (resync period 1–8 beats) and chance (per-step play probability).
+- **Accent** — per-beat velocity levels (off / weak / normal / strong), multiplied by global values from the config file.
+- **Note range** — cumulative bass (21–47), medium (48–71), treble (72–108) filters (bounds configurable), one per voice in polyphonic mode; the note is rescaled across the allowed range.
+- **Scale** — snap the notes to one of 14 scales, with a selectable tonic (Chromatic = no quantization).
+- **Velocity** — min–max window, in relative (rescale) or clamp mode.
+- **MIDI** — port, channel (1–16, first free by default), channel volume (CC 7) with mute, and bank/program selection.
+- **Organisation** — color tag, zone-highlight toggle, info panel (pixel, note, ranges), rename (double-click), reorder by drag, copy parameters/zones from another synth, safe removal (click twice), save as default template.
+- **Contextual help** — a footer button enables hover explanations on any control.
+- **List** — play all / stop all and a panic button (cuts every sounding note); the metronome starts and stops on its own.
 
 ### MIDI Output
-
-- Automatic connection to the first available MIDI output port on startup; every synthesizer can be routed to its own port, with connections opened lazily on first use.
-- Real-time Note On / Note Off messages: each pixel is played as a note with its own duration, with clean note-offs when stopping a synthesizer or switching modes. The engine ticks at a quarter-beat resolution so eighth and sixteenth note lengths stay accurate.
+- The first available port is connected at startup; each synth can target its own port (opened lazily).
+- Real-time Note On/Off with clean note-offs; the engine runs at 12 wakes per beat, so note lengths stay accurate.
 
 ### Using Wysiwyl with a DAW
-
-Wysiwyl exposes everything a DAW needs, with no hardware device required (macOS and Linux):
-
-- **Virtual MIDI port** — the app's own virtual output port, "Wysiwyl", is created at startup and listed first in every synthesizer's port menu. It shows up in your DAW as a MIDI input: select it as the source of an instrument track, and Wysiwyl drives the track's software instrument. A user with no physical synth can therefore compose with Wysiwyl and hear it through the DAW.
-- **Tempo sync (MIDI clock)** — the app also creates a virtual *input* port, likewise named "Wysiwyl". Point your DAW's MIDI clock output at it (Ableton Live: Preferences → Link/Tempo/MIDI → MIDI Sync Output; Bitwig, Reaper, Logic: MIDI clock/sync destination) and the metronome automatically follows the DAW's project tempo: a "Sync DAW" badge appears, the tempo controls are disabled while the clock streams, and playback steps align with the project's sixteenth-note grid. The tempo is learned from the 24 ppqn clock and smoothed; a Start/Continue message realigns the grid with the project's beats, a Stop message releases the sync immediately. When the DAW stops sending clock, the metronome keeps running at the last synced tempo and the controls are released.
-- **Clock source** — the metronome block offers a clock source setting, persisted in the configuration file, with four modes: *Internal* (the tempo set in Wysiwyl is the only master, incoming clocks are ignored), *Auto sync* (the default, historical behavior described above: any incoming clock is followed), *Source…* (only the MIDI clock received on the chosen input port is followed — other devices streaming a clock are ignored), and *Master* (see below).
-- **Master clock** — in *Master* mode Wysiwyl becomes the tempo master: it broadcasts its own MIDI clock (24 ppqn) to every MIDI output port — including the virtual "Wysiwyl" port and physical interfaces — while at least one synthesizer plays, so external hardware sequencers, arpeggiators and DAWs that follow an external clock play at the tempo set in Wysiwyl. A Start message is sent when playback begins and a Stop when it ends; the tempo controls stay active and drive every follower live. The clock streams only while a synth plays, following Wysiwyl's own playback lifecycle. The timing engine is sleep-based: the resulting jitter (about a millisecond) is fine for instruments and typical workflows, but a sample-accurate DAW sync would require a dedicated audio-clock.
-- **Ableton Live on macOS** — Live does not list MIDI ports created by other applications, in either direction. To work with Live, enable the IAC bus (Audio MIDI Setup → double-click "IAC Driver" → "Device is online"): the IAC bus appears in Wysiwyl as an ordinary output port for the notes, and the DAW routes its MIDI clock to the IAC bus for the tempo sync. In master mode, Live and the hardware instruments can conversely follow Wysiwyl's clock through the same IAC bus.
-- **Windows** — the WinMM backend has no virtual ports: use a loopMIDI bus instead, both for the notes (create a bus, it appears as an output port in Wysiwyl and a MIDI input in the DAW) and for the clock (route the DAW's MIDI clock to the same loopMIDI bus; Wysiwyl listens to every input port).
-- Stopping and starting playback of the Wysiwyl synthesizers remains done from Wysiwyl: whatever the clock mode, the transport of Wysiwyl's own synthesizers is never driven by an external device — the clock only carries the tempo (and, in master mode, Wysiwyl's playback state for external followers).
+- **Virtual port** "Wysiwyl" (output): appears as a MIDI input in the DAW to drive a software instrument. Windows has no virtual ports — use loopMIDI instead.
+- **Tempo sync**: the app also exposes a virtual input port; send the DAW's MIDI clock to it and the metronome follows the project tempo ("Sync DAW" badge, controls disabled, sixteenth-note alignment). Ableton Live on macOS ignores virtual ports: use the IAC bus.
+- **Clock source** (config `clock_mode`): *Internal* (own tempo only), *Auto* (default, follows any incoming clock), *Source…* (only the chosen input), *Master* (broadcasts its own 24 ppqn clock to every output while playing).
+- The transport always stays in Wysiwyl; the clock only carries the tempo (and, in master mode, the play state).
 
 ### Work Sessions
-
-- **Save the whole state** into a single self-contained `.wysiwyl` file (native save dialog): the original image (embedded as base64 PNG), the image processing settings, the LFOs and their assignments, the metronome tempo, and every synthesizer with its full configuration (name, color, zones, tempo, mode, note lengths, note ranges, thresholds, velocity, MIDI channel and port, reading direction, sorted reading, loop/back-and-forth). Sessions use file format version 3 (run-encoded zones); files saved by older versions are refused at load with an explicit message.
-- **Reopen a session** through a native open dialog: the image is re-derived from the original with the stored settings, and all the synthesizers are recreated exactly as they were left. Playback state (playhead positions, sounding notes) is deliberately not restored: everything restarts from the beginning.
+- Save/load a self-contained `.wysiwyl` file: original image (base64 PNG), adjustments, LFOs and assignments, metronome, and every synth with its full configuration.
+- Format version 3 (run-length zones); older files are refused with a clear message. Playback state is not restored. Closing with unsaved changes prompts to save.
 
 ### Global Configuration
+A JSON file (opened with the gear button) holds app-wide options, applied at startup; once opened it is watched and reloads live. Keys:
 
-A JSON configuration file (opened with a gear button in the application settings area) holds the app-wide options, hand-edited in a text editor and applied on the next start. Once the file has been opened from that button, it is also watched: saving your edits reloads them live (the app's own saves are ignored, and the live tempo stays the one set in the UI, so `default_bpm` only applies at startup). A brief green flash on the gear button confirms a reload.
+- `max_image_size` — longest side of imported images (0 = unlimited).
+- `default_bpm` — startup tempo.
+- `clock_mode` / `clock_source` — clock source and its input port.
+- `time_signature` — accent-grid frame ("4/4", "7/8"… or any "n/d": n 1–16, d 1/2/4/8/16).
+- `accent_levels` — velocity multipliers of the four accent levels.
+- `note_range_bounds` — low/high note bounds of the bass/medium/treble filters.
+- `synth_colors` — palette of the synth color picker.
+- `enabled_scales` — scales offered in the synth scale selects.
+- `default_synth` — template applied to new synths.
+- `wheel_trackpad_threshold` — scroll sensitivity of the value fields.
+- `pizzicato_gate_ms` — minimum note duration in pizzicato mode.
+- `undo_depth` — depth of the zone/silence undo history.
 
-- **`max_image_size`** — longest side allowed for imported images; larger originals are downscaled on import (0 = unlimited).
-- **`default_bpm`** — metronome tempo used at startup.
-- **`clock_mode`** — the metronome's clock source: `auto` (follow any incoming MIDI clock, the default), `off` (internal tempo only), `input` (follow the clock of `clock_source`) or `master` (broadcast a MIDI clock to every output port while playing). Set from the metronome block in the UI, which persists it here.
-- **`clock_source`** — input port name the clock sync follows when `clock_mode` is `input`.
-- **`time_signature`** — the metronome's time signature, the accent grid's frame shared by every synth: `"4/4"`, `"3/4"`, `"2/4"`, `"6/8"`, `"5/4"`, `"7/8"`, `"9/8"`, `"12/8"`, `"5/8"` or `"2/2"`. Any other `"n/d"` combination is also accepted (numerator 1–16, denominator 1, 2, 4, 8 or 16). Set from the metronome block in the UI, where the numerator and denominator are entered directly.
-- **`accent_levels`** — velocity multipliers (percent) of the four accent levels (`off`, `weak`, `normal`, `strong`): a pixel's saturation-derived velocity is multiplied by the percentage of the level on its beat, then clamped to 1–127. `100` = neutral. The per-synth patterns are edited on the cards; these values are the global mapping.
-- **`default_synth`** — template applied to every newly created synthesizer; any existing synth can be saved as the template with its bookmark button ("Use this synth as the default template").
-- **`pizzicato_gate_ms`** — minimum duration (ms) of a note in the pizzicato articulation (`note_sustain = false`): the Note Off is deferred by that much instead of being sent in the same packet as the Note On, so software synths whose envelope needs time to rise (Vital, etc.) produce an audible pluck. `0` restores the historical behavior (immediate Note Off, the instrument's release shaping the tail); default `40`, clamped to 0–1000. The effective duration is capped by the next articulation.
-- **`undo_depth`** — depth of the undo/redo history for zone and silence edits (number of steps kept); default `25`, clamped to 1–500. Undo/redo use Cmd/Ctrl+Z and Cmd/Ctrl+Shift+Z.
+### Keyboard Shortcuts
+A footer button opens the full list. Main ones: Space (play/stop all), Shift+Space (panic), 1–8 (reveal a synth), Ctrl/Cmd+1–8 (play/stop), Alt+1–8 (mute), Ctrl/Cmd+S / O (save / open), Ctrl/Cmd+Z / Shift+Z (undo / redo), Ctrl/Cmd+M (projection), Esc (cancel), Enter (apply crop/transform).
 
 ### Automatic Updates
-
-Wysiwyl checks the GitHub releases for a newer **stable** version and can update itself in place:
-
-- **Check** — a silent check runs at startup, and a manual one is available from the update button in the footer. When a newer release exists, the button is badged and the window title shows it right after the version number (e.g. `Wysiwyl 2.8.0 — Update 2.9.0`).
-- **Install** — the update button opens a dialog with the release notes and an "Install and restart" action: the signed bundle is downloaded (with a progress bar), verified against the app's public key, installed, and the app is relaunched.
-- **Channel** — only published, non-prerelease releases are followed (`releases/latest`); beta/rc builds are ignored. The CI keeps releases as drafts, so a release must be published manually before the updater can see it.
-- **Integrity** — the downloaded bundle is verified with the app's own minisign key (the private key lives in the CI secret `TAURI_SIGNING_PRIVATE_KEY`, the public key in `tauri.conf.json`). This is independent from the optional Apple code signing.
-- **macOS** — builds are ad-hoc signed (`signingIdentity: "-"`); Gatekeeper still asks the user to allow the app on first launch (and after an update). Full notarization would require a paid Apple Developer account.
-
-The updater artifacts (and the `latest.json` manifest that `tauri-action` attaches to each release) are produced thanks to `bundle.createUpdaterArtifacts`.
-
-**One-time setup** — generate the updater keypair with `cargo tauri signer generate -w ~/.tauri/wysiwyl.key`, put the public key in `tauri.conf.json` (`plugins.updater.pubkey`, replacing the placeholder) and the private key plus its password in the GitHub secrets `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Keep the private key safe: losing it means no already-installed app can ever be updated again. A local `cargo tauri build` then needs `TAURI_SIGNING_PRIVATE_KEY` set (the CI provides it), otherwise the bundler cannot sign the updater artifacts.
+- Silent check at startup and a manual one from the footer; the button is badged and the title shows the new version.
+- "Install and restart" downloads the signed bundle, verifies it against the app's minisign public key, installs and relaunches. Only published stable releases are followed.
+- **One-time setup** — `cargo tauri signer generate -w ~/.tauri/wysiwyl.key`, put the public key in `tauri.conf.json` (`plugins.updater.pubkey`) and the private key + password in the `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` CI secrets. macOS builds are ad-hoc signed (`signingIdentity: "-"`), so Gatekeeper still asks on first launch.
 
 ## Tech Stack
-
-- **Tauri 2** for the desktop application and communication between the frontend and backend.
-- **Rust 2021** for image processing, application state, and real-time MIDI generation.
-- **Vanilla HTML, SCSS/CSS, and JavaScript** for the user interface, without any frontend framework or bundler.
-- Relevant Rust crates:
-  - [`tauri`](https://crates.io/crates/tauri) and [`tauri-plugin-dialog`](https://crates.io/crates/tauri-plugin-dialog) for the application and native dialogs;
-  - [`tauri-plugin-updater`](https://crates.io/crates/tauri-plugin-updater) for the in-app automatic updates;
-  - [`image`](https://crates.io/crates/image) for loading and processing images;
-  - [`midir`](https://crates.io/crates/midir) for real-time MIDI output;
-  - [`serde`](https://crates.io/crates/serde) and [`serde_json`](https://crates.io/crates/serde_json) for data exchange between the frontend and backend;
-  - [`base64`](https://crates.io/crates/base64) for sending PNG previews to the frontend.
+- **Tauri 2** (desktop app + front/back IPC), **Rust 2021** (image processing, state, real-time MIDI), **vanilla HTML/SCSS/JS** (no framework, no bundler).
+- Crates: `tauri`, `tauri-plugin-dialog`, `tauri-plugin-opener`, `tauri-plugin-updater`, `image`, `midir`, `crossbeam-channel`, `serde` / `serde_json`, `base64`.
 
 ## Front-end Conventions
-
-The interface is plain HTML/SCSS/JS (no framework, no bundler), organized around a hybrid utility/component model, so the markup can be read as a description of the layout.
-
-### Three kinds of classes
-
-- **Utility classes** — Tailwind-style single-purpose classes, hand-rolled in `src/scss/_utilities.scss` (`flex`, `flex-col`, `items-center`, `gap-2`, `mb-3`, `text-muted`, `hidden`...). They are loaded **last** in the cascade, so a utility always overrides a component class and the markup can fine-tune any component without new SCSS. Only the utilities the markup actually uses are defined: add one (same naming, same scales) when the markup needs it.
-- **Component classes** — one per UI region or control role (`.image-viewer`, `.controls`, `.mode-panel`, `.icon-btn`, `.synth-block`...), with their states and pseudo-elements nested in SCSS. They live in `scss/components/`, one file per area of the interface.
-- **State classes** — toggled by JS at runtime: `.hidden` (with `!important`), `.active`, `.locked`, `.picking`, `.confirm-pending`, `.dragging`, `.reversed`...
-
-### Ids are hooks, never styled
-
-Every `id` — in the static pages as well as in the dynamic templates — exists only as a stable hook for `querySelector` or as a canvas layer; **CSS never targets an id**. Repeated dynamic elements (synth cards, tabs) are identified by classes and a `data-synth-id` attribute instead of generated ids.
-
-### Semantic colors — one meaning each
-
-- **Blue accent** — toggle/mode currently active;
-- **Red** — playback in progress (stop affordance) and destructive action awaiting confirmation;
-- **Green** — transient confirmation.
-
-### SCSS organization
-
-`styles.scss` is only the entry point: its `@use` order *is* the cascade order — fonts, reset, one component file per UI area, utilities last. Colors and design tokens are `$color-*` variables in `_variables.scss`. Dynamic markup lives in editable HTML templates (`src/templates/*.html`, loaded once by `js/templates.js` then cloned by `main.js`) and follows the same conventions; classes queried by the JS are hooks: never rename one without updating the matching `querySelector`.
-
-### Stylesheet compilation
-
-The compiled CSS is committed (`src/css/styles.css` for the main window, `src/css/mirror.css` for the projection window, with their source maps), so running the app needs no build step. After editing the SCSS, recompile both from `src/` with dart-sass (a standalone tool — Node.js is not required):
-
-```bash
-sass scss/styles.scss:css/styles.css scss/mirror.scss:css/mirror.css
-```
+- Plain HTML/SCSS/JS: utility classes (`_utilities.scss`, loaded last) + component classes (one file per area) + runtime state classes (`.hidden`, `.active`, `.locked`…).
+- `id`s are `querySelector` hooks only — CSS never targets an id; repeated elements use classes and `data-synth-id`.
+- Semantic colors: blue = active, red = playing / destructive confirmation, green = transient confirmation.
+- `styles.scss` is the entry point; its `@use` order is the cascade. Dynamic markup lives in `src/templates/*.html`, loaded by `js/core/templates.js` and cloned by `main.js`.
+- Compiled CSS is committed: after editing SCSS, run `sass scss/styles.scss:css/styles.css scss/mirror.scss:css/mirror.css` from `src/` (Node.js is not required).
 
 ## Installation
-
-### Prerequisites
-
-- [Rust](https://www.rust-lang.org/tools/install), with Cargo.
-- The system dependencies required by Tauri on your platform.
-- The Tauri CLI:
-
-  ```bash
-  cargo install tauri-cli
-  ```
-
-Node.js is **not required**: the frontend uses vanilla HTML, CSS, and JavaScript, without any frontend bundler or package manager.
-
-### Getting the Project
-
-From the project directory:
-
-```bash
-cd wysiwyl
-```
+- [Rust](https://www.rust-lang.org/tools/install) with Cargo, the Tauri system dependencies, and the CLI (`cargo install tauri-cli`). Node.js is not required.
 
 ## Usage
-
-Run Wysiwyl in development mode:
-
 ```bash
-cargo tauri dev
+cargo tauri dev     # development
+cargo tauri build   # distributable
+npm test            # JS tests — cargo test for the Rust ones
 ```
-
-Build a distributable version:
-
-```bash
-cargo tauri build
-```
-
-Note: in development, `cargo tauri dev` serves `src/` live from disk through the CLI's built-in server (no bundler). Both that server and the app's own asset protocol (used in bundled builds) inject a `<script>` into every HTML response and fall back to `index.html` for unknown paths — so HTML files fetched at runtime (the layout templates) are parsed defensively by `js/templates.js`, which extracts each template's expected root element instead of trusting the response's first element.
-
-In the application:
-
-1. Load an image and adjust the grid size, saturation, contrast, brightness, and posterization settings. The preview updates live.
-2. Add one or more synthesizers, choose a MIDI port, a MIDI channel and a color for each, and rename them by double-clicking their title.
-3. Draw zones on the image to restrict what each synthesizer plays, pick a tempo per synth, and open the advanced options to configure the translation mode (monophonic/polyphonic), note lengths, note range filters, and minimum velocity.
-4. Press Play on a synthesizer (or "play all") to start hearing your image.
-5. Save your work into a `.wysiwyl` session file (save button next to the image controls) and reopen it later to find everything back in place.
+In the app: load an image and set the grid and adjustments; add synthesizers and pick a MIDI port, channel and color; draw zones; press Play (or "play all"); save the session as a `.wysiwyl` file.
 
 ## Project Structure
-
 ```text
 wysiwyl/
-├── Cargo.toml
 ├── LICENSE
-├── README.md
-├── README.fr.md
+├── README.md / README.fr.md
 ├── package.json
 ├── src/
-│   ├── index.html
-│   ├── viewer.html
-│   ├── css/
-│   │   ├── styles.css
-│   │   └── mirror.css
-│   ├── fonts/
-│   ├── i18n/
-│   ├── scss/
-│   │   ├── styles.scss
-│   │   ├── mirror.scss
-│   │   ├── _variables.scss
-│   │   ├── _mixins.scss
-│   │   ├── _fonts.scss
-│   │   ├── _reset.scss
-│   │   ├── _utilities.scss
-│   │   └── components/
+│   ├── index.html          # main window
+│   ├── viewer.html         # projection window
+│   ├── assets/  fonts/  i18n/
+│   ├── css/                # compiled styles (+ .min)
+│   ├── scss/               # _variables, _mixins, _fonts, _reset, _utilities, components/
+│   ├── templates/          # synth card / tab / note-range
 │   └── js/
 │       ├── main.js
-│       ├── mirror.js
-│       ├── viewer-render.js
-│       └── i18n.js
+│       └── audio/  core/  image/  mirror/  session/  synth/
 └── src-tauri/
     ├── Cargo.toml
     ├── tauri.conf.json
     └── src/
-        ├── main.rs
-        ├── lib.rs
-        ├── state.rs
-        ├── error.rs
-        ├── config.rs
-        ├── session.rs
-        ├── image_processing.rs
-        ├── synth.rs
-        ├── metronome.rs
-        ├── midi.rs
-        └── updater.rs
+        ├── main.rs  lib.rs  state.rs  error.rs
+        ├── config.rs  session.rs  image_processing.rs
+        ├── synth.rs  metronome.rs  midi.rs  updater.rs
+        └── fsutil.rs  gate.rs  locks.rs  zone.rs
 ```
 
-The backend exposes Tauri commands to load images, apply adjustments, retrieve pixel data, manage synthesizers (creation, playback, MIDI channel and port, mode, zones, tempo, note lengths, note ranges, reading direction, velocity), drive the shared metronome, persist the global configuration, save/load work sessions, and check/install automatic updates.
+The backend exposes Tauri commands to load and adjust images, manage synthesizers (zones, playback, MIDI, mode, tempo, note lengths, ranges, scales…), drive the metronome, persist the configuration and sessions, and check/install updates.
 
 ## License
-
-This project is licensed under the GNU GPL v3. You are free to use, modify, and redistribute this code, provided that any derivative work is also published under GPLv3 with its sources. See the [LICENSE](LICENSE) file for the full text.
+GNU GPL v3 — free to use, modify and redistribute, provided derivative works are also published under GPLv3 with their sources. See [LICENSE](LICENSE).
