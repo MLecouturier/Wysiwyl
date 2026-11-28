@@ -1227,8 +1227,10 @@ export function initVelocityRange(el) {
 
 export async function onSynthPlayClick(id, el) {
     try {
-        const isPlaying = await invoke('is_synth_playing', { id });
-        if (!isPlaying) {
+        // Stopped: start (immediately or armed, per the launch quantization).
+        // Armed or playing: stop — a second click cancels an armed launch.
+        const state = await invoke('synth_playback_state', { id });
+        if (state === 'stopped') {
             await startSynthPlayback(id, el);
         } else {
             await stopSynthPlayback(id, el);
@@ -1245,8 +1247,13 @@ export async function onSynthPlayClick(id, el) {
 // start (or finish) the playback, red stops everything.
 export function syncPlayAllButton() {
     const blocks = Array.from(synthListBody.querySelectorAll('.synth-block'));
+    // An armed synth counts as started: the set is fully launched (or about
+    // to be), so the button offers the stop-all affordance.
     const playing = blocks
-        .filter(el => el.querySelector('.synth-play').classList.contains('active')).length;
+        .filter(el => {
+            const btn = el.querySelector('.synth-play');
+            return btn.classList.contains('active') || btn.classList.contains('armed');
+        }).length;
     const state = playAllStatus(blocks.length, playing);
     const allPlaying = state === 'active';
 
@@ -1397,28 +1404,39 @@ export function toggleSynthMute(id) {
     input.dispatchEvent(new Event('change', { bubbles: true }));
 }
 
-// Starts a synth. The UI only switches to the playing state once the
-// backend confirmed it; on failure the metronome is stopped again when
-// nothing else plays, so the two sides never diverge.
-export async function startSynthPlayback(id, el) {
+// Starts several synths so they launch on the same tick: every synth is
+// armed/started first, then the metronome is ensured once. When it was
+// stopped, the armed synths are all in place before the metronome's first
+// wake (beat 1), so they go together; when it already runs, they all launch
+// on the next shared beat boundary. The resulting state — playing or armed —
+// is pushed by the backend's `synth-state` event; on failure every synth is
+// stopped again and the metronome released when nothing else plays.
+export async function startSynthsPlayback(ids) {
+    if (ids.length === 0) return;
     cancelTransientTools(); // a running transport must not keep a tool armed
     try {
+        for (const id of ids) await invoke('start_synth', { id });
         await hooks.ensureMetronomeStarted();
-        await invoke('start_synth', { id });
     } catch (err) {
-        console.error('Error while starting the synth:', err);
+        console.error('Error while starting the synths:', err);
+        for (const id of ids) await invoke('stop_synth', { id }).catch(() => {});
         await hooks.stopMetronomeIfIdle();
-        return;
     }
-    setSynthPlaying(id, true);
-    // Lock this synth's controls while it is playing
-    setSynthControlsLocked(el, true);
-    hooks.updateImageControlsLockState();
 }
 
-// Stops a synth. Even if the backend call fails (unknown id after a
-// reload), the card is shown stopped: a synth the backend does not know
-// cannot be playing.
+// Starts a single synth (immediately or armed, per the global launch
+// quantization). The synth is started BEFORE the metronome is ensured: when
+// nothing plays yet, the armed synth is in place before the metronome's
+// first wake, so the launch lands on beat 1.
+export async function startSynthPlayback(id, el) {
+    await startSynthsPlayback([id]);
+}
+
+// Stops a synth (cancelling an armed launch too). Even if the backend call
+// fails (unknown id after a reload), the card is shown stopped: a synth the
+// backend does not know cannot be playing. The card is updated right away so
+// the idle probe below sees the new state before deciding to stop the
+// metronome (the backend's `synth-state` event follows, idempotently).
 export async function stopSynthPlayback(id, el) {
     await invoke('stop_synth', { id })
         .catch(err => console.error('Error while stopping the synth:', err));

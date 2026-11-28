@@ -95,7 +95,11 @@
     "playAllLabel": "Tout lire",
     "stopAllLabel": "Tout arrêter",
     "panic": "Kill switch : tout arrêter et couper les notes",
-    "add": "Ajouter un synthétiseur"
+    "add": "Ajouter un synthétiseur",
+    "launchQuantize": "Quantification du lancement : un synthé démarré attend le prochain temps (Temps) ou la prochaine mesure (Mesure) avant sa première note ; Off démarre immédiatement.",
+    "launchOff": "Off",
+    "launchBeat": "Temps",
+    "launchBar": "Mesure"
   },
   "config": {
     "openFile": "Ouvrir le fichier de configuration (au redémarrage)",

@@ -409,13 +409,29 @@ export function setPlayButtonState(btn, playing) {
     btn.querySelector('.synth-play-label').textContent = playing ? t('synth.stop') : t('synth.play');
 }
 
-// Updates BOTH play/pause buttons of a synth — the device card's and the
-// tab's — so the two columns always show the same state.
+// Reflects a synth's backend playback state ("stopped" | "armed" | "playing")
+// on BOTH play buttons — the device card's and the tab's — so the two
+// columns always show the same state. Playing keeps the red active look;
+// armed adds the `.armed` class (blinking, driven by the beat event) which
+// is visually distinct from playing.
+export function setSynthState(id, state) {
+    const playing = state === 'playing';
+    const armed = state === 'armed';
+    const buttons = [
+        synthElementById(id)?.querySelector('.synth-play'),
+        synthTabById(id)?.querySelector('.synth-tab-play'),
+    ];
+    for (const btn of buttons) {
+        if (!btn) continue;
+        setPlayButtonState(btn, playing);
+        btn.classList.toggle('armed', armed);
+        if (!armed) btn.classList.remove('pulse');
+    }
+}
+
+// Updates BOTH play/pause buttons of a synth to the playing/stopped state.
 export function setSynthPlaying(id, playing) {
-    const el = synthElementById(id);
-    if (el) setPlayButtonState(el.querySelector('.synth-play'), playing);
-    const tab = synthTabById(id);
-    if (tab) setPlayButtonState(tab.querySelector('.synth-tab-play'), playing);
+    setSynthState(id, playing ? 'playing' : 'stopped');
 }
 
 // Reflects the highlight visibility on a card's eye button.

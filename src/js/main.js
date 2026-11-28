@@ -17,7 +17,7 @@ import {
 } from './core/state.js';
 import { sliderToPosterizeLevels, posterizeLevelsToSlider } from './core/utils.js';
 import { installInputStepper, setTrackpadThreshold } from './audio/stepper.js';
-import { createClockSource, createTimeSignature } from './audio/metronome.js';
+import { createClockSource, createTimeSignature, createLaunchQuantize } from './audio/metronome.js';
 import { createMetronome, clampBpm } from './audio/metronome.js';
 import { createMirror } from './mirror/window.js';
 import { createMirrorEffectControls } from './mirror/controls.js';
@@ -29,7 +29,7 @@ import {
     addSynthZone, removeSynthZoneRect, toggleSynthMuteRect, removeSynthMuteRect,
 } from './synth/selection.js';
 import { programMap, programKey, refreshProgramDisplays } from './synth/model.js';
-import { setSynthPlaying, retranslateSynthElement, syncEyeButton } from './synth/model.js';
+import { setSynthPlaying, setSynthState, retranslateSynthElement, syncEyeButton } from './synth/model.js';
 import {
     resizeOverlay, drawSynthPixel, eraseSynthCursor, clearOverlay,
     computeMuteCells, redrawAllHighlights, redrawAllCursors,
@@ -45,7 +45,7 @@ import {
 } from './synth/selection.js';
 import {
     createSynthElement, onSynthPlayClick, syncPlayAllButton,
-    setSynthControlsLocked, startSynthPlayback, stopSynthPlayback,
+    setSynthControlsLocked, startSynthsPlayback, stopSynthPlayback,
     renumberSynthIds, configureSynthCards,
     toggleSynthMute, cancelTransientTools, setActiveSynth, clearActiveSynth,
     refreshAccentGrids, refreshMidiPortSelects,
@@ -147,8 +147,10 @@ function applyConfig(config) {
     // backend and applied live on its side; the selects just reflect it.
     clockSource.hydrate(config.clock_mode, config.clock_source);
     // Global time signature: persisted by the backend, applied live. The
-    // cards created before the config arrived are re-rendered for it.
+    // cards created before the config arrived are re-rendered for it, and
+    // the metronome's beat ring is built at rest (one dot per beat unit).
     timeSignature.hydrate(config.time_signature);
+    metronome.setBeatsPerBar(Number(String(config.time_signature).split('/')[0]));
     refreshAccentGrids();
     // Undo/redo history depth for zone/silence edits
     setHistoryDepth(config.undo_depth);
@@ -308,9 +310,11 @@ const ditherSerpentineBtn = document.querySelector('#dither-serpentine-btn');
 // are — clipped to the new grid, erased when fully outside)
 const imageLockControls = [loadBtn, resetBtn, rotateBtn, cropBtn, transformBtn, gridSlider];
 
-// True while at least one synthesizer is playing
+// True while at least one synthesizer is playing or armed (waiting for its
+// launch boundary): an armed synth keeps the metronome running so it can
+// actually start, and the image controls stay locked until it stops.
 function anySynthPlaying() {
-    return synthListBody.querySelectorAll('.synth-play.active').length > 0;
+    return synthListBody.querySelectorAll('.synth-play.active, .synth-play.armed').length > 0;
 }
 
 // Locks/unlocks image controls depending on whether a synth is playing
@@ -796,8 +800,9 @@ async function openSession() {
         // coordinates, on the backend's side.
         await refresh();
 
-        // Restore the tempo and the synths
+        // Restore the tempo, the launch quantization and the synths
         metronome.setBpm(session.bpm);
+        launchQuantize.hydrate(session.launch_quantize ?? 'beat');
         if (session.synths.length > 0) {
             placeholder.classList.add('hidden');
             for (const s of session.synths) {
@@ -1054,8 +1059,23 @@ installInputStepper();
 const clockSource = createClockSource();
 
 // ---------- Time signature (global accent frame) ----------
-// Changing it rebuilds every card's accent grid (one slot per beat unit).
-const timeSignature = createTimeSignature({ onSignatureChange: refreshAccentGrids });
+// Changing it rebuilds every card's accent grid (one slot per beat unit)
+// and the metronome's circular beat indicator (one dot per beat).
+const timeSignature = createTimeSignature({
+    onSignatureChange: (sig) => {
+        refreshAccentGrids();
+        metronome.setBeatsPerBar(Number(String(sig).split('/')[0]));
+    },
+});
+
+// ---------- Launch quantization (global engine setting) ----------
+// Off | Beat | Bar: when a started synth plays its first pixel. Owned by the
+// backend (engine state, saved with the session); the control only reflects
+// it. Read at startup and restored with the session on load.
+const launchQuantize = createLaunchQuantize();
+invoke('get_launch_quantize')
+    .then(mode => launchQuantize.hydrate(mode))
+    .catch(err => console.error('Error in get_launch_quantize:', err));
 
 // Programs learned from the MIDI input (Program Change / Bank Select
 // turned on the instruments): update the map and every synth concerned.
@@ -1125,7 +1145,13 @@ addSynthBtn.addEventListener('click', async () => {
 playAllBtn.addEventListener('click', async () => {
     const blocks = Array.from(synthListBody.querySelectorAll('.synth-block'));
     if (blocks.length === 0) return;
-    const isPlaying = el => el.querySelector('.synth-play').classList.contains('active');
+    // An armed synth counts as started: it must not be re-started (which
+    // would just re-arm it), and the button offers stop-all once every
+    // synth is playing or armed.
+    const isPlaying = el => {
+        const btn = el.querySelector('.synth-play');
+        return btn.classList.contains('active') || btn.classList.contains('armed');
+    };
     const playing = blocks.filter(isPlaying);
 
     if (playing.length === blocks.length) {
@@ -1134,11 +1160,13 @@ playAllBtn.addEventListener('click', async () => {
             await stopSynthPlayback(Number(el.dataset.synthId), el);
         }
     } else {
-        // Idle or partial: start every synth that is not running yet
-        // (green starts them all, orange finishes the set)
-        for (const el of blocks) {
-            if (!isPlaying(el)) await startSynthPlayback(Number(el.dataset.synthId), el);
-        }
+        // Idle or partial: start every synth that is not running yet, all at
+        // once so they launch on the same tick (green starts them all,
+        // orange finishes the set)
+        const toStart = blocks
+            .filter(el => !isPlaying(el))
+            .map(el => Number(el.dataset.synthId));
+        await startSynthsPlayback(toStart);
     }
     syncPlayAllButton();
 });
@@ -1156,6 +1184,18 @@ panicBtn.addEventListener('click', async () => {
     });
     syncPlayAllButton();
     await metronome.stopIfIdle();
+    updateImageControlsLockState();
+});
+
+// Backend-driven playback state of a synth: "playing" (red), "armed"
+// (blinking, waiting for its launch boundary) or "stopped". The UI only
+// reflects it — the launch timing itself is decided in Rust.
+window.__TAURI__.event.listen('synth-state', (event) => {
+    const { id, state } = event.payload;
+    setSynthState(id, state);
+    const el = synthElementById(id);
+    if (el) setSynthControlsLocked(el, state !== 'stopped');
+    syncPlayAllButton();
     updateImageControlsLockState();
 });
 

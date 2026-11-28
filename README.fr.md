@@ -28,6 +28,7 @@ Créez autant de synthétiseurs indépendants que vous le souhaitez, chacun lisa
 - **Silences** — Shift bascule un silence manuel sur les pixels sélectionnés (toujours parcourus, muets), Alt+Shift le retire. Un **motif de silences** de 16 pas peut être appliqué en cliquant une zone (répétition optionnelle).
 - **Lecture** — sens (gauche→droite, droite→gauche, haut→bas, bas→haut, deux spirales) ; un bouton « tri » fusionne les zones en un balayage unique par position absolue.
 - **Transport** — lecture/arrêt, rembobinage, pas en avant ; boucle, aller-retour ou lecture unique ; ratio de tempo par synthé (1/2 … 3/2 du métronome).
+- **Quantification du lancement** — un réglage global **Off / Temps / Mesure** (à côté du kill switch) : un synthé démarré attend le prochain temps ou la prochaine mesure du métronome avant sa première note, son bouton lecture clignotant au rythme du temps tant qu'il est *armé* ; **Off** démarre immédiatement. Sauvegardé avec la session. Un second clic sur un synthé armé l'annule ; stop, le kill switch et la fin d'une lecture unique agissent toujours immédiatement.
 - **Longueurs de note** — double croche, croche, noire, blanche, ronde : la luminosité du pixel choisit sa durée ; inversion, ternaire (triolets), articulation soutenue/pizzicato et legato disponibles.
 - **Timing** — quantize sur le tempo maître (période de recalage 1–8 temps) et chance (probabilité de jeu par pas).
 - **Accent** — niveaux de vélocité par temps (off / faible / normal / fort), multipliés par des valeurs globales du fichier de config.
@@ -46,6 +47,7 @@ Créez autant de synthétiseurs indépendants que vous le souhaitez, chacun lisa
 ### Utiliser Wysiwyl avec un DAW
 - **Port virtuel** « Wysiwyl » (sortie) : apparaît comme une entrée MIDI dans le DAW pour piloter un instrument logiciel. Windows n'a pas de ports virtuels — utilisez loopMIDI.
 - **Synchro de tempo** : l'application expose aussi un port d'entrée virtuel ; dirigez-y le MIDI clock du DAW et le métronome suit le tempo du projet (badge « Sync DAW », contrôles désactivés, alignement sur les doubles croches). Ableton Live sur macOS ignore les ports virtuels : utilisez le bus IAC.
+- **Quantification du lancement en synchro** : le compteur de temps suit l'horloge entrante, donc l'origine de la mesure est le moment où l'application a accroché l'horloge — il n'y a pas de Song Position Pointer, et la mesure n'est donc pas alignée sur la position absolue du DAW. Un synthé armé pour la « prochaine mesure » démarre au premier temps fort suivant l'accrochage.
 - **Source d'horloge** (config `clock_mode`) : *Internal* (tempo propre uniquement), *Auto* (défaut, suit toute horloge entrante), *Source…* (seulement l'entrée choisie), *Master* (diffuse sa propre horloge 24 ppqn sur toutes les sorties pendant la lecture).
 - Le transport reste toujours dans Wysiwyl ; l'horloge ne porte que le tempo (et, en mode maître, l'état de lecture).
 

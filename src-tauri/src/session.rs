@@ -15,7 +15,10 @@ use crate::image_processing::{
     fit_image_size,
 };
 use crate::locks::MutexExt;
-use crate::state::{ImageState, MidiState, ProgramState, Synth, SynthConfig, SynthState, Zone};
+use crate::metronome::MetronomeState;
+use crate::state::{
+    ImageState, LaunchQuantize, MidiState, ProgramState, Synth, SynthConfig, SynthState, Zone,
+};
 use crate::zone::normalize_zones;
 
 /// Frontend-owned state passed on save: metronome tempo, image processing
@@ -255,6 +258,11 @@ pub const SESSION_VERSION: u32 = 3;
 pub struct SessionFile {
     pub version: u32,
     pub bpm: u32,
+    /// Global launch quantization of the synthesizers. Absent in sessions
+    /// saved before the feature existed: `#[serde(default)]` reads them as
+    /// `Beat`, so the file format stays version 3.
+    #[serde(default)]
+    pub launch_quantize: LaunchQuantize,
     pub image: SessionImage,
     pub image_settings: SessionImageSettings,
     pub synths: Vec<SessionSynth>,
@@ -273,6 +281,7 @@ pub struct LoadedSession {
     pub version: u32,
     pub path: String,
     pub bpm: u32,
+    pub launch_quantize: LaunchQuantize,
     pub image_base64: String,
     pub orig_width: u32,
     pub orig_height: u32,
@@ -466,6 +475,9 @@ fn save_session_blocking(
     let file = SessionFile {
         version: SESSION_VERSION,
         bpm: ui.bpm.clamp(20, 300),
+        // The launch quantization is engine state, owned by the backend:
+        // read it there rather than trusting the frontend payload.
+        launch_quantize: app.state::<MetronomeState>().launch_quantize(),
         image,
         image_settings: SessionImageSettings {
             grid_slider: ui.grid_slider,
@@ -557,6 +569,10 @@ fn load_session_blocking(app: &AppHandle) -> Result<Option<LoadedSession>, AppEr
     let mut file: SessionFile = serde_json::from_value(raw)
         .map_err(|e| err("session_parse_error").with_param("details", e))?;
     let restored = validate_session(&file)?;
+    // Apply the session's launch quantization (older files default to
+    // Beat) before any synth can be started again.
+    app.state::<MetronomeState>()
+        .apply_launch_quantize(file.launch_quantize);
 
     // Decode the original image, within the app's size limits
     let bytes = general_purpose::STANDARD
@@ -648,6 +664,7 @@ fn load_session_blocking(app: &AppHandle) -> Result<Option<LoadedSession>, AppEr
         version: file.version,
         path: path.to_string_lossy().into_owned(),
         bpm: file.bpm.clamp(20, 300),
+        launch_quantize: file.launch_quantize,
         image_base64,
         orig_width,
         orig_height,
@@ -660,6 +677,49 @@ fn load_session_blocking(app: &AppHandle) -> Result<Option<LoadedSession>, AppEr
 mod tests {
     use super::*;
     use crate::state::{NoteLength, ReadingDirection, Scale, SynthMode};
+
+    /// A session saved before the launch quantization existed must load with
+    /// the default (Beat), without a format version bump.
+    #[test]
+    fn session_without_launch_quantize_defaults_to_beat() {
+        let json = r##"{
+            "version": 3,
+            "bpm": 120,
+            "image": { "data": "" },
+            "image_settings": {
+                "grid_slider": 0,
+                "contrast": 0,
+                "brightness": 0,
+                "posterize_levels": null
+            },
+            "synths": []
+        }"##;
+        let file: SessionFile = serde_json::from_str(json).unwrap();
+        assert_eq!(file.launch_quantize, LaunchQuantize::Beat);
+    }
+
+    /// The launch quantization round-trips through a session file.
+    #[test]
+    fn session_launch_quantize_round_trips() {
+        for mode in [
+            LaunchQuantize::Off,
+            LaunchQuantize::Beat,
+            LaunchQuantize::Bar,
+        ] {
+            let json = format!(
+                r#"{{"launch_quantize":"{}"}}"#,
+                match mode {
+                    LaunchQuantize::Off => "off",
+                    LaunchQuantize::Beat => "beat",
+                    LaunchQuantize::Bar => "bar",
+                }
+            );
+            let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+            let parsed: LaunchQuantize =
+                serde_json::from_value(value["launch_quantize"].clone()).unwrap();
+            assert_eq!(parsed, mode);
+        }
+    }
 
     /// A session saved before velocity_max existed must load with the
     /// default (127), not fail or fall back to 0. (The zone rides along
@@ -903,6 +963,7 @@ mod tests {
         SessionFile {
             version: SESSION_VERSION,
             bpm: 120,
+            launch_quantize: LaunchQuantize::default(),
             image: SessionImage {
                 data: String::new(),
             },

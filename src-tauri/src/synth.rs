@@ -1,11 +1,12 @@
 use crate::config::ConfigState;
 use crate::error::{err, AppError};
 use crate::locks::MutexExt;
-use crate::metronome::remapped_cursor;
+use crate::metronome::{remapped_cursor, MetronomeState};
 use crate::midi::VolumeEvent;
 use crate::state::{
-    normalize_note_lengths, normalize_tempo_ratio, AccentLevel, ImageState, MidiState, NoteLength,
-    ProgramState, ReadingDirection, Scale, Synth, SynthMode, SynthState, SynthView, Zone,
+    normalize_note_lengths, normalize_tempo_ratio, AccentLevel, ImageState, LaunchQuantize,
+    MidiState, NoteLength, ProgramState, ReadingDirection, Scale, Synth, SynthMode,
+    SynthPlaybackState, SynthState, SynthStateEvent, SynthView, Zone,
 };
 use crate::zone::normalize_zones;
 use std::collections::{HashMap, HashSet};
@@ -197,19 +198,29 @@ pub fn reset_synth_cursor(id: u32, state: State<SynthState>) -> Result<(), AppEr
     }
 }
 
+/// Starts a synthesizer, honoring the global launch quantization: `Off`
+/// plays on the metronome's next wake (immediate), while `Beat`/`Bar` arm
+/// the synth, which the metronome thread releases on the next beat / downbeat
+/// (see `should_launch`). Either way the first pixel is played by the launch
+/// gate, not here. The resulting state is pushed to the UI through
+/// `synth-state` (armed = blinking play button).
 #[tauri::command]
 pub fn start_synth(
     id: u32,
+    app: AppHandle,
+    metronome: State<'_, MetronomeState>,
     state: State<SynthState>,
     midi_state: State<MidiState>,
 ) -> Result<(), AppError> {
+    let mode = metronome.launch_quantize();
     let mut synths = state.synths.lock_safe();
     match synths.get_mut(&id) {
         Some(synth) => {
-            synth.playback.playing = true;
-            // The first note waits for the next master beat so playback
-            // starts in phase with the metronome (see the metronome thread)
+            // The first pixel waits for the launch gate: Off releases it on
+            // the next wake, Beat/Bar on the next beat / downbeat.
             synth.playback.start_pending = true;
+            synth.playback.playing = mode == LaunchQuantize::Off;
+            synth.playback.armed = mode != LaunchQuantize::Off;
             // Clear a deferred end-of-sequence stop (a one-shot synth that
             // finished, or a manual step to the end) so the restart plays.
             // The cursor is preserved: playback resumes where it stopped —
@@ -222,21 +233,39 @@ pub fn start_synth(
                 synth.config.channel,
                 synth.config.volume,
             );
+            let playback_state = synth.playback_state();
+            let _ = app.emit(
+                "synth-state",
+                SynthStateEvent {
+                    id,
+                    state: playback_state,
+                },
+            );
             Ok(())
         }
         None => Err(synth_not_found(id)),
     }
 }
 
+/// Stops a synthesizer immediately, cancelling an armed launch too, and
+/// pushes the resulting stopped state to the UI.
 #[tauri::command]
 pub fn stop_synth(
     id: u32,
+    app: AppHandle,
     state: State<SynthState>,
     midi_state: State<MidiState>,
 ) -> Result<(), AppError> {
     let mut synths = state.synths.lock_safe();
     let synth = synths.get_mut(&id).ok_or_else(|| synth_not_found(id))?;
     synth.stop_playback(&midi_state);
+    let _ = app.emit(
+        "synth-state",
+        SynthStateEvent {
+            id,
+            state: SynthPlaybackState::Stopped,
+        },
+    );
     Ok(())
 }
 
@@ -267,21 +296,34 @@ pub fn panic_all_state(state: &SynthState, midi_state: &MidiState) {
     }
 }
 
-/// Kill switch: stops every synthesizer and silences every note (see
-/// [`panic_all_state`]).
+/// Kill switch: stops every synthesizer (armed ones included) and silences
+/// every note (see [`panic_all_state`]). Pushes the stopped state of every
+/// synth to the UI so no card is left shown as armed or playing.
 #[tauri::command]
-pub fn panic_all(state: State<SynthState>, midi_state: State<MidiState>) {
+pub fn panic_all(app: AppHandle, state: State<SynthState>, midi_state: State<MidiState>) {
+    let ids: Vec<u32> = state.synths.lock_safe().keys().copied().collect();
     panic_all_state(&state, &midi_state);
+    for id in ids {
+        let _ = app.emit(
+            "synth-state",
+            SynthStateEvent {
+                id,
+                state: SynthPlaybackState::Stopped,
+            },
+        );
+    }
 }
 
+/// Playback state of a synthesizer ("stopped", "armed" or "playing"), used
+/// by the UI to decide between starting, cancelling the launch and stopping.
 #[tauri::command]
-pub fn is_synth_playing(id: u32, state: State<SynthState>) -> bool {
+pub fn synth_playback_state(id: u32, state: State<SynthState>) -> SynthPlaybackState {
     state
         .synths
         .lock_safe()
         .get(&id)
-        .map(|s| s.playback.playing)
-        .unwrap_or(false)
+        .map(|s| s.playback_state())
+        .unwrap_or(SynthPlaybackState::Stopped)
 }
 
 /// Sets the synth's MIDI channel (0-15). The notes sounding on the old

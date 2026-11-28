@@ -3,6 +3,7 @@
 
 import { t } from '../core/i18n.js';
 import { clampBpm } from '../core/utils.js';
+import { appEvents } from '../core/state.js';
 
 // Metronome domain: the BPM controls, the tick LED and the DAW-sync /
 // master-clock badge. Owns the BPM input; the caller injects the
@@ -25,6 +26,8 @@ export function createMetronome({ isPlaying, updateZonesLabels, onIdle }) {
 
     const bpmInput = document.querySelector('#bpm-input');
     const metronomeLed = document.querySelector('#metronome-led');
+    const beatRing = document.querySelector('.beat-ring');
+    const denominatorSelect = document.querySelector('#time-signature-denominator');
     const syncBadge = document.querySelector('#sync-badge');
     const bpmMinus10 = document.querySelector('#bpm-minus10');
     const bpmMinus5 = document.querySelector('#bpm-minus5');
@@ -143,10 +146,137 @@ export function createMetronome({ isPlaying, updateZonesLabels, onIdle }) {
         }
     });
 
-    // Listens to ticks emitted by the Rust backend
-    listen('metronome-tick', () => {
+    // ---- Circular beat indicator ----
+    // The ring around the LED is divided into `beats_per_bar` equal portions
+    // (one per beat unit of the time signature): a countdown that empties as
+    // the measure elapses — the current beat is highlighted, then the
+    // portions disappear one after another and the ring fills again on the
+    // next downbeat. Plain SVG, no dependency. The count follows the
+    // signature (3/4 → 3 portions, 7/8 → 7 portions).
+    const SVG_NS = 'http://www.w3.org/2000/svg';
+    const RING_OUTER = 47;
+    const RING_INNER = 31;
+    let beatsPerBar = 4;
+
+    // Point of the ring at `angle` (radians) and radius `r`, in the 0..100
+    // viewBox (center 50,50). 0 rad points right; -π/2 is the top, where the
+    // downbeat portion starts.
+    function ringPoint(angle, radius) {
+        return [50 + radius * Math.cos(angle), 50 + radius * Math.sin(angle)];
+    }
+
+    function arcTo(radius, largeArc, sweep, [x, y]) {
+        return `A ${radius} ${radius} 0 ${largeArc} ${sweep} ${x.toFixed(3)} ${y.toFixed(3)}`;
+    }
+
+    // Donut portion between the angles a0 and a1: outer arc, inner arc back
+    // (opposite sweep → the inner edge is a hole under the nonzero rule).
+    function sectorPath(a0, a1) {
+        const largeArc = a1 - a0 > Math.PI ? 1 : 0;
+        const [ox0, oy0] = ringPoint(a0, RING_OUTER);
+        const [ox1, oy1] = ringPoint(a1, RING_OUTER);
+        const [ix1, iy1] = ringPoint(a1, RING_INNER);
+        const [ix0, iy0] = ringPoint(a0, RING_INNER);
+        return `M ${ox0.toFixed(3)} ${oy0.toFixed(3)} `
+            + `${arcTo(RING_OUTER, largeArc, 1, [ox1, oy1])} `
+            + `L ${ix1.toFixed(3)} ${iy1.toFixed(3)} `
+            + `${arcTo(RING_INNER, largeArc, 0, [ix0, iy0])} Z`;
+    }
+
+    // Full annulus (a single beat per bar): two half arcs per edge.
+    function fullRingPath() {
+        const [ox0, oy0] = ringPoint(-Math.PI / 2, RING_OUTER);
+        const [oxm, oym] = ringPoint(Math.PI / 2, RING_OUTER);
+        const [ix0, iy0] = ringPoint(-Math.PI / 2, RING_INNER);
+        const [ixm, iym] = ringPoint(Math.PI / 2, RING_INNER);
+        return `M ${ox0.toFixed(3)} ${oy0.toFixed(3)} `
+            + `A ${RING_OUTER} ${RING_OUTER} 0 1 1 ${oxm.toFixed(3)} ${oym.toFixed(3)} `
+            + `A ${RING_OUTER} ${RING_OUTER} 0 1 1 ${ox0.toFixed(3)} ${oy0.toFixed(3)} Z `
+            + `M ${ix0.toFixed(3)} ${iy0.toFixed(3)} `
+            + `A ${RING_INNER} ${RING_INNER} 0 1 0 ${ixm.toFixed(3)} ${iym.toFixed(3)} `
+            + `A ${RING_INNER} ${RING_INNER} 0 1 0 ${ix0.toFixed(3)} ${iy0.toFixed(3)} Z`;
+    }
+
+    function renderBeatRing(count) {
+        if (!beatRing) return;
+        const step = (2 * Math.PI) / count;
+        const segments = Array.from({ length: count }, (_, i) => {
+            const path = document.createElementNS(SVG_NS, 'path');
+            const a0 = -Math.PI / 2 + i * step;
+            path.setAttribute('d', count === 1 ? fullRingPath() : sectorPath(a0, a0 + step));
+            path.setAttribute('class', i === 0 ? 'beat-segment downbeat' : 'beat-segment');
+            return path;
+        });
+        beatRing.replaceChildren(...segments);
+    }
+
+    // Duration of one beat unit, in ms: the engine tempo counts quarter
+    // notes, and one beat unit is the signature's denominator note (4/4 → a
+    // quarter, 7/8 → an eighth). Paces the fade-out of the current portion so
+    // it reaches zero exactly when the next beat starts.
+    function beatDurationMs() {
+        const denominator = Number(denominatorSelect?.value) || 4;
+        return (60000 / getBpm()) * (4 / denominator);
+    }
+
+    // Countdown: the portions before the current beat are gone (they have
+    // elapsed), the current beat is highlighted and fades out over its own
+    // duration, and the later ones stay lit.
+    function highlightBeat(beatInBar) {
+        if (!beatRing) return;
+        const beatMs = beatDurationMs();
+        beatRing.querySelectorAll('.beat-segment').forEach((segment, i) => {
+            segment.classList.toggle('gone', i < beatInBar);
+            if (i === beatInBar) {
+                segment.classList.add('current');
+                // (Re)start the fade-out timed to the beat: setting the
+                // duration then re-adding `.fading` (with a reflow between)
+                // restarts it on every beat.
+                segment.style.animationDuration = `${beatMs}ms`;
+                segment.classList.remove('fading');
+                void segment.getBoundingClientRect();
+                segment.classList.add('fading');
+            } else {
+                segment.classList.remove('current', 'fading');
+                segment.style.animationDuration = '';
+            }
+        });
+    }
+
+    // Sets the number of portions from the time signature (also fed by every
+    // beat event, so it self-corrects live). Builds the ring at rest: every
+    // portion visible, with no highlight nor fade until the first beat.
+    function setBeatsPerBar(count) {
+        const n = Math.max(1, Math.min(16, Math.round(Number(count) || 4)));
+        if (n === beatsPerBar && beatRing?.childElementCount === n) return;
+        beatsPerBar = n;
+        renderBeatRing(n);
+        beatRing?.querySelectorAll('.beat-segment').forEach(segment => {
+            segment.classList.remove('current', 'fading', 'gone');
+            segment.style.animationDuration = '';
+        });
+    }
+
+    // A flash of every armed synth's play button, on the beat: the blinking
+    // follows the real beat, not a free-running CSS animation.
+    function pulseArmedSynths() {
+        document
+            .querySelectorAll('.synth-play.armed, .synth-tab-play.armed')
+            .forEach(btn => {
+                btn.classList.add('pulse');
+                setTimeout(() => btn.classList.remove('pulse'), 120);
+            });
+    }
+
+    // Listens to the beat events emitted by the Rust backend: one per beat
+    // of the time signature, carrying the position in the measure.
+    listen('metronome-tick', (event) => {
+        const { beat_in_bar: beatInBar, beats_per_bar: beats } = event.payload ?? {};
+        if (Number.isFinite(beats)) setBeatsPerBar(beats);
+        if (Number.isFinite(beatInBar)) highlightBeat(beatInBar);
         metronomeLed.classList.add('active');
         setTimeout(() => metronomeLed.classList.remove('active'), 100);
+        pulseArmedSynths();
     });
 
     // DAW sync and master clock: while an external MIDI clock (24 ppqn)
@@ -172,6 +302,7 @@ export function createMetronome({ isPlaying, updateZonesLabels, onIdle }) {
         markStopped: () => { running = false; },
         isRunning: () => running,
         refreshBadge,
+        setBeatsPerBar,
     };
 }
 
@@ -324,4 +455,36 @@ export function createTimeSignature({ onSignatureChange } = {}) {
     denominatorSelect.addEventListener('change', push);
 
     return { hydrate, getValue: currentValue };
+}
+
+// Global launch quantization: the segmented Off | Beat | Bar control of the
+// synth-list header. The backend owns the value (engine state, saved with
+// the session); this only reflects it and pushes the user's choice. Changing
+// it is a session change, so it marks the session dirty.
+
+const LAUNCH_MODES = ['off', 'beat', 'bar'];
+
+export function createLaunchQuantize() {
+    const { invoke } = window.__TAURI__.core;
+
+    const buttons = Array.from(document.querySelectorAll('.launch-quantize-btn'));
+    let mode = 'beat';
+
+    // Reflects a mode without pushing it back (startup, session load).
+    function hydrate(value) {
+        mode = LAUNCH_MODES.includes(value) ? value : 'beat';
+        buttons.forEach(btn => btn.classList.toggle('active', btn.dataset.mode === mode));
+    }
+
+    function select(next) {
+        if (!LAUNCH_MODES.includes(next) || next === mode) return;
+        hydrate(next);
+        appEvents.emit('session-dirty');
+        invoke('set_launch_quantize', { mode: next })
+            .catch(err => console.error('Error in set_launch_quantize:', err));
+    }
+
+    buttons.forEach(btn => btn.addEventListener('click', () => select(btn.dataset.mode)));
+
+    return { hydrate, getMode: () => mode };
 }

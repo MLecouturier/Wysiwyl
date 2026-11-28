@@ -475,6 +475,20 @@ $synth-title-width: 16rem;
 
         &:hover { background-color: $color-stop-hover; }
     }
+
+    // Armed (waiting for its launch boundary): amber, pulsed on every beat
+    // by the metronome beat event. Distinct from the red playing state.
+    &.armed {
+        background-color: $color-selective;
+        color: #fff;
+
+        &:hover { background-color: $color-selective-hover; }
+
+        &.pulse {
+            background-color: #fff;
+            color: $color-selective;
+        }
+    }
 }
 
 // Channel volume, on the playback header

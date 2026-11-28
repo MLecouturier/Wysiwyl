@@ -14,8 +14,9 @@ use crate::gate::{GateOff, GateState};
 use crate::locks::MutexExt;
 use crate::midi;
 use crate::state::{
-    AccentLevel, AccentLevels, CachedSequence, ImageState, MidiState, NoteLength, ReadingDirection,
-    RowRun, Scale, Synth, SynthConfig, SynthMode, SynthState, TimeSignature, Zone,
+    AccentLevel, AccentLevels, CachedSequence, ImageState, LaunchQuantize, MidiState, NoteLength,
+    ReadingDirection, RowRun, Scale, Synth, SynthConfig, SynthMode, SynthPlaybackState, SynthState,
+    SynthStateEvent, TimeSignature, Zone,
 };
 
 // ---------------------------------------------------------------------------
@@ -87,6 +88,21 @@ pub struct PixelUpcoming {
 #[derive(Serialize, Clone)]
 pub struct SynthStopped {
     pub id: u32,
+}
+
+/// Payload of `metronome-tick`: the beat the metronome has just reached,
+/// reported on every beat of the current time signature (the beat unit is
+/// the signature's denominator note). `beat` is the absolute beat counter
+/// since the metronome started (or engaged an external clock — see
+/// `run_metronome`), `beat_in_bar` the 0-based slot in the measure and
+/// `downbeat` whether it is beat 1. Drives the LED, the circular beat
+/// indicator and the blinking of the armed synths.
+#[derive(Serialize, Clone)]
+pub struct MetronomeBeat {
+    pub beat: u64,
+    pub beat_in_bar: u64,
+    pub beats_per_bar: u64,
+    pub downbeat: bool,
 }
 
 /// Payload of `metronome-sync`: only the fields relevant to the transition
@@ -793,17 +809,20 @@ struct TickConfig {
     gate_ms: u32,
     time_signature: TimeSignature,
     accent_levels: AccentLevels,
+    launch_quantize: LaunchQuantize,
 }
 
 impl TickConfig {
     fn read(app: &AppHandle) -> Self {
         let config = app.state::<ConfigState>();
         let config = config.config.lock_safe();
+        let launch_quantize = app.state::<MetronomeState>().launch_quantize();
         Self {
             note_range_bounds: config.note_range_bounds,
             gate_ms: config.pizzicato_gate_ms,
             time_signature: config.time_signature,
             accent_levels: config.accent_levels,
+            launch_quantize,
         }
     }
 }
@@ -1287,6 +1306,34 @@ fn accent_slot(signature: TimeSignature, wake: u64) -> usize {
     ((wake % bar_wakes(signature)) / unit) as usize
 }
 
+/// Position of a wake in the measure, for the current signature: its
+/// 0-based beat slot (`beat_in_bar`, the beat unit being the signature's
+/// denominator note) and whether the wake sits exactly on a beat boundary.
+/// The measure is walked from the metronome's absolute origin, exactly like
+/// the accent grid, so every synth shares it. Pure, so the beat math is
+/// unit-tested without the metronome thread.
+fn beat_position(signature: TimeSignature, wake: u64) -> (u64, bool) {
+    let unit = wakes_per_unit(signature).max(1);
+    let beat = wake / unit;
+    (
+        beat % signature.numerator() as u64,
+        wake.is_multiple_of(unit),
+    )
+}
+
+/// Whether a synth waiting for its launch may go at a wake sitting at
+/// `beat_in_bar` (0 = downbeat), `is_beat_boundary` telling whether the wake
+/// is exactly on a beat. `Off` never waits, `Beat` launches on any beat
+/// boundary and `Bar` only on the downbeat. Pure, so the timing policy is
+/// unit-tested without the metronome thread.
+fn should_launch(mode: LaunchQuantize, beat_in_bar: u64, is_beat_boundary: bool) -> bool {
+    match mode {
+        LaunchQuantize::Off => true,
+        LaunchQuantize::Beat => is_beat_boundary,
+        LaunchQuantize::Bar => is_beat_boundary && beat_in_bar == 0,
+    }
+}
+
 /// Velocity multiplier (percent) of the accent sitting at `wake` in the
 /// synth's pattern: 100 (neutral) when the accent is off, when the slot
 /// falls past the signature's numerator, or on a manual step (`wake` None).
@@ -1734,6 +1781,27 @@ fn measured_bpm(clock: &ClockState) -> u32 {
     bpm.clamp(20, 300)
 }
 
+impl LaunchQuantize {
+    /// Compact encoding for the atomic the metronome thread reads on every
+    /// wake (like `ClockMode`, atomics avoid lock contention with the
+    /// timing loop).
+    fn encode(self) -> u8 {
+        match self {
+            LaunchQuantize::Off => 0,
+            LaunchQuantize::Beat => 1,
+            LaunchQuantize::Bar => 2,
+        }
+    }
+
+    fn decode(value: u8) -> Self {
+        match value {
+            0 => LaunchQuantize::Off,
+            2 => LaunchQuantize::Bar,
+            _ => LaunchQuantize::Beat,
+        }
+    }
+}
+
 pub struct MetronomeState {
     /// True while a metronome thread should be running. The thread owning
     /// the current `generation` resets it when it exits.
@@ -1754,6 +1822,10 @@ pub struct MetronomeState {
     /// the names reported by the MIDI input listeners). Rarely read or
     /// written, so a mutex is fine here.
     source: Arc<Mutex<Option<String>>>,
+    /// Global launch quantization, encoded as a u8 (see `LaunchQuantize`):
+    /// read by the metronome thread on every wake and changed by the UI at
+    /// any time.
+    launch_quantize: Arc<AtomicU8>,
 }
 
 impl Default for MetronomeState {
@@ -1765,6 +1837,7 @@ impl Default for MetronomeState {
             clock: ClockState::default(),
             mode: Arc::new(AtomicU8::new(ClockMode::Auto.encode())),
             source: Arc::new(Mutex::new(None)),
+            launch_quantize: Arc::new(AtomicU8::new(LaunchQuantize::default().encode())),
         }
     }
 }
@@ -1785,6 +1858,16 @@ impl MetronomeState {
     /// The input port name the clock sync follows in `Input` mode.
     pub fn clock_source(&self) -> Option<String> {
         self.source.lock_safe().clone()
+    }
+
+    /// Current global launch quantization.
+    pub fn launch_quantize(&self) -> LaunchQuantize {
+        LaunchQuantize::decode(self.launch_quantize.load(Ordering::Relaxed))
+    }
+
+    /// Applies a global launch quantization.
+    pub fn apply_launch_quantize(&self, mode: LaunchQuantize) {
+        self.launch_quantize.store(mode.encode(), Ordering::Relaxed);
     }
 
     /// Whether an incoming clock message from `input_name` should be
@@ -2000,27 +2083,38 @@ fn tick_synth(
         step_ratio,
     });
 
-    // Start sync: the very first note waits for the next master beat
-    // (wake % WAKES_PER_BEAT == 0) so playback begins in phase with the
-    // metronome. With quantize on it waits for the next resync boundary
-    // instead, so the very first step already lands on the cycle-aligned
-    // grid. Nothing is accumulated while waiting; the wake then plays the
-    // first pixel.
+    // Launch gate: a synth just started has not played its first pixel yet
+    // (start_pending). The global launch quantization decides when it may
+    // go: Off plays on this wake, Beat on a beat boundary, Bar on a
+    // downbeat (see `should_launch`). While waiting the synth is armed (the
+    // UI blinks its play button). Nothing is accumulated until the launch;
+    // the releasing wake then plays the first pixel like a regular step.
     if synth.playback.start_pending {
-        let period = if synth.config.quantize {
-            effective_quantize_period(synth.config.tempo_ratio, synth.config.quantize_beats)
-                * WAKES_PER_BEAT
-        } else {
-            WAKES_PER_BEAT
-        };
-        if !wake.is_multiple_of(period) {
+        let (beat_in_bar, is_beat_boundary) = beat_position(tick.time_signature, wake);
+        if !should_launch(tick.launch_quantize, beat_in_bar, is_beat_boundary) {
             return;
         }
         synth.playback.start_pending = false;
+        synth.playback.armed = false;
+        synth.playback.playing = true;
         synth.playback.tempo_accumulator = 0.0;
-        if let Some(length_beats) = step_synth_once(app, synth, image, midi, tick, Some(wake), timing)
+        if let Some(length_beats) =
+            step_synth_once(app, synth, image, midi, tick, Some(wake), timing)
         {
             synth.playback.tempo_accumulator = 1.0 - length_beats;
+        }
+        // Playback transition: tell the UI so the blinking play button turns
+        // into the normal playing state. Guarded: an empty selection makes
+        // the first step stop the synth again (it already emitted
+        // `synth-stopped`), and no "playing" must be reported then.
+        if synth.playback.playing {
+            let _ = app.emit(
+                "synth-state",
+                SynthStateEvent {
+                    id: synth.id,
+                    state: SynthPlaybackState::Playing,
+                },
+            );
         }
         return;
     }
@@ -2072,6 +2166,21 @@ fn tick_synth(
 pub fn set_metronome_bpm(state: tauri::State<MetronomeState>, bpm: u32) {
     let clamped = bpm.clamp(20, 300);
     state.bpm.store(clamped, Ordering::Relaxed);
+}
+
+/// Sets the global launch quantization (see `LaunchQuantize`): applied
+/// live, read by the metronome thread on its next wake. Persisted with the
+/// session (not the config file).
+#[tauri::command]
+pub fn set_launch_quantize(state: tauri::State<MetronomeState>, mode: LaunchQuantize) {
+    state.apply_launch_quantize(mode);
+}
+
+/// The current global launch quantization, for the UI to hydrate its
+/// segmented control at startup.
+#[tauri::command]
+pub fn get_launch_quantize(state: tauri::State<MetronomeState>) -> LaunchQuantize {
+    state.launch_quantize()
 }
 
 /// Sets the metronome's clock mode (and its input source in `Input`
@@ -2190,14 +2299,38 @@ fn run_metronome(
         }
 
         // --- Wake body (shared by all timing sources) ---
-        if wake.is_multiple_of(WAKES_PER_BEAT) {
-            let _ = app.emit("metronome-tick", wake / WAKES_PER_BEAT);
-        }
-
-        // --- Advancing active synths over the image ---
         // The configuration snapshot is read before the image and synth
         // locks: the config lock is never nested under them (locks.rs).
         let tick = TickConfig::read(app);
+
+        // Beat boundary of the current time signature (the beat unit is the
+        // signature's denominator note): report the position in the measure
+        // to the UI. One event per beat, never per wake. The absolute beat
+        // counter follows the master / external clock exactly like the
+        // wakes, so it stays correct across a tempo or signature change.
+        //
+        // In DAW sync mode the counter follows the external clock: the
+        // measure's origin is the moment the metronome engaged the clock
+        // (the sender's Start/Song Position Pointer realigns the grid, but
+        // nothing else does), so `beat_in_bar`/`downbeat` are relative to
+        // that engagement, not to the DAW's absolute song position.
+        let unit = wakes_per_unit(tick.time_signature).max(1);
+        if wake.is_multiple_of(unit) {
+            let beats_per_bar = tick.time_signature.numerator() as u64;
+            let beat = wake / unit;
+            let beat_in_bar = beat % beats_per_bar;
+            let _ = app.emit(
+                "metronome-tick",
+                MetronomeBeat {
+                    beat,
+                    beat_in_bar,
+                    beats_per_bar,
+                    downbeat: beat_in_bar == 0,
+                },
+            );
+        }
+
+        // --- Advancing active synths over the image ---
         let image_state = app.state::<ImageState>();
         let synth_state = app.state::<SynthState>();
         let midi_state = app.state::<MidiState>();
@@ -2209,7 +2342,11 @@ fn run_metronome(
         // re-read live so a tempo change is reflected on the next emission.
         let wake_period = Duration::from_nanos(wake_period_ns(bpm.load(Ordering::Relaxed)));
         let wake_base = Some(WakeBase {
-            base: if clock_mode { Instant::now() } else { pacer.next },
+            base: if clock_mode {
+                Instant::now()
+            } else {
+                pacer.next
+            },
             period: wake_period,
         });
 
@@ -2218,7 +2355,9 @@ fn run_metronome(
         if let Some(image) = image_state.processed.lock_safe().as_ref() {
             let mut synths = synth_state.synths.lock_safe();
             for synth in synths.values_mut() {
-                if synth.playback.playing {
+                // Armed synths (start_pending) are ticked too, so the launch
+                // gate is evaluated on every wake.
+                if synth.playback.playing || synth.playback.start_pending {
                     tick_synth(app, synth, image, &midi_state, tick, wake, wake_base);
                 }
             }
@@ -2499,6 +2638,107 @@ mod tests {
     const BOUNDS: [(u8, u8); 3] = [(21, 47), (48, 71), (72, 108)];
 
     #[test]
+    fn should_launch_off_always_fires() {
+        // Off never waits: the synth goes on the very next wake.
+        for beat_in_bar in 0..7u64 {
+            assert!(should_launch(LaunchQuantize::Off, beat_in_bar, true));
+            assert!(should_launch(LaunchQuantize::Off, beat_in_bar, false));
+        }
+    }
+
+    #[test]
+    fn should_launch_beat_waits_for_a_beat_boundary() {
+        assert!(should_launch(LaunchQuantize::Beat, 0, true));
+        assert!(should_launch(LaunchQuantize::Beat, 3, true));
+        // A wake inside a beat is not a launch point
+        assert!(!should_launch(LaunchQuantize::Beat, 3, false));
+    }
+
+    #[test]
+    fn should_launch_bar_waits_for_the_downbeat() {
+        assert!(should_launch(LaunchQuantize::Bar, 0, true));
+        assert!(!should_launch(LaunchQuantize::Bar, 1, true));
+        assert!(!should_launch(LaunchQuantize::Bar, 0, false));
+    }
+
+    #[test]
+    fn beat_position_follows_the_time_signature() {
+        let sig = TimeSignature::FourFour;
+        let unit = wakes_per_unit(sig);
+        assert_eq!(unit, 12); // quarter-note beats
+        for beat in 0..sig.numerator() as u64 {
+            for w in 0..unit {
+                let wake = beat * unit + w;
+                let (beat_in_bar, boundary) = beat_position(sig, wake);
+                assert_eq!(beat_in_bar, beat, "wake {wake}");
+                assert_eq!(boundary, w == 0, "wake {wake}");
+            }
+        }
+        // Wraps back to the downbeat one bar later
+        assert_eq!(beat_position(sig, 4 * unit), (0, true));
+    }
+
+    #[test]
+    fn launch_quantization_counts_one_beat_per_beat_and_one_bar_per_bar() {
+        // Across several signatures (including a compound 7/8), a full bar
+        // of wakes must fire Beat once per beat, Bar once per bar and Off
+        // on every wake.
+        for sig in [
+            TimeSignature::FourFour,
+            TimeSignature::ThreeFour,
+            TimeSignature::SevenEight,
+        ] {
+            let bar = bar_wakes(sig);
+            let mut beat_fires = 0u64;
+            let mut bar_fires = 0u64;
+            let mut off_fires = 0u64;
+            for wake in 0..bar {
+                let (beat_in_bar, boundary) = beat_position(sig, wake);
+                if should_launch(LaunchQuantize::Beat, beat_in_bar, boundary) {
+                    beat_fires += 1;
+                }
+                if should_launch(LaunchQuantize::Bar, beat_in_bar, boundary) {
+                    bar_fires += 1;
+                }
+                if should_launch(LaunchQuantize::Off, beat_in_bar, boundary) {
+                    off_fires += 1;
+                }
+            }
+            assert_eq!(
+                beat_fires,
+                sig.numerator() as u64,
+                "beat launches for {sig:?}"
+            );
+            assert_eq!(bar_fires, 1, "bar launches for {sig:?}");
+            assert_eq!(off_fires, bar, "off launches for {sig:?}");
+        }
+    }
+
+    #[test]
+    fn a_fresh_metronome_launches_every_mode_on_its_first_wake() {
+        // The metronome starts on beat 1 (wake 0): an armed synth goes at
+        // once whatever the mode, which defines the measure's first beat.
+        for sig in [
+            TimeSignature::FourFour,
+            TimeSignature::ThreeFour,
+            TimeSignature::SevenEight,
+        ] {
+            let (beat_in_bar, boundary) = beat_position(sig, 0);
+            assert_eq!((beat_in_bar, boundary), (0, true), "wake 0 for {sig:?}");
+            for mode in [
+                LaunchQuantize::Off,
+                LaunchQuantize::Beat,
+                LaunchQuantize::Bar,
+            ] {
+                assert!(
+                    should_launch(mode, beat_in_bar, boundary),
+                    "{mode:?} at wake 0"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn wakes_until_next_step_follows_the_step_rate() {
         // One step per beat (ratio 1.0): a full beat = 12 wakes
         assert_eq!(wakes_until_next_step(0.0, 1.0), 12);
@@ -2551,16 +2791,10 @@ mod tests {
     fn next_step_announcement_skips_the_one_shot_end() {
         // End of a one-shot sequence: no pixel is played next, no announcement
         let now = Instant::now();
-        assert!(next_step_announcement(
-            true,
-            0.0,
-            1.0,
-            now,
-            Duration::from_millis(40),
-            0.0,
-            now
-        )
-        .is_none());
+        assert!(
+            next_step_announcement(true, 0.0, 1.0, now, Duration::from_millis(40), 0.0, now)
+                .is_none()
+        );
     }
 
     #[test]

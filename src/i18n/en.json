@@ -95,7 +95,11 @@
     "playAllLabel": "Play All",
     "stopAllLabel": "Pause All",
     "panic": "Kill switch: stop everything and cut all notes",
-    "add": "Add a synthesizer"
+    "add": "Add a synthesizer",
+    "launchQuantize": "Launch quantization: a started synth waits for the next beat (Beat) or bar (Bar) before its first note; Off starts immediately.",
+    "launchOff": "Off",
+    "launchBeat": "Beat",
+    "launchBar": "Bar"
   },
   "config": {
     "openFile": "Open the configuration file (applies on restart)",

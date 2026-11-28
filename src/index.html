@@ -288,7 +288,10 @@
                                                 <button id="bpm-plus10" class="bpm-step" title="+10 BPM">+10</button>
                                             </div>
                                         </div>
-                                        <div id="metronome-led" class="metronome-led"></div>
+                                        <div class="metronome-beat">
+                                            <svg class="beat-ring" viewBox="0 0 100 100" aria-hidden="true"></svg>
+                                            <div id="metronome-led" class="metronome-led"></div>
+                                        </div>
                                     </div>
 
                                     <div class="metronome-clock">
@@ -327,6 +330,11 @@
                                 </button>
                                 <button id="panic-btn" class="synth-list-action synth-list-action-stop" data-i18n-title="synthList.panic"><span class="material-symbols-outlined" aria-hidden="true">skull</span></button>
                                 <div class="flex-fill"></div>
+                                <div class="launch-quantize" role="group" data-i18n-title="synthList.launchQuantize" data-i18n-aria-label="synthList.launchQuantize">
+                                    <button type="button" class="launch-quantize-btn" data-mode="off" data-i18n="synthList.launchOff"></button>
+                                    <button type="button" class="launch-quantize-btn" data-mode="beat" data-i18n="synthList.launchBeat"></button>
+                                    <button type="button" class="launch-quantize-btn" data-mode="bar" data-i18n="synthList.launchBar"></button>
+                                </div>
                                 <button id="add-synth-btn" class="synth-list-action" data-i18n-title="synthList.add"><span class="material-symbols-outlined" aria-hidden="true">add</span></button>
                             </div>
                         </div>

@@ -141,6 +141,62 @@ $metronome-led-transition: .05s ease;
     }
 }
 
+// Circular beat indicator: the beat LED, ringed by one portion per beat unit
+// of the time signature (built by js/audio/metronome.js from the beat
+// events). It is a countdown: the current beat is highlighted, the elapsed
+// portions disappear one after another, and the ring fills again on the next
+// downbeat. The count follows the signature (3/4 → 3 portions, 7/8 → 7).
+.metronome-beat {
+    position: relative;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 3rem;
+    height: 3rem;
+}
+
+.beat-ring {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+}
+
+// Only the highlight brightness eases in; the disappearance itself is carried
+// by the `.fading` animation (and the refill at the downbeat is instant).
+$beat-segment-transition: .15s ease;
+
+.beat-segment {
+    fill: $metronome-led-on;
+    // Border around each portion in the metronome panel's background grey
+    // (%panel = $color-bg-light), so the portions read as separated wedges
+    // and the beat count is visible. The width is a viewBox unit (the ring is
+    // 100 units wide), thick enough to stay visible at the LED's size.
+    stroke: $color-bg-light;
+    stroke-width: 4;
+    stroke-linejoin: round;
+    transition: filter $beat-segment-transition;
+
+    // Beat 1 (downbeat): orange, distinct from the green beats
+    &.downbeat { fill: $color-selective; }
+
+    // The beat currently sounding: brighter than the remaining portions
+    &.current { filter: brightness(1.55); }
+
+    // Fade-out of the current portion over its own beat, from the beat that
+    // starts it to the next one (duration set inline from the tempo)
+    &.fading { animation: beat-fade linear forwards; }
+
+    // Already elapsed: the portion has disappeared (instant)
+    &.gone { opacity: 0; }
+}
+
+@keyframes beat-fade {
+    from { opacity: 1; }
+    to { opacity: 0; }
+}
+
 // Clock source row: the metronome's timing master (internal, auto sync,
 // one input port, or master broadcast) and, in "Source…" mode, the input
 // port whose clock is followed

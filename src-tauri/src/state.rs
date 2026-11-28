@@ -14,6 +14,43 @@ pub enum SynthMode {
     Polyphonic,
 }
 
+/// Launch quantization of the synthesizers: a single global setting (never
+/// per synth) deciding when a synth that has just been started plays its
+/// first pixel. `Off` starts at once, `Beat` waits for the next beat of the
+/// metronome and `Bar` for the next downbeat (beat 1 of the measure). The
+/// measure is the global time signature's. Saved with the session, not the
+/// config file.
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum LaunchQuantize {
+    /// Start immediately, on the metronome's next wake.
+    Off,
+    /// Start on the next beat of the metronome.
+    #[default]
+    Beat,
+    /// Start on the next downbeat (beat 1 of the measure).
+    Bar,
+}
+
+/// Playback state of a synthesizer as exposed to the UI: `Stopped`, `Armed`
+/// (waiting for its launch boundary, the play button blinks) or `Playing`.
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Debug)]
+#[serde(rename_all = "lowercase")]
+pub enum SynthPlaybackState {
+    Stopped,
+    Armed,
+    Playing,
+}
+
+/// Payload of the `synth-state` event: the playback state of one synth, so
+/// the frontend reflects it (armed = blinking play button) instead of
+/// guessing the timing.
+#[derive(Serialize, Clone)]
+pub struct SynthStateEvent {
+    pub id: u32,
+    pub state: SynthPlaybackState,
+}
+
 /// Selection zone model: exact connected components of grid cells
 /// (see the `zone` module). A synth's selection is a list of disjoint
 /// connected zones; empty = nothing selected.
@@ -446,12 +483,26 @@ impl Synth {
     }
 
     /// Stops the playback (playhead state reset) and releases its notes.
+    /// Also cancels a pending launch: an armed synth never survives a stop
+    /// (nor a panic).
     pub fn stop_playback(&mut self, midi: &MidiState) {
         self.playback.playing = false;
+        self.playback.armed = false;
         self.playback.end_pending = false;
         self.playback.tempo_accumulator = 0.0;
         self.playback.start_pending = false;
         self.release_notes(midi);
+    }
+
+    /// Playback state exposed to the UI (see [`SynthPlaybackState`]).
+    pub fn playback_state(&self) -> SynthPlaybackState {
+        if self.playback.playing {
+            SynthPlaybackState::Playing
+        } else if self.playback.armed {
+            SynthPlaybackState::Armed
+        } else {
+            SynthPlaybackState::Stopped
+        }
     }
 }
 
@@ -650,25 +701,27 @@ pub fn normalize_note_lengths(lengths: &[NoteLength]) -> Vec<NoteLength> {
 #[derive(Clone)]
 pub struct Playback {
     pub playing: bool,                           // currently playing
-    pub cursor: usize,                           // index into the zone pixel sequence
-    pub note: u8,                                // current fixed MIDI note (monophonic)
-    pub play_forward: bool,                      // travel direction (flipped by back-and-forth)
-    pub end_pending: bool,                       // end of a non-looping sequence reached
-    pub tempo_accumulator: f64,                  // beats accumulated toward the next step
-    pub active_note: bool, // false if the current pixel is out of range (muted)
-    pub note_is_on: bool,  // true if a MIDI note is currently sounding
-    pub velocity: u8,      // current MIDI velocity (1-127)
+    pub armed: bool,        // waiting for its launch boundary (play button blinks)
+    pub cursor: usize,      // index into the zone pixel sequence
+    pub note: u8,           // current fixed MIDI note (monophonic)
+    pub play_forward: bool, // travel direction (flipped by back-and-forth)
+    pub end_pending: bool,  // end of a non-looping sequence reached
+    pub tempo_accumulator: f64, // beats accumulated toward the next step
+    pub active_note: bool,  // false if the current pixel is out of range (muted)
+    pub note_is_on: bool,   // true if a MIDI note is currently sounding
+    pub velocity: u8,       // current MIDI velocity (1-127)
     pub poly_voices: [ChannelVoice; 3], // independent MIDI state per R/G/B channel
     pub note_generation: u32, // bumped on each articulation (stale Note Off guard)
     pub cached_sequence: Option<CachedSequence>, // derived pixel sequence cache
-    pub start_pending: bool, // first note waits for the next master beat (start sync)
-    pub upcoming_seq: u64,   // monotonic counter of the `synth-pixel-upcoming` announcements
+    pub start_pending: bool, // first step not played yet (launch pending; see `should_launch`)
+    pub upcoming_seq: u64,  // monotonic counter of the `synth-pixel-upcoming` announcements
 }
 
 impl Default for Playback {
     fn default() -> Self {
         Self {
             playing: false,
+            armed: false,
             cursor: 0,
             note: 69, // A4
             play_forward: true,

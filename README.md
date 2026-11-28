@@ -28,6 +28,7 @@ Create any number of independent synthesizers, each reading the grid on its own 
 - **Silences** — Shift toggles a manual silence on the selected pixels (still travelled by the playhead, silent), Alt+Shift removes it. A 16-step **silence pattern** can be stamped by clicking a zone (optionally repeated).
 - **Reading** — direction (left→right, right→left, top→bottom, bottom→top, two spirals); a "sort" toggle merges the zones into one sweep by absolute position.
 - **Transport** — play/stop, rewind, step forward; loop, back-and-forth or one-shot; per-synth tempo ratio (1/2 … 3/2 of the metronome).
+- **Launch quantization** — a global **Off / Beat / Bar** setting (next to the kill switch): a started synth waits for the next beat or bar of the metronome before its first note, its play button blinking on the beat while it is *armed*; **Off** starts immediately. Saved with the session. A second click on an armed synth cancels it; stop, the kill switch and the end of a one-shot always fire at once.
 - **Note lengths** — sixteenth, eighth, quarter, half, whole: the pixel's brightness picks its length; reverse, ternary (triplets), sustained/pizzicato articulation and legato are available.
 - **Timing** — quantize to the master tempo (resync period 1–8 beats) and chance (per-step play probability).
 - **Accent** — per-beat velocity levels (off / weak / normal / strong), multiplied by global values from the config file.
@@ -46,6 +47,7 @@ Create any number of independent synthesizers, each reading the grid on its own 
 ### Using Wysiwyl with a DAW
 - **Virtual port** "Wysiwyl" (output): appears as a MIDI input in the DAW to drive a software instrument. Windows has no virtual ports — use loopMIDI instead.
 - **Tempo sync**: the app also exposes a virtual input port; send the DAW's MIDI clock to it and the metronome follows the project tempo ("Sync DAW" badge, controls disabled, sixteenth-note alignment). Ableton Live on macOS ignores virtual ports: use the IAC bus.
+- **Launch quantization in sync mode**: the beat counter follows the incoming clock, so the measure's origin is the moment the app engaged the clock — there is no Song Position Pointer, and the bar is therefore not aligned on the DAW's absolute song position. A synth armed for the "next bar" starts on the first downbeat after the sync engaged.
 - **Clock source** (config `clock_mode`): *Internal* (own tempo only), *Auto* (default, follows any incoming clock), *Source…* (only the chosen input), *Master* (broadcasts its own 24 ppqn clock to every output while playing).
 - The transport always stays in Wysiwyl; the clock only carries the tempo (and, in master mode, the play state).
 
