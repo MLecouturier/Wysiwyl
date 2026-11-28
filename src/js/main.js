@@ -34,6 +34,7 @@ import {
     resizeOverlay, drawSynthPixel, eraseSynthCursor, clearOverlay,
     computeMuteCells, redrawAllHighlights, redrawAllCursors,
 } from './synth/selection.js';
+import { createCursorLead } from './synth/cursor-lead.js';
 import {
     zoneState, cancelZonePicking, zoneDragRect,
     cellFromClientPoint, imagePointFromClient, drawZonePreview, scheduleLassoPreview,
@@ -994,6 +995,22 @@ document.fonts.load('16px "Noto Music"', MUTE_GLYPH)
     .catch(err => console.error('Error while loading the Noto Music font:', err));
 document.fonts.ready.then(() => redrawAllHighlights());
 
+// ---------- Cursor lead ----------
+// Draws the playhead slightly ahead of the sound: the backend announces the
+// next pixel (`synth-pixel-upcoming`) with its due instant, the scheduler
+// paints it at `due - cursor_lead_ms` (see synth/cursor-lead.js). The lead is
+// 0 (disabled) until the config arrives, so the display matches the tick.
+// The scheduled draw is idempotent: it skips when the display already shows
+// the announced pixel (the authoritative tick may have corrected it first).
+const cursorLead = createCursorLead({
+    draw: (id, cursor, w, h) => {
+        const grid = synthCursorGrid.get(id);
+        if (synthCursors.get(id) === cursor && grid && grid.w === w && grid.h === h) return;
+        drawSynthPixel(id, cursor, false, w, h);
+    },
+});
+cursorLead.clock.start();
+
 // ---------- Metronome ----------
 const metronome = createMetronome({
     isPlaying: anySynthPlaying,
@@ -1001,6 +1018,7 @@ const metronome = createMetronome({
     // Cleanup run once the metronome goes idle: restore the highlights
     // hidden during playback and erase the leftover cursors.
     onIdle: () => {
+        cursorLead.cancelAll(); // no pending draw survives the stop
         synthListBody.querySelectorAll('.synth-block').forEach(el => {
             const sid = Number(el.dataset.synthId);
             eraseSynthCursor(sid);
@@ -1127,6 +1145,7 @@ const panicBtn = document.querySelector('#panic-btn');
 panicBtn.addEventListener('click', async () => {
     // Whatever happens, the UI ends up stopped: a kill switch must never
     // leave a card shown as playing
+    cursorLead.cancelAll();
     await invoke('panic_all').catch(err => console.error('Error in panic_all:', err));
     synthListBody.querySelectorAll('.synth-block').forEach(el => {
         setSynthPlaying(Number(el.dataset.synthId), false);
@@ -1140,6 +1159,7 @@ panicBtn.addEventListener('click', async () => {
 // Automatic stop at the end of the sequence (non-loop mode)
 window.__TAURI__.event.listen('synth-stopped', async (event) => {
     const { id } = event.payload;
+    cursorLead.cancel(id); // drop any pending announcement for this synth
     const el = synthElementById(id);
     if (!el) return;
     setSynthPlaying(id, false);
@@ -1192,6 +1212,16 @@ window.__TAURI__.event.listen('synth-pixel-tick', (event) => {
     // Nothing here comes from user input (numbers + generated note names).
     pixelInfoEl.innerHTML = t('synth.pixelInfo', { cursor, rgb: rgbStr, tsl: tslStr, noteInfo, velocity: velocity ?? '-' });
     pixelInfoEl.dataset.hasTick = '1';
-    drawSynthPixel(id, cursor, muted, tickW, tickH);
+
+    // The tick is authoritative: it supersedes any pending announcement for
+    // this synth and corrects the display when the shown pixel differs from
+    // the played one (live edit, lost announcement, muted-flag change). When
+    // the lead already painted the exact pixel, the redraw is skipped.
+    cursorLead.cancel(id);
+    const shownGrid = synthCursorGrid.get(id);
+    const alreadyShown = synthCursors.get(id) === cursor
+        && synthCursorMuted.get(id) === !!muted
+        && shownGrid && shownGrid.w === tickW && shownGrid.h === tickH;
+    if (!alreadyShown) drawSynthPixel(id, cursor, muted, tickW, tickH);
 });
 
