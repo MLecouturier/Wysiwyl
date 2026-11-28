@@ -1110,9 +1110,13 @@ fn step_synth_once(
     // Nothing is announced when the next step will not play a pixel (end of
     // a one-shot sequence) or when there is no planned instant (manual step).
     if let Some(timing) = timing {
+        // The caller adjusts the accumulator right after this call (note
+        // lengths rewind it): predict from the effective post-step value.
+        let next_accumulator =
+            next_accumulator_after_step(synth.playback.tempo_accumulator, note_length);
         if let Some((due_at_ms, step_ms)) = next_step_announcement(
             synth.playback.end_pending,
-            synth.playback.tempo_accumulator,
+            next_accumulator,
             timing.step_ratio,
             timing.base,
             timing.period,
@@ -1935,6 +1939,17 @@ fn wakes_until_next_step(accumulator: f64, step_ratio: f64) -> u64 {
     }
 }
 
+/// Effective tempo accumulator after a step, as the caller applies it right
+/// after the call: a note-length step rewinds it by the played length (keeping
+/// the overshoot), the historical behavior leaves it as the carry. Used to
+/// predict the wait until the next step without a side effect.
+fn next_accumulator_after_step(accumulator: f64, note_length: Option<f64>) -> f64 {
+    match note_length {
+        Some(length_beats) => 1.0 - length_beats + accumulator,
+        None => accumulator,
+    }
+}
+
 /// Absolute due instant (epoch ms) and step duration (ms) of the next step,
 /// derived from the planned wake timeline. `None` when no pixel is played
 /// next (end of a one-shot sequence): the frontend then falls back to its
@@ -2519,6 +2534,17 @@ mod tests {
             next_step_announcement(false, 0.0, 1.0, past, period, 1_000_000.0, base).unwrap();
         assert!((step_ms - 480.0).abs() < 1e-9);
         assert!((due_at_ms - 1_000_380.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn next_accumulator_after_step_applies_the_note_length_rewind() {
+        // Historical behavior (no note lengths): the carry is the accumulator
+        assert_eq!(next_accumulator_after_step(0.25, None), 0.25);
+        // Note lengths: the played length rewinds the accumulator, keeping
+        // the overshoot (an eighth note leaves 0.5 beat to the next step)
+        assert_eq!(next_accumulator_after_step(0.25, Some(0.5)), 0.75);
+        // A quarter note cancels the full step
+        assert_eq!(next_accumulator_after_step(0.0, Some(1.0)), 0.0);
     }
 
     #[test]
