@@ -67,6 +67,7 @@ Un fichier JSON (ouvert via le bouton engrenage) regroupe les options globales, 
 - `default_synth` — gabarit appliqué aux nouveaux synthés.
 - `wheel_trackpad_threshold` — sensibilité de défilement des champs de valeur.
 - `pizzicato_gate_ms` — durée minimale de note en mode pizzicato.
+- `cursor_lead_ms` — avance du curseur de lecture sur le son, en ms (0 = désactivé).
 - `undo_depth` — profondeur de l'historique d'annulation des zones/silences.
 
 ### Raccourcis clavier

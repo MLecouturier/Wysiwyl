@@ -152,6 +152,9 @@ function applyConfig(config) {
     refreshAccentGrids();
     // Undo/redo history depth for zone/silence edits
     setHistoryDepth(config.undo_depth);
+    // Cursor lead: how far ahead of the sound the playhead is drawn (0 =
+    // the historical behavior, the cursor follows the played pixel)
+    cursorLead.setLeadMs(config.cursor_lead_ms);
 }
 
 invoke('get_config').then(config => {

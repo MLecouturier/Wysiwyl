@@ -117,6 +117,13 @@ pub struct AppConfig {
     /// Note Off is immediate and the instrument's release shapes the tail).
     /// Hand-edited values are clamped to 0–1000 on load.
     pub pizzicato_gate_ms: u32,
+    /// How far ahead of the sound the playback cursor is drawn, in ms (the
+    /// lead of the `synth-pixel-upcoming` announcements). 0 restores the
+    /// historical behavior (the cursor follows the played pixel exactly).
+    /// Hand-edited values are clamped to 0–500 on load; the frontend further
+    /// caps the lead at 90 % of the current step so it never anticipates
+    /// more than one pixel.
+    pub cursor_lead_ms: u32,
     /// Depth of the undo/redo history for zone and silence edits (number
     /// of steps kept). Hand-edited values are clamped to 1–500 on load.
     pub undo_depth: u32,
@@ -142,6 +149,7 @@ impl Default for AppConfig {
             enabled_scales: default_enabled_scales(),
             wheel_trackpad_threshold: 100,
             pizzicato_gate_ms: 40,
+            cursor_lead_ms: 40,
             undo_depth: 25,
             config_version: CONFIG_VERSION,
         }
@@ -201,6 +209,8 @@ impl AppConfig {
         self.wheel_trackpad_threshold = self.wheel_trackpad_threshold.clamp(1, 2000);
         // Pizzicato gate: at most one second, 0 = immediate Note Off
         self.pizzicato_gate_ms = self.pizzicato_gate_ms.min(1000);
+        // Cursor lead: at most half a second, 0 = the cursor follows the sound
+        self.cursor_lead_ms = self.cursor_lead_ms.min(500);
         // Undo history depth: at least one step, capped to stay reasonable
         self.undo_depth = self.undo_depth.clamp(1, 500);
         // Startup tempo: the metronome's range (a 0 or a huge value would
@@ -616,6 +626,27 @@ mod tests {
 
         // The default is a usable minimum gate
         assert_eq!(AppConfig::default().pizzicato_gate_ms, 40);
+    }
+
+    #[test]
+    fn sanitize_clamps_cursor_lead() {
+        let mut config = AppConfig {
+            cursor_lead_ms: 5000,
+            ..AppConfig::default()
+        };
+        config.sanitize();
+        assert_eq!(config.cursor_lead_ms, 500);
+
+        // 0 is valid: the historical behavior (cursor on the played pixel)
+        let mut config = AppConfig {
+            cursor_lead_ms: 0,
+            ..AppConfig::default()
+        };
+        config.sanitize();
+        assert_eq!(config.cursor_lead_ms, 0);
+
+        // The default is a small, safe anticipation
+        assert_eq!(AppConfig::default().cursor_lead_ms, 40);
     }
 
     #[test]

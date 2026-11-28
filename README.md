@@ -67,6 +67,7 @@ A JSON file (opened with the gear button) holds app-wide options, applied at sta
 - `default_synth` — template applied to new synths.
 - `wheel_trackpad_threshold` — scroll sensitivity of the value fields.
 - `pizzicato_gate_ms` — minimum note duration in pizzicato mode.
+- `cursor_lead_ms` — how far ahead of the sound the playback cursor is drawn, in ms (0 = disabled).
 - `undo_depth` — depth of the zone/silence undo history.
 
 ### Keyboard Shortcuts
