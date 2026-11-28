@@ -18,8 +18,10 @@ import { computeZoomedLayout, drawZones, drawCursorCell, MUTE_GLYPH } from '../c
 import {
     effectOrDefault, defaultOptions, sanitizeOptions, updateTrail, clearTrails,
 } from './effects.js';
+import { createCursorLead } from '../synth/cursor-lead.js';
 
 const { emit, listen } = window.__TAURI__.event;
+const { invoke } = window.__TAURI__.core;
 const { getCurrentWindow } = window.__TAURI__.window;
 
 const bottomImage   = document.querySelector('#mirror-bottom');
@@ -40,6 +42,31 @@ let gridW = 0;
 let gridH = 0;
 let zoneData   = null; // last { showZones, synths } snapshot
 let cursorData = null; // last { cursors } snapshot
+
+// Cursor lead: the mirror schedules the playhead slightly ahead of the sound
+// itself, from the `synth-pixel-upcoming` announcements and its own clock
+// calibration (see synth/cursor-lead.js) — no extra main → mirror hop for the
+// anticipation. The relayed `mirror:cursors` (authoritative, on each tick)
+// still corrects, and `updateTrail` ignores a repeated cell, so the two paths
+// never double-record.
+const cursorLead = createCursorLead({ draw: drawCursorAhead });
+
+// Paints an announced pixel on the mirror's cursor layer: updates the entry
+// the main window already published for this synth (keeping its color / muted
+// flag), then repaints. A synth absent from the snapshot (not playing) is
+// ignored — the authoritative relay owns its removal.
+function drawCursorAhead(id, cursor, w, h) {
+    if (!cursorData) return;
+    const entry = cursorData.find(c => c.id === id);
+    if (!entry) return;
+    if (entry.cursor === cursor && (entry.w ?? gridW) === w && (entry.h ?? gridH) === h) return;
+    entry.cursor = cursor;
+    entry.w = w;
+    entry.h = h;
+    updateTrail(cursorData);
+    drawCursorsOverlay();
+    stateChanged();
+}
 
 // Viewer zoom/pan mirrored from the main window: the same magnification
 // factor and center fraction, applied to this window's own viewer size
@@ -361,6 +388,15 @@ win.onCloseRequested(async (event) => {
         console.error('Error while destroying the mirror window:', err);
     }
 });
+
+// The cursor lead is the app-wide config (shared with the main window): read
+// it at startup and follow the live reload. The clock calibration is the
+// mirror's own (a distinct `performance.now()` origin).
+invoke('get_config')
+    .then(config => cursorLead.setLeadMs(config.cursor_lead_ms))
+    .catch(err => console.error('Error in get_config (mirror):', err));
+listen('config-reloaded', (event) => cursorLead.setLeadMs(event.payload.cursor_lead_ms));
+cursorLead.clock.start();
 
 // Announce readiness: the main window answers with the current image
 // and zone snapshots.
