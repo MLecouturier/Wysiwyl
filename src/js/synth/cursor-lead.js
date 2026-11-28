@@ -16,6 +16,13 @@ import { createClockSync } from '../core/clock-sync.js';
 // announced pixel, never reach into the next one.
 const MAX_LEAD_FRACTION = 0.9;
 
+// Lead actually applied: the configured lead, capped so the cursor never
+// anticipates more than a step. Pure, exported for unit tests.
+export function boundedLead(leadMs, stepMs) {
+    if (!Number.isFinite(stepMs) || stepMs <= 0) return 0;
+    return Math.min(leadMs, MAX_LEAD_FRACTION * stepMs);
+}
+
 // `draw(id, cursor, w, h)` is called to paint the announced pixel; it must be
 // idempotent (no-op when the display already shows that pixel).
 export function createCursorLead({ draw }) {
@@ -58,9 +65,10 @@ export function createCursorLead({ draw }) {
 
         const dueLocal = clock.rustToLocal(due_at_ms);
         if (dueLocal === null) return; // not calibrated yet: fall back
+        if (!Number.isFinite(step_ms) || step_ms <= 0) return; // no usable bound
 
         // Bound the lead so the cursor never anticipates more than one step
-        const lead = Math.min(leadMs, MAX_LEAD_FRACTION * step_ms);
+        const lead = boundedLead(leadMs, step_ms);
         const drawAt = dueLocal - lead;
         // Arrived too late (or no positive lead left): fall back to the tick
         if (drawAt <= performance.now()) return;
