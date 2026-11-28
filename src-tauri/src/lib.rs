@@ -92,6 +92,7 @@ pub fn run() {
             metronome::set_metronome_bpm,
             metronome::set_clock_mode,
             metronome::is_metronome_running,
+            metronome::now_epoch_ms,
             metronome::step_synth,
             // --- Synthesizers (synth.rs) ---
             synth::add_synth,

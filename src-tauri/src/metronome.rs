@@ -61,6 +61,28 @@ pub struct VoiceTick {
     pub muted: bool,
 }
 
+/// Payload of `synth-pixel-upcoming`: announces the pixel the next step will
+/// play, with the absolute instant it is due. Emitted at step N for step N+1,
+/// it lets the frontend draw its cursor slightly ahead of the sound. The
+/// `synth-pixel-tick` that follows remains authoritative: it corrects the
+/// display if the announced pixel differs from the played one (live zone
+/// edits, a sequence change, a lost announcement).
+#[derive(Serialize, Clone)]
+pub struct PixelUpcoming {
+    pub id: u32,
+    pub cursor: usize,
+    pub w: usize,
+    pub h: usize,
+    /// Absolute due instant of the announced step, epoch ms (f64), derived
+    /// from the planned wake timeline — never a relative delay.
+    pub due_at_ms: f64,
+    /// Current duration of one step, in ms, recomputed on every emission (the
+    /// tempo can change between two steps, notably in DAW sync mode).
+    pub step_ms: f64,
+    /// Monotonic per-synth counter (loss / reordering detection).
+    pub seq: u64,
+}
+
 /// Payload of `synth-stopped`.
 #[derive(Serialize, Clone)]
 pub struct SynthStopped {
@@ -812,6 +834,10 @@ fn cursor_after_resize(old: &CachedSequence, cursor: usize, new: &CachedSequence
 /// occupies exactly that duration (in beats of the synth's own tempo),
 /// which the caller applies to the tempo accumulator. `None` means the
 /// historical behavior: quarter-note steps with legato sustain.
+///
+/// `timing` carries the planned wake timeline of the metronome thread, used
+/// to announce the next pixel through `synth-pixel-upcoming`; it is `None`
+/// for a manual step (no announcement).
 fn step_synth_once(
     app: &AppHandle,
     synth: &mut Synth,
@@ -819,6 +845,7 @@ fn step_synth_once(
     midi: &MidiState,
     tick: TickConfig,
     wake: Option<u64>,
+    timing: Option<WakeTiming>,
 ) -> Option<f64> {
     let width = image.width() as usize;
     let height = image.height() as usize;
@@ -1075,6 +1102,48 @@ fn step_synth_once(
     synth.playback.cursor = next;
     synth.playback.end_pending =
         (at_end || at_start) && !synth.config.loop_enabled && !synth.config.back_and_forth;
+
+    // Announce the next pixel (a prediction) so the frontend can draw its
+    // cursor slightly ahead of the sound. Purely additive: the MIDI path and
+    // the `synth-pixel-tick` above are untouched, and the authoritative tick
+    // still corrects the display if the sequence changed in the meantime.
+    // Nothing is announced when the next step will not play a pixel (end of
+    // a one-shot sequence) or when there is no planned instant (manual step).
+    if let Some(timing) = timing {
+        if let Some((due_at_ms, step_ms)) = next_step_announcement(
+            synth.playback.end_pending,
+            synth.playback.tempo_accumulator,
+            timing.step_ratio,
+            timing.base,
+            timing.period,
+            epoch_ms(),
+            Instant::now(),
+        ) {
+            let sequence = &synth
+                .playback
+                .cached_sequence
+                .as_ref()
+                .expect("just built")
+                .sequence;
+            let seq_len = sequence.len();
+            if seq_len > 0 {
+                let cursor = sequence[synth.playback.cursor % seq_len];
+                synth.playback.upcoming_seq = synth.playback.upcoming_seq.wrapping_add(1);
+                let _ = app.emit(
+                    "synth-pixel-upcoming",
+                    PixelUpcoming {
+                        id: synth.id,
+                        cursor,
+                        w: width,
+                        h: height,
+                        due_at_ms,
+                        step_ms,
+                        seq: synth.playback.upcoming_seq,
+                    },
+                );
+            }
+        }
+    }
 
     note_length
 }
@@ -1543,6 +1612,26 @@ fn now_ns() -> u64 {
         .as_nanos() as u64
 }
 
+/// Current wall-clock time in milliseconds since the Unix epoch (f64), the
+/// reference clock the frontend calibrates against (see `now_epoch_ms`).
+fn epoch_ms() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs_f64()
+        * 1000.0
+}
+
+/// Current Rust wall-clock time in epoch milliseconds (f64). The frontend
+/// calibrates its `performance.now()` offset against it (the measurement with
+/// the smallest round-trip wins) and converts the `due_at_ms` announcements
+/// to local time. No per-tick exchange: the clock is read only by the
+/// periodic calibration.
+#[tauri::command]
+pub fn now_epoch_ms() -> f64 {
+    epoch_ms()
+}
+
 /// Registers one MIDI clock pulse (0xF8, 24 ppqn): counts it and smooths
 /// the observed interval into the period estimate. `now_ns` is the
 /// wall-clock time in ns (separated so the math is testable).
@@ -1810,6 +1899,67 @@ fn sleep_until(deadline: Instant) {
     }
 }
 
+/// Planned timing of the current wake, known by the metronome thread: the
+/// base instant of the timeline and the wake duration. `base` is `pacer.next`
+/// on the internal/master timeline (exact), or `Instant::now()` when the
+/// wakes are driven by an external MIDI clock (the next instant is only
+/// estimated from the smoothed tempo).
+#[derive(Clone, Copy)]
+struct WakeBase {
+    base: Instant,
+    period: Duration,
+}
+
+/// Per-synth wake timing used to announce the next step: the wake base plus
+/// the synth's current step rate (wakes per beat of the synth's own tempo).
+#[derive(Clone, Copy)]
+struct WakeTiming {
+    base: Instant,
+    period: Duration,
+    step_ratio: f64,
+}
+
+/// Number of wakes until the next step, from the post-step tempo accumulator
+/// and the per-wake step rate (`step_ratio / WAKES_PER_BEAT`). At least one
+/// wake: a step never follows itself within the same wake.
+fn wakes_until_next_step(accumulator: f64, step_ratio: f64) -> u64 {
+    let per_wake = step_ratio / WAKES_PER_BEAT as f64;
+    if per_wake <= 0.0 {
+        return WAKES_PER_BEAT; // defensive: a non-positive rate never steps
+    }
+    let need = 1.0 - ACC_EPSILON - accumulator;
+    if need <= 0.0 {
+        1
+    } else {
+        (need / per_wake).ceil().max(1.0) as u64
+    }
+}
+
+/// Absolute due instant (epoch ms) and step duration (ms) of the next step,
+/// derived from the planned wake timeline. `None` when no pixel is played
+/// next (end of a one-shot sequence): the frontend then falls back to its
+/// current behavior for that step. `now_epoch_ms`/`now` are passed in so the
+/// math is testable.
+#[allow(clippy::too_many_arguments)] // flat by design: the pure inputs are threaded explicitly
+fn next_step_announcement(
+    end_pending: bool,
+    accumulator: f64,
+    step_ratio: f64,
+    base: Instant,
+    period: Duration,
+    now_epoch_ms: f64,
+    now: Instant,
+) -> Option<(f64, f64)> {
+    if end_pending {
+        return None;
+    }
+    let k = wakes_until_next_step(accumulator, step_ratio);
+    let step = period * k as u32;
+    let due = base + step;
+    let due_at_ms = now_epoch_ms + due.saturating_duration_since(now).as_secs_f64() * 1000.0;
+    Some((due_at_ms, step.as_secs_f64() * 1000.0))
+}
+
 /// Advances one playing synth by one wake of the master grid: start sync,
 /// tempo accumulator, master-tempo quantize, and the step itself.
 fn tick_synth(
@@ -1819,7 +1969,22 @@ fn tick_synth(
     midi: &MidiState,
     tick: TickConfig,
     wake: u64,
+    wake_base: Option<WakeBase>,
 ) {
+    // Step rate of the synth's own tempo: the ratio, snapped to the exact
+    // quantize fraction when the quantize is on (see quantized_ratio). Used
+    // both by the accumulator below and by the next-step announcement.
+    let step_ratio = if synth.config.quantize {
+        quantized_ratio(synth.config.tempo_ratio, synth.config.quantize_beats)
+    } else {
+        synth.config.tempo_ratio
+    };
+    let timing = wake_base.map(|b| WakeTiming {
+        base: b.base,
+        period: b.period,
+        step_ratio,
+    });
+
     // Start sync: the very first note waits for the next master beat
     // (wake % WAKES_PER_BEAT == 0) so playback begins in phase with the
     // metronome. With quantize on it waits for the next resync boundary
@@ -1838,7 +2003,8 @@ fn tick_synth(
         }
         synth.playback.start_pending = false;
         synth.playback.tempo_accumulator = 0.0;
-        if let Some(length_beats) = step_synth_once(app, synth, image, midi, tick, Some(wake)) {
+        if let Some(length_beats) = step_synth_once(app, synth, image, midi, tick, Some(wake), timing)
+        {
             synth.playback.tempo_accumulator = 1.0 - length_beats;
         }
         return;
@@ -1851,11 +2017,6 @@ fn tick_synth(
     // is snapped to the exact fraction dividing the resync period into a
     // whole number of steps, which spreads the period's timing offset
     // evenly over its notes (see quantized_ratio).
-    let step_ratio = if synth.config.quantize {
-        quantized_ratio(synth.config.tempo_ratio, synth.config.quantize_beats)
-    } else {
-        synth.config.tempo_ratio
-    };
     synth.playback.tempo_accumulator += step_ratio / WAKES_PER_BEAT as f64;
     if synth.playback.tempo_accumulator < 1.0 - ACC_EPSILON {
         return;
@@ -1882,7 +2043,7 @@ fn tick_synth(
     };
     synth.playback.tempo_accumulator = carry;
 
-    if let Some(length_beats) = step_synth_once(app, synth, image, midi, tick, Some(wake)) {
+    if let Some(length_beats) = step_synth_once(app, synth, image, midi, tick, Some(wake), timing) {
         // Note lengths enabled: the played pixel occupies exactly its
         // note's duration. Rewind the accumulator so the next pixel is due
         // after `length_beats` beats of the synth's own tempo — keeping
@@ -2026,13 +2187,24 @@ fn run_metronome(
         let synth_state = app.state::<SynthState>();
         let midi_state = app.state::<MidiState>();
 
+        // Planned timing of this wake, for the next-step announcement: the
+        // exact pacer deadline on the internal/master timeline, or the
+        // present when the wakes follow an external MIDI clock (its next
+        // instant is only estimated from the smoothed tempo). The period is
+        // re-read live so a tempo change is reflected on the next emission.
+        let wake_period = Duration::from_nanos(wake_period_ns(bpm.load(Ordering::Relaxed)));
+        let wake_base = Some(WakeBase {
+            base: if clock_mode { Instant::now() } else { pacer.next },
+            period: wake_period,
+        });
+
         // Image then synths, in the mandated order (see locks.rs): this
         // loop holds both while stepping every synth.
         if let Some(image) = image_state.processed.lock_safe().as_ref() {
             let mut synths = synth_state.synths.lock_safe();
             for synth in synths.values_mut() {
                 if synth.playback.playing {
-                    tick_synth(app, synth, image, &midi_state, tick, wake);
+                    tick_synth(app, synth, image, &midi_state, tick, wake, wake_base);
                 }
             }
         }
@@ -2284,7 +2456,7 @@ pub fn step_synth(
         return Err(err("synth_is_playing").with_param("id", id));
     }
 
-    let played_length = step_synth_once(&app, synth, image, &midi_state, tick, None);
+    let played_length = step_synth_once(&app, synth, image, &midi_state, tick, None, None);
 
     // In the sustained articulation the notes are held for their full
     // duration, so schedule their Note Off: the pixel's note length when
@@ -2310,6 +2482,60 @@ mod tests {
     use super::*;
 
     const BOUNDS: [(u8, u8); 3] = [(21, 47), (48, 71), (72, 108)];
+
+    #[test]
+    fn wakes_until_next_step_follows_the_step_rate() {
+        // One step per beat (ratio 1.0): a full beat = 12 wakes
+        assert_eq!(wakes_until_next_step(0.0, 1.0), 12);
+        // Half speed: one pixel every two beats
+        assert_eq!(wakes_until_next_step(0.0, 0.5), 24);
+        // 3/2: eight wakes to the next step
+        assert_eq!(wakes_until_next_step(0.0, 1.5), 8);
+        // A leftover accumulator shortens the wait
+        assert_eq!(wakes_until_next_step(0.5, 1.0), 6);
+        // Note lengths: a quarter step already elapsed, 0.25 beat left → 3 wakes
+        assert_eq!(wakes_until_next_step(0.75, 1.0), 3);
+        // Overshoot (accumulator at/above the threshold): at least one wake
+        assert_eq!(wakes_until_next_step(1.0, 1.0), 1);
+        assert_eq!(wakes_until_next_step(1.5, 1.0), 1);
+        // Defensive: a non-positive rate never steps, fall back to a beat
+        assert_eq!(wakes_until_next_step(0.0, 0.0), WAKES_PER_BEAT);
+    }
+
+    #[test]
+    fn next_step_announcement_derives_from_the_planned_instant() {
+        let base = Instant::now();
+        let period = Duration::from_millis(40);
+        // Ratio 1.0, fresh accumulator: 12 wakes of 40 ms → 480 ms step
+        let (due_at_ms, step_ms) =
+            next_step_announcement(false, 0.0, 1.0, base, period, 1_000_000.0, base).unwrap();
+        assert!((step_ms - 480.0).abs() < 1e-9);
+        // The due instant is the planned base + the step duration (absolute)
+        assert!((due_at_ms - 1_000_480.0).abs() < 1e-6);
+
+        // A base in the past yields the remaining time, not the full step
+        let past = base - Duration::from_millis(100);
+        let (due_at_ms, step_ms) =
+            next_step_announcement(false, 0.0, 1.0, past, period, 1_000_000.0, base).unwrap();
+        assert!((step_ms - 480.0).abs() < 1e-9);
+        assert!((due_at_ms - 1_000_380.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn next_step_announcement_skips_the_one_shot_end() {
+        // End of a one-shot sequence: no pixel is played next, no announcement
+        let now = Instant::now();
+        assert!(next_step_announcement(
+            true,
+            0.0,
+            1.0,
+            now,
+            Duration::from_millis(40),
+            0.0,
+            now
+        )
+        .is_none());
+    }
 
     #[test]
     fn relative_mapping_rescales_saturation_onto_the_bounds() {

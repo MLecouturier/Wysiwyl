@@ -662,6 +662,7 @@ pub struct Playback {
     pub note_generation: u32, // bumped on each articulation (stale Note Off guard)
     pub cached_sequence: Option<CachedSequence>, // derived pixel sequence cache
     pub start_pending: bool, // first note waits for the next master beat (start sync)
+    pub upcoming_seq: u64,   // monotonic counter of the `synth-pixel-upcoming` announcements
 }
 
 impl Default for Playback {
@@ -684,6 +685,7 @@ impl Default for Playback {
             note_generation: 0,
             cached_sequence: None,
             start_pending: false,
+            upcoming_seq: 0,
         }
     }
 }
